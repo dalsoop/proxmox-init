@@ -4,7 +4,6 @@
 use clap::{Parser, Subcommand};
 use prelik_core::{common, paths};
 use std::fs;
-use std::io::Write;
 
 #[derive(Parser)]
 #[command(name = "prelik-telegram", about = "Telegram 봇 관리")]
@@ -229,6 +228,7 @@ fn mask_token(token: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn secure_tempfile() -> anyhow::Result<(String, TempGuard)> {
     let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
@@ -237,6 +237,7 @@ fn secure_tempfile() -> anyhow::Result<(String, TempGuard)> {
     Ok((tmp, guard))
 }
 
+#[allow(dead_code)]
 struct TempGuard(String);
 impl Drop for TempGuard {
     fn drop(&mut self) {
@@ -258,4 +259,3 @@ fn doctor() {
 }
 
 // Write impl for write_all
-use std::io::Write as IoWrite;
