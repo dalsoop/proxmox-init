@@ -43,7 +43,13 @@ impl Registry {
     pub fn load() -> anyhow::Result<Self> {
         // 1) nickel CLI가 있으면 내장 ncl을 JSON으로 export
         if crate::common::has_cmd("nickel") {
-            return Self::load_via_nickel();
+            match Self::load_via_nickel() {
+                Ok(reg) => return Ok(reg),
+                Err(e) => {
+                    eprintln!("[prelik] ⚠ Nickel export 실패 — 내장 폴백 사용: {e}");
+                    eprintln!("  (ncl/domains.ncl 편집 문제일 수 있음, nickel eval ncl/domains.ncl로 확인)");
+                }
+            }
         }
         // 2) 폴백: 최소 하드코드 (nickel 없어도 동작 보장)
         Ok(Self::fallback())

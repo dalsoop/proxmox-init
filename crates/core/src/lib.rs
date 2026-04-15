@@ -5,6 +5,7 @@ pub mod common;
 pub mod config;
 pub mod dotenvx;
 pub mod github;
+pub mod helpers;
 pub mod os;
 pub mod paths;
 pub mod systemd;

@@ -2,6 +2,20 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.7] - 2026-04-15
+
+### Fixed / Enhanced (Codex 6차 구조 리뷰 반영)
+- **Registry silent fallback 개선**: nickel export 실패 시 stderr 경고 출력
+  (`ncl/domains.ncl` 편집 실수 감지 가능). 기능은 기존대로 fallback 유지.
+- **bootstrap nickel 설치 속도**: cargo install nickel-lang-cli (수 분) 대신
+  GitHub Release 바이너리 직접 설치 (수 초). 실패 시 cargo 폴백.
+- **install.sh 최소 무결성 검증**: 파일 크기 >= 1024 + gzip 타입 확인.
+  MITM 또는 HTML 에러 페이지 방지. 체크섬 검증은 향후 릴리스 프로세스에서.
+
+### Internal
+- `crates/core/src/helpers.rs` 추가: `read_host_env`, `write_to_lxc`,
+  `secure_tempfile`, `FileCleanup` 공통 헬퍼. 기존 도메인 리팩터는 별도 작업.
+
 ## [0.7.6] - 2026-04-15
 
 ### Fixed (Codex 5차 — v0.7.5 회귀 수정)

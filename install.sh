@@ -57,7 +57,24 @@ if ! curl -sSL --fail -o "$TMP/$ASSET" "$URL"; then
     echo "✗ 다운로드 실패"
     exit 1
 fi
-tar -xzf "$TMP/$ASSET" -C "$BIN_DIR"
+
+# 최소 무결성 검증 (TLS + 파일 크기 + 압축 해제 성공)
+SIZE=$(stat -c%s "$TMP/$ASSET" 2>/dev/null || stat -f%z "$TMP/$ASSET")
+if [ -z "$SIZE" ] || [ "$SIZE" -lt 1024 ]; then
+    echo "✗ 다운로드 파일이 비정상적으로 작음 (${SIZE} bytes) — MITM 또는 손상 의심"
+    exit 1
+fi
+
+# file 타입 확인 (gzip이어야 함)
+if ! file "$TMP/$ASSET" | grep -q "gzip compressed"; then
+    echo "✗ 다운로드 파일이 gzip 형식이 아님 — HTML 에러 페이지 가능성"
+    exit 1
+fi
+
+if ! tar -xzf "$TMP/$ASSET" -C "$BIN_DIR"; then
+    echo "✗ 압축 해제 실패"
+    exit 1
+fi
 chmod +x "$BIN_DIR/prelik"
 
 # PATH 안내

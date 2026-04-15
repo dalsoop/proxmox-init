@@ -140,9 +140,29 @@ fn install_nickel() -> anyhow::Result<()> {
         println!("  ✓ nickel 이미 설치됨");
         return Ok(());
     }
-    println!("  nickel 설치 중 (cargo install)...");
-    // cargo로 설치 (rust 이미 설치된 상태 전제)
-    common::run_bash("cargo install nickel-lang-cli --locked")?;
+    println!("  nickel 설치 중 (바이너리 다운로드)...");
+    // GitHub Release에서 musl 바이너리 직접 받기 (cargo install 대비 ~10배 빠름)
+    let install_script = r#"
+        set -e
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) SUFFIX="x86_64-linux" ;;
+          aarch64|arm64) SUFFIX="aarch64-linux" ;;
+          *) echo "지원 아키텍처 아님: $ARCH"; exit 1 ;;
+        esac
+        URL="https://github.com/tweag/nickel/releases/latest/download/nickel-${SUFFIX}"
+        TMP=$(mktemp)
+        trap 'rm -f "$TMP"' EXIT
+        curl -fsSL --retry 3 -o "$TMP" "$URL"
+        sudo install -m 755 "$TMP" /usr/local/bin/nickel
+    "#;
+    match common::run_bash(install_script) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("  바이너리 다운로드 실패 ({e}) — cargo install로 폴백");
+            common::run_bash("cargo install nickel-lang-cli --locked")?;
+        }
+    }
     Ok(())
 }
 
