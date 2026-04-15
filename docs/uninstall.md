@@ -271,17 +271,18 @@ prelik run bootstrap manifest --only gh   # 특정 도구만
 
 **예시 (gh):**
 ```
-[gh]
-  apt 패키지: gh
-  바이너리:   /usr/bin/gh
-  파일:       /etc/apt/sources.list.d/github-cli.list,
-              /usr/share/keyrings/githubcli-archive-keyring.gpg,
-              ~/.config/gh/
-  제거 절차:
+[gh] (detected=true)
+  설치 가능 apt 패키지: gh
+  바이너리 후보:        /usr/bin/gh
+  부가 파일:            /etc/apt/sources.list.d/github-cli.list,
+                        /usr/share/keyrings/githubcli-archive-keyring.gpg,
+                        ~/.config/gh/
+  prelik remove --only gh 이 실제로 하는 것:
     sudo apt remove --purge gh
     sudo rm -f /etc/apt/sources.list.d/github-cli.list \
                /usr/share/keyrings/githubcli-archive-keyring.gpg
-    rm -rf ~/.config/gh    # 인증 토큰 포함
+  사용자 수동 후속 정리 (prelik이 자동 안 함):
+    rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정
 ```
 
 manifest의 **`uninstall_actual`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치합니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요.
