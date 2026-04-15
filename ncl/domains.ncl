@@ -102,6 +102,13 @@ in
       provides = ["monitor host", "monitor lxc", "monitor vm", "monitor all"],
     } | Domain,
 
+    net = {
+      name = "net",
+      description = "네트워크 진단 — 인터페이스/라우트/브리지/DNS/ping (read-only)",
+      tags = { product = 'infra, layer = 'platform, platform = 'debian },
+      provides = ["net interfaces", "net routes", "net bridges", "net dns", "net ping"],
+    } | Domain,
+
 
 
 

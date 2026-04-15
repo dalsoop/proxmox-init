@@ -1,0 +1,15 @@
+[package]
+name = "prelik-net"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "prelik-net"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+prelik-core = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
