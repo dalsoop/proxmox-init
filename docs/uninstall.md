@@ -81,8 +81,16 @@ sudo umount /mnt/<your-mount>
 sudo nano /etc/fstab    # 또는 sed -i '/PATTERN/d'
 
 # 5) cifs-credentials 파일 제거 (SMB 비밀번호 평문)
-sudo rm -f /etc/cifs-credentials/*
-sudo rmdir /etc/cifs-credentials 2>/dev/null
+#    ⚠️ 주의: prelik nas는 /etc/cifs-credentials/<host>_<share> 형식으로 만들지만
+#    provenance 마커가 없습니다. 다른 CIFS mount가 같은 디렉토리를 쓰면 그 자격증명도
+#    함께 사라집니다. 반드시 §3 1)에서 본 prelik이 추가한 마운트의 host_share만
+#    골라서 지우세요.
+#
+# 예: //nas.local/data 마운트만 prelik이 만들었다면
+sudo rm -f /etc/cifs-credentials/nas.local_data
+
+# 디렉토리가 비었을 때만 (다른 mount의 cred가 남아 있으면 보존)
+sudo rmdir /etc/cifs-credentials 2>/dev/null || true
 ```
 
 **검증:**

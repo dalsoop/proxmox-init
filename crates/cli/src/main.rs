@@ -485,12 +485,21 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
 
     let mut purge_dirs: Vec<PathBuf> = Vec::new();
     if purge {
-        // 도메인별 sub-binary cache + 사용자/시스템 config + recovery snapshots
-        if let Ok(d) = paths::domains_dir() { if d.exists() { purge_dirs.push(d); } }
-        if let Ok(d) = paths::config_dir()  { if d.exists() { purge_dirs.push(d); } }
-        for p in ["/etc/prelik", "/var/lib/prelik"] {
-            let p = PathBuf::from(p);
-            if p.exists() { purge_dirs.push(p); }
+        // 도메인별 sub-binary cache + 사용자/시스템 config + recovery snapshots.
+        // root에선 paths::config_dir() == /etc/prelik이라 중복될 수 있어 canonical 후 dedup.
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(d) = paths::domains_dir() { candidates.push(d); }
+        if let Ok(d) = paths::config_dir()  { candidates.push(d); }
+        candidates.push(PathBuf::from("/etc/prelik"));
+        candidates.push(PathBuf::from("/var/lib/prelik"));
+        let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        for p in candidates {
+            if !p.exists() { continue; }
+            // canonicalize로 동일 디렉토리 변형 (경로 표기/symlink) 통합. 실패 시 원본 사용.
+            let key = p.canonicalize().unwrap_or(p.clone());
+            if seen.insert(key) {
+                purge_dirs.push(p);
+            }
         }
     }
 
