@@ -1,6 +1,9 @@
 [service]
 name = "infisical"
 description = "Infisical — 오픈소스 시크릿 관리 (Docker Compose)"
+# 주의: 이 레시피는 upstream 'infisical/infisical:latest' 이미지를 추적합니다.
+# Production 배포는 이 레시피를 복사해 image 라인을 명시 digest로 pin하고
+# pull_policy: always를 제거하세요.
 
 [lxc]
 cores = "2"
@@ -20,10 +23,10 @@ run = """
 mkdir -p /opt/infisical
 cd /opt/infisical
 
-# 공식 self-host compose — commit SHA 핀 (main 추적 금지, 재현성 보장).
-# 업그레이드는 INFISICAL_PIN 환경변수 또는 레시피 bump로 명시적으로.
+# 공식 self-host compose — commit SHA 핀 (main 추적 금지, compose 구조 안정화).
+# 매 실행마다 재다운로드 — INFISICAL_PIN 변경이 즉시 반영되도록.
 PIN="${INFISICAL_PIN:-73b274e3dcbaa89afa9f3caed2db2ff101f39c7d}"
-[ -f docker-compose.yml ] || curl -fsSL \
+curl -fsSL \
   "https://raw.githubusercontent.com/Infisical/infisical/${PIN}/docker-compose.prod.yml" \
   -o docker-compose.yml
 

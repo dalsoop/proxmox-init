@@ -1,6 +1,9 @@
 [service]
 name = "ministack"
 description = "MiniStack — LocalStack 오픈 포크 (로컬 AWS 에뮬레이터)"
+# 주의: 이 레시피는 upstream docker image의 'latest' 태그를 추적합니다.
+# Production 배포는 examples/recipes/ministack.toml을 복사한 뒤 image 라인을
+# 명시 digest (예: ministackorg/ministack@sha256:...)로 직접 pin하세요.
 
 [lxc]
 cores = "2"
@@ -20,10 +23,10 @@ run = """
 mkdir -p /opt/ministack
 cd /opt/ministack
 
-# 태그 핀 — main 추적 금지. 재현성 + 공급망 드리프트 차단.
-# 업그레이드는 레시피 버전 bump로 명시적으로.
+# 매 실행마다 pristine compose를 다시 받고 patch 재적용 — env override 계약 유지.
+# 기존 파일 캐시 시 MINISTACK_PIN / MINISTACK_DOCKER 변경이 안 먹히는 문제 회피.
 PIN="${MINISTACK_PIN:-v1.2.15}"
-[ -f docker-compose.yml ] || curl -fsSL \
+curl -fsSL \
   "https://raw.githubusercontent.com/ministackorg/ministack/${PIN}/docker-compose.yml" \
   -o docker-compose.yml
 
