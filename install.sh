@@ -65,9 +65,10 @@ if [ -z "$SIZE" ] || [ "$SIZE" -lt 1024 ]; then
     exit 1
 fi
 
-# file 타입 확인 (gzip이어야 함)
-if ! file "$TMP/$ASSET" | grep -q "gzip compressed"; then
-    echo "✗ 다운로드 파일이 gzip 형식이 아님 — HTML 에러 페이지 가능성"
+# gzip 매직 바이트 직접 검사 (file 커맨드 의존 제거 — slim 이미지에서 없음)
+MAGIC=$(head -c 2 "$TMP/$ASSET" | od -An -tx1 | tr -d ' \n' || true)
+if [ "$MAGIC" != "1f8b" ]; then
+    echo "✗ 다운로드 파일이 gzip 형식이 아님 (magic: $MAGIC) — HTML 에러 페이지 가능성"
     exit 1
 fi
 

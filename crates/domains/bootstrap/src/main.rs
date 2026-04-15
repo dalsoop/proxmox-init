@@ -147,7 +147,7 @@ fn install_nickel() -> anyhow::Result<()> {
         ARCH=$(uname -m)
         case "$ARCH" in
           x86_64) SUFFIX="x86_64-linux" ;;
-          aarch64|arm64) SUFFIX="aarch64-linux" ;;
+          aarch64|arm64) SUFFIX="arm64-linux" ;;
           *) echo "지원 아키텍처 아님: $ARCH"; exit 1 ;;
         esac
         URL="https://github.com/tweag/nickel/releases/latest/download/nickel-${SUFFIX}"

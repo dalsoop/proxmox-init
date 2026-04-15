@@ -2,6 +2,14 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.8] - 2026-04-15
+
+### Fixed (Codex 7차 — v0.7.7 회귀 수정)
+- **P1 Tweag nickel arm64 자산명**: `nickel-aarch64-linux` → `nickel-arm64-linux`.
+  Tweag 실제 릴리스 이름에 맞춤. arm64 호스트 bootstrap 불가 문제 해결.
+- **P1 install.sh의 file 커맨드 의존 제거**: debian slim 등 최소 이미지에
+  `file`이 없음. `od -tx1`로 gzip 매직 바이트(1f8b) 직접 검사로 대체.
+
 ## [0.7.7] - 2026-04-15
 
 ### Fixed / Enhanced (Codex 6차 구조 리뷰 반영)
