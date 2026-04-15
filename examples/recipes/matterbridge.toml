@@ -1,0 +1,77 @@
+[service]
+name = "matterbridge"
+description = "Matterbridge — 채팅 플랫폼 간 브릿지 (Discord/Slack/Telegram/IRC...)"
+
+[lxc]
+cores = "1"
+memory = "512"
+disk = "4"
+
+[install]
+packages = ["wget", "ca-certificates"]
+
+[[install.steps]]
+name = "최신 릴리스 다운로드 (1.27.x 시리즈, x86_64)"
+run = """
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) FILE=matterbridge-1.27.0-linux-64bit ;;
+  aarch64|arm64) FILE=matterbridge-1.27.0-linux-arm64 ;;
+  *) echo "지원하지 않는 아키텍처: $ARCH"; exit 1 ;;
+esac
+mkdir -p /opt/matterbridge
+cd /opt/matterbridge
+[ -x ./matterbridge ] || {
+  wget -q https://github.com/42wim/matterbridge/releases/download/v1.27.0/${FILE} -O matterbridge
+  chmod +x matterbridge
+}
+"""
+
+[[install.steps]]
+name = "기본 설정 파일 (사용자가 채워야 함)"
+run = """
+[ -f /opt/matterbridge/matterbridge.toml ] || cat > /opt/matterbridge/matterbridge.toml << 'CFG'
+# Matterbridge 설정 — 각 플랫폼별 토큰/채널을 채우세요.
+# 문서: https://github.com/42wim/matterbridge/wiki
+
+#[discord.mybot]
+#Token="YOUR_DISCORD_BOT_TOKEN"
+#Server="YOUR_GUILD_ID"
+
+#[telegram.mybot]
+#Token="YOUR_TELEGRAM_BOT_TOKEN"
+
+#[[gateway]]
+#name="general"
+#enable=true
+#  [[gateway.inout]]
+#  account="discord.mybot"
+#  channel="general"
+#  [[gateway.inout]]
+#  account="telegram.mybot"
+#  channel="123456789"
+CFG
+"""
+
+[[install.steps]]
+name = "systemd 서비스"
+run = """
+cat > /etc/systemd/system/matterbridge.service << 'SVC'
+[Unit]
+Description=Matterbridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/matterbridge
+ExecStart=/opt/matterbridge/matterbridge -conf /opt/matterbridge/matterbridge.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVC
+systemctl daemon-reload
+systemctl enable matterbridge
+echo '⚠ /opt/matterbridge/matterbridge.toml 편집 후 systemctl start matterbridge'
+"""

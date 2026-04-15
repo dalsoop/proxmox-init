@@ -1,0 +1,51 @@
+[service]
+name = "formbricks"
+description = "Formbricks — 오픈소스 설문 플랫폼 (Docker Compose)"
+
+[lxc]
+cores = "2"
+memory = "2048"
+disk = "12"
+
+[install]
+packages = ["docker.io", "docker-compose-v2", "curl", "openssl"]
+
+[[install.steps]]
+name = "Docker daemon enable"
+run = "systemctl enable --now docker"
+
+[[install.steps]]
+name = "환경변수 + compose 다운로드"
+run = """
+mkdir -p /opt/formbricks
+cd /opt/formbricks
+[ -f docker-compose.yml ] || curl -fsSL \
+  https://raw.githubusercontent.com/formbricks/formbricks/main/docker-compose.yml \
+  -o docker-compose.yml
+[ -f .env ] || {
+  curl -fsSL https://raw.githubusercontent.com/formbricks/formbricks/main/.env.example -o .env
+  # NEXTAUTH_SECRET / ENCRYPTION_KEY / CRON_SECRET 자동 생성
+  for KEY in NEXTAUTH_SECRET ENCRYPTION_KEY CRON_SECRET; do
+    SECRET=$(openssl rand -hex 32)
+    sed -i "s|^${KEY}=.*|${KEY}=${SECRET}|" .env
+  done
+  # WEBAPP_URL는 환경변수로 오버라이드 가능
+  WEBAPP="${WEBAPP_URL:-http://localhost:3000}"
+  sed -i "s|^WEBAPP_URL=.*|WEBAPP_URL=${WEBAPP}|" .env
+  sed -i "s|^NEXTAUTH_URL=.*|NEXTAUTH_URL=${WEBAPP}|" .env
+}
+"""
+
+[[install.steps]]
+name = "compose up -d"
+run = "cd /opt/formbricks && docker compose up -d"
+
+[[install.steps]]
+name = "검증 (3000 포트 응답까지 30초)"
+run = """
+for i in $(seq 1 30); do
+  curl -fsS http://localhost:3000/ -o /dev/null && echo '✓ formbricks 동작' && exit 0
+  sleep 1
+done
+echo '⚠ formbricks 시작 지연 — docker compose logs 확인'
+"""

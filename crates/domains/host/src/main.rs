@@ -30,6 +30,15 @@ enum Cmd {
     SmbOpen,
     /// SMB 포트 닫기
     SmbClose,
+    /// prelik CLI 자체 업데이트 (install.prelik.com 재실행)
+    SelfUpdate {
+        /// 특정 버전 핀 (예: v1.8.3). 미지정 시 latest.
+        #[arg(long)]
+        version: Option<String>,
+        /// 같은 버전이어도 강제 재설치
+        #[arg(long)]
+        force: bool,
+    },
     Doctor,
 }
 
@@ -47,6 +56,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::SshKeygen { label, email } => ssh_keygen(&label, email.as_deref()),
         Cmd::SmbOpen => smb_set(true),
         Cmd::SmbClose => smb_set(false),
+        Cmd::SelfUpdate { version, force } => self_update(version.as_deref(), force),
         Cmd::Doctor => {
             doctor();
             Ok(())
@@ -195,4 +205,31 @@ fn doctor() {
         let ok = common::has_cmd(cmd);
         println!("  {} {name}", if ok { "✓" } else { "✗" });
     }
+}
+
+/// prelik CLI 자체 업데이트 — install.prelik.com 재실행.
+/// install.sh가 idempotent skip + atomic install + retry를 모두 처리.
+fn self_update(version: Option<&str>, force: bool) -> anyhow::Result<()> {
+    println!("=== prelik self-update ===");
+    if !common::has_cmd("curl") {
+        anyhow::bail!("curl 없음");
+    }
+    if !common::has_cmd("bash") {
+        anyhow::bail!("bash 없음");
+    }
+    let mut cmd = std::process::Command::new("bash");
+    cmd.arg("-c").arg("curl -fsSL https://install.prelik.com | bash");
+    if let Some(v) = version {
+        cmd.env("PRELIK_VERSION", v);
+        println!("  PRELIK_VERSION={v}");
+    }
+    if force {
+        cmd.env("PRELIK_FORCE", "1");
+        println!("  PRELIK_FORCE=1");
+    }
+    let status = cmd.status()?;
+    if !status.success() {
+        anyhow::bail!("self-update 실패 (exit {})", status.code().unwrap_or(-1));
+    }
+    Ok(())
 }

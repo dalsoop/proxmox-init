@@ -13,6 +13,9 @@
 | [recipes/nginx.toml](recipes/nginx.toml) | Nginx 정적 호스팅 |
 | [recipes/postgres.toml](recipes/postgres.toml) | PostgreSQL 16 + 외부 접속 + 기본 DB/유저 |
 | [recipes/redis.toml](recipes/redis.toml) | Redis 7 + requirepass + 외부 접속 |
+| [recipes/uptime-kuma.toml](recipes/uptime-kuma.toml) | Uptime Kuma — 모니터링 (Docker, :3001) |
+| [recipes/formbricks.toml](recipes/formbricks.toml) | Formbricks — 설문 플랫폼 (Docker Compose, :3000) |
+| [recipes/matterbridge.toml](recipes/matterbridge.toml) | Matterbridge — 채팅 플랫폼 브릿지 (systemd) |
 
 각 예시는 **Proxmox 빈 호스트 + prelik v1.5+** 를 전제로 합니다.
 

@@ -1,0 +1,34 @@
+[service]
+name = "uptime-kuma"
+description = "Uptime Kuma — 셀프 호스팅 서비스 모니터링 (Docker)"
+
+[lxc]
+cores = "1"
+memory = "1024"
+disk = "8"
+
+[install]
+packages = ["docker.io", "docker-compose-v2", "curl"]
+
+[[install.steps]]
+name = "Docker daemon enable"
+run = "systemctl enable --now docker"
+
+[[install.steps]]
+name = "Uptime Kuma 컨테이너 시작 (영속 볼륨)"
+run = """
+mkdir -p /opt/uptime-kuma/data
+docker rm -f uptime-kuma 2>/dev/null || true
+docker run -d --restart=always \
+  -p 3001:3001 \
+  -v /opt/uptime-kuma/data:/app/data \
+  --name uptime-kuma \
+  louislam/uptime-kuma:1
+"""
+
+[[install.steps]]
+name = "검증 (3001 포트 응답)"
+run = """
+sleep 5
+curl -fsS http://localhost:3001/ -o /dev/null && echo '✓ uptime-kuma 동작 (http://localhost:3001)'
+"""
