@@ -104,32 +104,59 @@ fn snapshot_path(id: &str) -> anyhow::Result<PathBuf> {
 }
 
 // id 충돌 회피: 같은 초에 여러 스냅샷 생성 시 -1, -2 suffix.
-fn unique_snapshot_id() -> anyhow::Result<String> {
+// O_CREAT|O_EXCL로 atomic 예약 — exists() 후 write의 TOCTOU 회피.
+// 호출자가 같은 path에 다시 write 가능 (예약된 파일을 덮어씀).
+fn reserve_snapshot_id() -> anyhow::Result<String> {
+    use std::os::unix::fs::OpenOptionsExt;
     let base = now_secs();
-    for n in 0u32..100 {
+    for n in 0u32..1000 {
         let id = if n == 0 { base.to_string() } else { format!("{base}-{n}") };
         let p = PathBuf::from(SNAPSHOT_DIR).join(format!("{id}.json"));
-        if !p.exists() { return Ok(id); }
+        // O_EXCL: 이미 존재하면 실패 — 동시 create 경합에서 한 쪽만 성공.
+        let res = fs::OpenOptions::new()
+            .write(true).create_new(true).mode(0o600)
+            .open(&p);
+        match res {
+            Ok(_) => return Ok(id),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(anyhow::anyhow!("snapshot 예약 실패 {}: {e}", p.display())),
+        }
     }
-    anyhow::bail!("같은 초에 100개+ 스냅샷 생성 — 비정상")
+    anyhow::bail!("같은 초에 1000개+ 스냅샷 시도 — 비정상")
 }
 
 fn collect_lxc_configs(node: &str) -> anyhow::Result<HashMap<String, String>> {
+    validate_node(node)?;
     let dir = format!("/etc/pve/nodes/{node}/lxc");
-    // 디렉토리 부재/접근 불가 = 안전망 실패. 빈 맵 반환 금지 — 호출자가 fail-fast 결정.
     let entries = fs::read_dir(&dir)
         .map_err(|e| anyhow::anyhow!("LXC config 디렉토리 읽기 실패 {dir}: {e}"))?;
     let mut map = HashMap::new();
-    for entry in entries.flatten() {
+    // 개별 entry/read 실패도 fail-fast — 부분 백업으로 '안전망' 위장 금지.
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| anyhow::anyhow!("디렉토리 entry 읽기 실패 {dir}: {e}"))?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("conf") { continue; }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                map.insert(name.to_string(), content);
-            }
-        }
+        let content = fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("config 읽기 실패 {}: {e}", path.display()))?;
+        let name = path.file_name().and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("config filename 추출 실패: {}", path.display()))?
+            .to_string();
+        map.insert(name, content);
     }
     Ok(map)
+}
+
+// 노드 이름 검증 — '.'/'..' 와 path separator 차단.
+fn validate_node(node: &str) -> anyhow::Result<()> {
+    if node.is_empty() { anyhow::bail!("node 이름 비어 있음"); }
+    if node == "." || node == ".." {
+        anyhow::bail!("node 이름이 디렉토리 참조: {node:?}");
+    }
+    if !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("node 이름은 [A-Za-z0-9_-]만 허용 (.도 차단): {node:?}");
+    }
+    Ok(())
 }
 
 // 노드 이름 자동 감지: pvecm status가 우선 (정확한 PVE 노드명),
@@ -181,7 +208,8 @@ fn create(action: &str, node: Option<&str>, json: bool) -> anyhow::Result<()> {
         Some(n) => n.to_string(),
         None => detect_node()?,
     };
-    let id = unique_snapshot_id()?;
+    validate_node(&node)?;
+    let id = reserve_snapshot_id()?;
     let lxc_configs = collect_lxc_configs(&node)?;
     // 빈 스냅샷 거부 — destructive op 안전망인데 백업 없으면 의미 없음.
     if lxc_configs.is_empty() {
@@ -271,10 +299,7 @@ fn restore(id: &str, force: bool) -> anyhow::Result<()> {
     }
     let node = snap.node.as_deref()
         .ok_or_else(|| anyhow::anyhow!("스냅샷에 노드 이름 없음 — restore 불가"))?;
-    // 노드 이름도 검증 (snapshot이 조작됐을 경우 대비)
-    if !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
-        anyhow::bail!("스냅샷의 node 이름이 비정상: {node:?}");
-    }
+    validate_node(node)?;
     let target_dir = PathBuf::from(format!("/etc/pve/nodes/{node}/lxc"));
     if !target_dir.exists() {
         anyhow::bail!("대상 디렉토리 없음 (Proxmox 아닌 환경?): {}", target_dir.display());
@@ -405,6 +430,24 @@ mod tests {
     fn config_filename_allowed() {
         assert!(validate_config_filename("100.conf").is_ok());
         assert!(validate_config_filename("abc-test.conf").is_ok());
+    }
+
+    #[test]
+    fn node_name_traversal_rejected() {
+        assert!(validate_node("..").is_err());
+        assert!(validate_node(".").is_err());
+        assert!(validate_node("a/b").is_err());
+        assert!(validate_node("a.b").is_err()); // '.'도 차단 (..로 조립 가능)
+        assert!(validate_node("").is_err());
+        assert!(validate_node("foo bar").is_err());
+    }
+
+    #[test]
+    fn node_name_allowed() {
+        assert!(validate_node("pve").is_ok());
+        assert!(validate_node("ranode-3960x").is_ok());
+        assert!(validate_node("node_2").is_ok());
+        assert!(validate_node("ABC123").is_ok());
     }
 
     #[test]
