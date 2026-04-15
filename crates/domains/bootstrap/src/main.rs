@@ -100,29 +100,29 @@ impl Tool {
                 &["/usr/bin/gh"],
                 &["/etc/apt/sources.list.d/github-cli.list", "/usr/share/keyrings/githubcli-archive-keyring.gpg", "~/.config/gh/"],
                 None,
-                "sudo apt remove --purge gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg",
+                // remove_gh()와 정확 일치 (apt-get remove, --purge 아님)
+                "sudo apt-get remove -y gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg",
                 "rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정 (prelik 자동 삭제 안 함)",
             ),
             Self::Dotenvx => (
                 &["nodejs", "npm"],
-                &["/usr/local/bin/dotenvx (대안)", "npm -g @dotenvx/dotenvx (실제)"],
+                &["npm -g @dotenvx/dotenvx (prelik 설치 경로)"],
                 &["~/.npm/", "/usr/lib/node_modules/@dotenvx/dotenvx/"],
                 Some("prelik install이 npm 없으면 nodejs+npm을 같이 깔고 'sudo npm install -g @dotenvx/dotenvx'로 설치."),
-                "sudo npm uninstall -g @dotenvx/dotenvx\n# /usr/local/bin/dotenvx도 있으면: sudo rm -f /usr/local/bin/dotenvx",
-                "nodejs/npm은 다른 도구가 쓸 수 있어 자동 제거 안 함.\n.env.keys / .env.vault는 프로젝트별 별도 관리 (자동 삭제 금지).",
+                // remove_dotenvx()와 정확 일치 (npm uninstall만)
+                "sudo npm uninstall -g @dotenvx/dotenvx",
+                "nodejs/npm은 다른 도구가 쓸 수 있어 자동 제거 안 함.\n수동 설치한 /usr/local/bin/dotenvx가 있다면 별도 'sudo rm -f /usr/local/bin/dotenvx'.\n.env.keys / .env.vault는 프로젝트별 별도 관리 (자동 삭제 금지).",
             ),
             Self::Nickel => (
                 &[],
                 &["/usr/local/bin/nickel (바이너리 다운로드 성공 시)", "~/.cargo/bin/nickel (cargo install 폴백)"],
                 &[],
                 Some("GitHub 다운로드 실패 시 'cargo install nickel-lang-cli'로 폴백됨. 두 경로 모두 확인 필요."),
-                "sudo rm -f /usr/local/bin/nickel",
-                "cargo install로 깔렸다면: cargo uninstall nickel-lang-cli",
+                // remove_nickel()와 정확 일치 (which 결과로 분기)
+                "# remove_nickel()는 'which nickel' 결과로 분기:\n#   /usr/local/bin/nickel  → sudo rm -f /usr/local/bin/nickel\n#   ~/.cargo/bin/nickel    → cargo uninstall nickel-lang-cli (실패 시 rm)\n#   기타                   → 수동 제거 안내",
+                "두 경로 모두에 nickel이 있을 수 있음 — 'prelik run bootstrap remove --only nickel'은\n현재 PATH가 가리키는 첫 nickel만 제거. 나머지 경로는 직접 확인.",
             ),
         };
-        // legacy alias: v1.9.7 호환을 위한 합쳐진 uninstall 텍스트
-        let combined_uninstall = format!("{prelik_does}\n# 사용자 후속 정리:\n{}",
-            manual.lines().map(|l| format!("# {l}")).collect::<Vec<_>>().join("\n"));
         serde_json::json!({
             "schema_version": 2,
             "tool": self.name(),
@@ -133,9 +133,9 @@ impl Tool {
             "warning": warning,
             "prelik_remove_does": prelik_does,
             "manual_followup": manual,
-            // ↓ v1.9.7 호환 alias (deprecated, schema_version 3에서 제거 예정)
-            "apt_packages": static_pkgs,
-            "uninstall": combined_uninstall,
+            // ⚠ v1.9.7 alias 제거 — 의미 변경(dotenvx의 apt_packages가 [] → ["nodejs","npm"])이라
+            // 같은 키로 호환 보장 불가. v1.9.7 클라이언트는 v1.9.10+로 업그레이드 필요.
+            // schema_version 필드로 분기.
         })
     }
 }

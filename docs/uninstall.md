@@ -285,7 +285,7 @@ prelik run bootstrap manifest --only gh   # 특정 도구만
     rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정
 ```
 
-manifest의 **`uninstall_actual`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치합니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요.
+manifest의 **`prelik_remove_does`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치하며, **`manual_followup`** 은 prelik이 자동으로 안 지우는 잔여물입니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요. JSON 사용 시 `schema_version`으로 분기 (현재 = 2).
 
 추가 주의:
 - **apt**: prelik의 `remove --only apt`는 `build-essential`만 제거합니다 (curl/git/jq 등 시스템 핵심은 보존). manifest의 `static_install_packages`를 그대로 `apt remove --purge`하지 마세요.
