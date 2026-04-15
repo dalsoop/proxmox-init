@@ -79,6 +79,15 @@ enum Cmd {
         #[arg(long)]
         domain: String,
     },
+    /// Cloudflare Pages에 정적 사이트 배포 (wrangler 래퍼)
+    PagesDeploy {
+        /// 프로젝트 이름
+        #[arg(long)]
+        project: String,
+        /// 배포할 디렉토리
+        #[arg(long)]
+        directory: String,
+    },
     Doctor,
 }
 
@@ -117,8 +126,30 @@ fn main() -> anyhow::Result<()> {
         Cmd::EmailWorkerAttachAll { worker, dry_run } => worker_attach_all(&email, &key, &worker, dry_run),
         Cmd::SslIssue { domain, wildcard } => ssl_issue(&email, &key, &domain, wildcard),
         Cmd::SslRenew { domain } => ssl_renew(&domain),
+        Cmd::PagesDeploy { project, directory } => pages_deploy(&project, &directory),
         Cmd::Doctor => unreachable!("Doctor는 위에서 early return"),
     }
+}
+
+fn pages_deploy(project: &str, directory: &str) -> anyhow::Result<()> {
+    println!("=== CF Pages 배포: {project} ← {directory} ===");
+    if !std::path::Path::new(directory).exists() {
+        anyhow::bail!("디렉토리 없음: {directory}");
+    }
+    if !common::has_cmd("wrangler") {
+        anyhow::bail!(
+            "wrangler 미설치. 설치: npm install -g wrangler\n\
+             또는 npx wrangler pages deploy {directory} --project-name={project}"
+        );
+    }
+    let status = std::process::Command::new("wrangler")
+        .args(["pages", "deploy", directory, "--project-name", project])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("wrangler 배포 실패 (exit: {})", status.code().unwrap_or(-1));
+    }
+    println!("✓ 배포 완료");
+    Ok(())
 }
 
 /// acme.sh 실제 경로 찾기.

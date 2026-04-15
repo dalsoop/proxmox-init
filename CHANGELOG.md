@@ -2,6 +2,22 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [1.2.0] - 2026-04-15
+
+### Added
+- **backup 도메인 신규** (15번째 도메인)
+  - `now`: 즉시 vzdump (--storage --mode)
+  - `list`: 백업 파일 목록 (vmid 필터)
+  - `schedule-add`: pvesh로 Proxmox backup job 등록 (schedule/keep/prune)
+  - `schedule-list/remove`: backup job 관리
+  - `restore`: pct restore 또는 qmrestore 자동 분기
+- **cloudflare pages-deploy**: wrangler pages deploy 래퍼
+  - `--project X --directory dist`
+
+### 총 15 도메인
+ai, account, backup, bootstrap, cloudflare, comfyui, connect, host, lxc,
+mail, nas, telegram, traefik, vm, workspace
+
 ## [1.1.0] - 2026-04-15
 
 ### Added
