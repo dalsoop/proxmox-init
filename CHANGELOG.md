@@ -2,6 +2,16 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.6] - 2026-04-15
+
+### Fixed (Codex 5차 — v0.7.5 회귀 수정)
+- **P1 install_many short-circuit 철회**: bootstrap 실패가 뒤 도메인의
+  바이너리 다운로드를 막을 이유 없음. 각 도메인은 독립적으로 GitHub
+  Release에서 내려받으므로 실패 누적만 하고 계속 진행.
+- **P2 ai hook legacy marker 인식**: v0.7.4에서 등록된 `prelik-adv-review-`
+  marker 훅이 업그레이드 후 사라지지 않던 문제. retain 필터가 현재 +
+  legacy marker 둘 다 제거하도록 보강.
+
 ## [0.7.5] - 2026-04-15
 
 ### Fixed (Codex 4차 리뷰)
