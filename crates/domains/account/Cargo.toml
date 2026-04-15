@@ -1,0 +1,13 @@
+[package]
+name = "prelik-account"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "prelik-account"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+prelik-core = { workspace = true }
+anyhow = { workspace = true }

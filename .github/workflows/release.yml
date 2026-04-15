@@ -48,7 +48,7 @@ jobs:
             tar czf "dist/prelik-${TARGET}.tar.gz" -C "$BIN_DIR" prelik
           fi
           # Domains: prelik-{domain}-{target}.tar.gz
-          for bin in prelik-ai prelik-bootstrap prelik-cloudflare prelik-host prelik-nas prelik-workspace prelik-connect prelik-lxc prelik-mail prelik-traefik; do
+          for bin in prelik-ai prelik-bootstrap prelik-cloudflare prelik-host prelik-nas prelik-workspace prelik-account prelik-connect prelik-lxc prelik-mail prelik-traefik; do
             if [ -f "$BIN_DIR/$bin" ]; then
               tar czf "dist/${bin}-${TARGET}.tar.gz" -C "$BIN_DIR" "$bin"
             fi

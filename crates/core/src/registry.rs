@@ -75,6 +75,7 @@ impl Registry {
             ("host", "호스트 시스템 관리 (status/monitor/ssh-keygen/smb-open)", true),
             ("nas", "NAS 마운트 관리 (SMB/CIFS + NFS)", true),
             ("workspace", "tmux + shell alias", true),
+            ("account", "리눅스 계정 관리", true),
             ("connect", "외부 서비스 연결 관리 (.env + dotenvx)", true),
             ("lxc", "LXC 수명 관리 (Proxmox pct 래퍼)", true),
             ("traefik", "Traefik 리버스 프록시", true),
