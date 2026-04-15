@@ -295,18 +295,25 @@ fn list(json: bool) -> anyhow::Result<()> {
 }
 
 fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
-    let out = common::run("pct", &["status", vmid])?;
     if !json {
+        let out = common::run("pct", &["status", vmid])?;
         println!("{out}");
         return Ok(());
     }
-    // 정확히 "status: <value>" 단일 라인만 허용. 추가 라인/스페이스 드리프트 모두 fail-fast.
-    if out.lines().count() != 1 {
-        anyhow::bail!("pct status 출력이 단일 라인이 아님: {out:?}");
+    // JSON 경로는 raw stdout을 받아 엄격 검증 (common::run의 trim 회피).
+    let output = std::process::Command::new("pct").args(["status", vmid]).output()?;
+    if !output.status.success() {
+        anyhow::bail!("pct status {vmid} 실패: {}", String::from_utf8_lossy(&output.stderr));
     }
-    let value = out.strip_prefix("status:")
-        .ok_or_else(|| anyhow::anyhow!("pct status 출력이 'status:'로 시작하지 않음: {out:?}"))?;
-    let payload = serde_json::json!({ "vmid": vmid, "status": value.trim() });
+    let raw = String::from_utf8(output.stdout)?;
+    // 정확히 "status: <value>\n" 한 줄만 허용 — 트레일링 \n 1개까지만.
+    let body = raw.strip_suffix('\n').unwrap_or(&raw);
+    if body.contains('\n') {
+        anyhow::bail!("pct status 출력이 단일 라인이 아님: {raw:?}");
+    }
+    let value = body.strip_prefix("status: ")
+        .ok_or_else(|| anyhow::anyhow!("pct status 출력 형식이 'status: <value>' 아님: {raw:?}"))?;
+    let payload = serde_json::json!({ "vmid": vmid, "status": value });
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
 }
