@@ -300,13 +300,12 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
         println!("{out}");
         return Ok(());
     }
-    // 정확히 "status: <value>" 형식 요구 — 키가 'status'가 아니거나
-    // 'warning:' 같은 prefix가 붙으면 fail-fast.
-    let (key, value) = out.split_once(':')
-        .ok_or_else(|| anyhow::anyhow!("pct status 출력에 ':' 없음: {out:?}"))?;
-    if key.trim() != "status" {
-        anyhow::bail!("pct status 출력 형식 변경 (key='{}'): {out:?}", key.trim());
+    // 정확히 "status: <value>" 단일 라인만 허용. 추가 라인/스페이스 드리프트 모두 fail-fast.
+    if out.lines().count() != 1 {
+        anyhow::bail!("pct status 출력이 단일 라인이 아님: {out:?}");
     }
+    let value = out.strip_prefix("status:")
+        .ok_or_else(|| anyhow::anyhow!("pct status 출력이 'status:'로 시작하지 않음: {out:?}"))?;
     let payload = serde_json::json!({ "vmid": vmid, "status": value.trim() });
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
