@@ -100,10 +100,13 @@ enum Audience {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // doctor는 자체적으로 상태만 보여주는 용도 — creds 없어도 동작
-    if matches!(cli.cmd, Cmd::Doctor) {
-        doctor();
-        return Ok(());
+    // doctor + pages-deploy는 CF API 키 불필요 (wrangler는 자체 인증)
+    match &cli.cmd {
+        Cmd::Doctor => { doctor(); return Ok(()); }
+        Cmd::PagesDeploy { project, directory } => {
+            return pages_deploy(project, directory);
+        }
+        _ => {}
     }
     let (email, key) = creds()?;
     match cli.cmd {
@@ -126,8 +129,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::EmailWorkerAttachAll { worker, dry_run } => worker_attach_all(&email, &key, &worker, dry_run),
         Cmd::SslIssue { domain, wildcard } => ssl_issue(&email, &key, &domain, wildcard),
         Cmd::SslRenew { domain } => ssl_renew(&domain),
-        Cmd::PagesDeploy { project, directory } => pages_deploy(&project, &directory),
-        Cmd::Doctor => unreachable!("Doctor는 위에서 early return"),
+        Cmd::Doctor | Cmd::PagesDeploy { .. } => unreachable!("위에서 early return"),
     }
 }
 

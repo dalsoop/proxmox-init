@@ -95,11 +95,15 @@ fn now(vmid: &str, storage: &str, mode: &str) -> anyhow::Result<()> {
 
 fn list(vmid: Option<&str>, dir: &str) -> anyhow::Result<()> {
     println!("=== 백업 파일 목록 ({dir}) ===");
+    // LXC: *.tar.zst / .tar.gz
+    // QEMU(VM): *.vma.zst / .vma.gz / .vma.lzo
     let pattern = match vmid {
-        Some(v) => format!("vzdump-*-{v}-*.tar.zst vzdump-*-{v}-*.tar.gz"),
-        None => "vzdump-*.tar.zst vzdump-*.tar.gz".to_string(),
+        Some(v) => format!(
+            "vzdump-*-{v}-*.tar.zst vzdump-*-{v}-*.tar.gz vzdump-*-{v}-*.vma.zst vzdump-*-{v}-*.vma.gz vzdump-*-{v}-*.vma.lzo"
+        ),
+        None => "vzdump-*.tar.zst vzdump-*.tar.gz vzdump-*.vma.zst vzdump-*.vma.gz vzdump-*.vma.lzo".to_string(),
     };
-    // ls로 파일 목록 + 크기
+    // ls로 파일 목록 + 크기 — 패턴 미매칭 오류 억제
     let cmd = format!(
         "ls -lah {dir}/{pattern} 2>/dev/null | awk '{{print $NF, \"(\", $5, \")\"}}'"
     );
