@@ -1,5 +1,9 @@
 # prelik-init
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/dalsoop/prelik-init/releases/tag/v1.0.0)
+[![Codex Reviews](https://img.shields.io/badge/codex--reviewed-14x-green)]()
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
+
 > Proxmox/LXC/Debian 서버용 **도메인 기반 설치형 CLI**.
 > 하나의 바이너리가 아닌, 각 도메인이 독립 바이너리로 배포됩니다.
 
@@ -85,13 +89,19 @@ prelik run bootstrap remove  --only nickel         # 선택 제거
 
 | 도메인 | 기능 | 주요 커맨드 |
 |--------|------|------------|
-| **bootstrap** | apt/rust/gh/dotenvx/nickel 의존성 | `install`, `doctor` |
-| **lxc** | Proxmox LXC 수명관리 | `list`, `create`, `delete`, `backup`, `enter` |
-| **traefik** | 리버스 프록시 + compose 재생성 | `recreate`, `route-add`, `route-list` |
-| **mail** | Maddy + Mailpit + Postfix relay | `install-mailpit`, `postfix-relay` |
-| **cloudflare** | DNS (audience 기반) + Email Worker | `dns-add`, `email-worker-attach-all` |
-| **connect** | .env + dotenvx 암호화 | `set`, `list`, `encrypt` |
+| **account** | 리눅스 계정 관리 | `create`, `remove`, `ssh-key-add` |
 | **ai** | Claude/Codex CLI + 플러그인 | `install`, `octopus`, `superpowers`, `codex-plugin` |
+| **bootstrap** | 의존성 (apt/rust/gh/dotenvx/nickel) | `install --only`, `remove`, `doctor` |
+| **cloudflare** | DNS CRUD + Email Worker | `dns-add/list/update/delete`, `email-worker-attach-all --dry-run` |
+| **comfyui** | GPU LXC + ComfyUI 설치 | `install`, `gpu-passthrough`, `status` |
+| **connect** | .env + dotenvx 암호화 | `set`, `list`, `encrypt` |
+| **host** | 호스트 시스템 관리 | `status`, `monitor`, `ssh-keygen`, `smb-open/close` |
+| **lxc** | Proxmox LXC 수명관리 | `list`, `create`, `delete`, `backup`, `enter` |
+| **mail** | Maddy + Mailpit + Postfix relay | `install-mailpit`, `postfix-relay` |
+| **nas** | SMB/NFS 마운트 | `mount --protocol smb|nfs`, `unmount`, `list` |
+| **telegram** | 봇 관리 + 발송 | `register`, `send`, `verify` |
+| **traefik** | 리버스 프록시 | `recreate`, `route-add`, `route-list` |
+| **workspace** | tmux + shell alias | `tmux-setup`, `shell-setup` |
 
 ---
 

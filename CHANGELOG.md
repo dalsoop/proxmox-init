@@ -2,6 +2,63 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [1.0.0] - 2026-04-15
+
+### 🎉 첫 공식 릴리스
+
+13개 도메인, 14회 Codex 어드버서리얼 리뷰 통과, 26개 이슈 반영 후 v1.0.0 승격.
+
+### 설치
+
+```bash
+curl -fsSL https://install.prelik.com | bash
+prelik init
+```
+
+### 도메인 전체 (13)
+
+- **ai** — Claude/Codex CLI + 플러그인 (octopus, superpowers, codex-plugin)
+- **account** — 리눅스 계정 관리 (create/remove/ssh-key-add)
+- **bootstrap** — 의존성 (apt/rust/gh/dotenvx/nickel), 도구 단위 install/remove
+- **cloudflare** — DNS CRUD + Email Worker (audience 기반 proxied 자동)
+- **comfyui** — GPU LXC + ComfyUI 설치
+- **connect** — .env + dotenvx 암호화
+- **host** — 호스트 시스템 관리 (status/monitor/ssh-keygen/smb)
+- **lxc** — Proxmox LXC 수명관리
+- **mail** — Maddy + Mailpit + Postfix relay
+- **nas** — SMB/NFS 마운트 (credentials 파일 분리)
+- **telegram** — 봇 등록 + 메시지 발송 (범용)
+- **traefik** — Traefik 리버스 프록시 + compose 재생성
+- **workspace** — tmux + shell alias
+
+### 보안 강화
+
+- mktemp + chmod 600 + Drop 가드 (traefik/mail/nas/ai)
+- SMB credentials 파일 분리 (ps/cmdline/fstab 평문 차단)
+- postfix rollback (전체 파일 백업 + tee -a append)
+- install flock (동시 설치 race 차단)
+- ai hook marker 기반 filter (기존 Stop 훅 보존)
+- visudo -cf 검증 후 sudoers 설치
+- fstab append EOF 개행 체크
+- CF API 에러 구분 (401/403/429 별도 처리)
+
+### 품질
+
+- 14회 Codex 어드버서리얼 리뷰 통과 (P1 26건 수정)
+- CI smoke test 자동화 (모든 바이너리 --help + doctor)
+- 다중 도메인 + 프리셋 설치 (web/mail/dev/minimal)
+- Nickel SSOT 런타임 export
+- 도구 단위 선택 install/remove
+- CRUD 사이클 검증 (lxc, cloudflare dns, account)
+
+### 문서
+
+- README (빠른시작, 도메인 표, 설계 원칙)
+- CONTRIBUTING.md
+- CHANGELOG.md
+- docs/phs-vs-prelik.md (phs 내부 도구와 솔직한 비교)
+- examples/formbricks.md
+
 ## [0.13.2] - 2026-04-15
 
 ### Added (Phase 2 완료 — 3/3)
