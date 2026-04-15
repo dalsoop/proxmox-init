@@ -72,7 +72,7 @@ impl Registry {
             ("traefik", "Traefik 리버스 프록시", true),
             ("mail", "Maddy + Mailpit + Postfix relay 번들", true),
             ("cloudflare", "CF DNS/Email Routing/Worker", true),
-            ("ai", "Claude/Codex + 플러그인", false),
+            ("ai", "Claude/Codex + 플러그인", true),
         ] {
             domains.insert(
                 name.to_string(),

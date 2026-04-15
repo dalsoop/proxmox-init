@@ -1,0 +1,15 @@
+[package]
+name = "prelik-ai"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "prelik-ai"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+prelik-core = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

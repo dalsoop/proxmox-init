@@ -1,0 +1,10 @@
+name = "prelik-install-redirect"
+main = "install-redirect.js"
+compatibility_date = "2026-04-15"
+
+[[routes]]
+pattern = "install.prelik.com/*"
+zone_name = "prelik.com"
+
+[observability]
+enabled = true

@@ -75,7 +75,7 @@ in
     ai = {
       name = "ai",
       description = "Claude / Codex / 플러그인 (octopus, superpowers, codex-plugin)",
-      enabled = false,
+      enabled = true,
       tags = { product = 'ai, layer = 'tool, platform = 'any },
       provides = ["ai install", "ai octopus-install", "ai codex-plugin-install"],
     } | Domain,
