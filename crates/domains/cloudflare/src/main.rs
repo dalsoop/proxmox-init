@@ -118,18 +118,27 @@ fn worker_attach_all(email: &str, key: &str, worker: &str) -> anyhow::Result<()>
 
     let mut attached = 0;
     let mut skipped = 0;
+    let mut failed: Vec<String> = vec![];
+
     for z in arr {
         let Some(zid) = z["id"].as_str() else { continue };
         let Some(zname) = z["name"].as_str() else { continue };
 
-        let routing = cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing"), None);
-        let enabled = routing.ok()
-            .and_then(|r| r["enabled"].as_bool())
-            .unwrap_or(false);
-        if !enabled {
-            println!("  ⊘ {zname}: Email Routing 비활성화");
-            skipped += 1;
-            continue;
+        // Email Routing 상태 — 에러와 "비활성화"를 반드시 구분
+        match cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing"), None) {
+            Ok(r) => {
+                if !r["enabled"].as_bool().unwrap_or(false) {
+                    println!("  ⊘ {zname}: Email Routing 비활성화");
+                    skipped += 1;
+                    continue;
+                }
+            }
+            Err(e) => {
+                // 401/403/429 등 — 진단 가능하게 노출
+                println!("  ⚠ {zname}: routing 상태 조회 실패 ({e})");
+                failed.push(format!("{zname}: routing-check {e}"));
+                continue;
+            }
         }
 
         let body = serde_json::json!({
@@ -139,10 +148,19 @@ fn worker_attach_all(email: &str, key: &str, worker: &str) -> anyhow::Result<()>
         });
         match cf_api(email, key, "PUT", &format!("/zones/{zid}/email/routing/rules/catch_all"), Some(&body.to_string())) {
             Ok(_) => { println!("  ✓ {zname}"); attached += 1; }
-            Err(e) => println!("  ✗ {zname}: {e}"),
+            Err(e) => {
+                println!("  ✗ {zname}: {e}");
+                failed.push(format!("{zname}: attach {e}"));
+            }
         }
     }
-    println!("\n결과: 연결 {attached}, 건너뜀 {skipped}");
+    println!("\n결과: 연결 {attached}, 건너뜀 {skipped}, 실패 {}", failed.len());
+    if !failed.is_empty() {
+        for f in &failed {
+            eprintln!("  FAIL: {f}");
+        }
+        anyhow::bail!("일부 도메인 실패 ({}개)", failed.len());
+    }
     Ok(())
 }
 

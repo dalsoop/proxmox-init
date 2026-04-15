@@ -106,8 +106,12 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
         anyhow::bail!("Postfix 미설치. apt install postfix 먼저");
     }
 
-    // libsasl2-modules
-    common::run_bash("dpkg -s libsasl2-modules >/dev/null 2>&1 || sudo apt-get install -y libsasl2-modules").ok();
+    // libsasl2-modules (SASL plugin — 누락 시 relay가 조용히 깨짐)
+    if common::run("dpkg", &["-s", "libsasl2-modules"]).is_err() {
+        println!("  libsasl2-modules 설치...");
+        common::run_bash("sudo apt-get install -y libsasl2-modules")
+            .map_err(|e| anyhow::anyhow!("libsasl2-modules 설치 실패 (sudo/apt 확인): {e}"))?;
+    }
 
     // 기존 relay 라인 제거
     common::run_bash("sudo sed -i '/^relayhost[[:space:]]*=/d;/^smtp_sasl_/d;/^smtp_tls_security_level/d;/^sender_canonical_maps/d' /etc/postfix/main.cf")?;
@@ -169,9 +173,14 @@ fn read_host_env(key: &str) -> String {
 }
 
 fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
-    let tmp = format!("/tmp/prelik-{}", path.replace('/', "_"));
-    fs::write(&tmp, content)?;
+    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let tmp = out.trim().to_string();
+    let tmp_path = std::path::PathBuf::from(&tmp);
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+    let _g = Cleanup(tmp_path.clone());
+    fs::write(&tmp_path, content)?;
+    common::run("chmod", &["600", &tmp])?;
     common::run("pct", &["push", vmid, &tmp, path])?;
-    let _ = fs::remove_file(&tmp);
     Ok(())
 }

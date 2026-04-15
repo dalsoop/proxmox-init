@@ -169,10 +169,19 @@ fn read_host_env(key: &str) -> String {
 }
 
 fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
-    let tmp = format!("/tmp/prelik-{}", path.replace('/', "_"));
-    fs::write(&tmp, content)?;
-    common::run("pct", &["push", vmid, &tmp, path])?;
-    let _ = fs::remove_file(&tmp);
+    // mktemp: 소유자만 읽기 가능, race/심볼릭 링크 공격 회피
+    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let tmp = out.trim();
+    let tmp_path = std::path::PathBuf::from(tmp);
+    // 쓰기 실패해도 반드시 정리하도록 RAII 가드
+    struct Cleanup<'a>(&'a std::path::Path);
+    impl Drop for Cleanup<'_> { fn drop(&mut self) { let _ = fs::remove_file(self.0); } }
+    let _g = Cleanup(&tmp_path);
+
+    fs::write(&tmp_path, content)?;
+    // 소유자-only 권한 고정
+    common::run("chmod", &["600", tmp])?;
+    common::run("pct", &["push", vmid, tmp, path])?;
     Ok(())
 }
 

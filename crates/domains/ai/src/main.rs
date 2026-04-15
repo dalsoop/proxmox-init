@@ -79,20 +79,30 @@ fn install(vmid: Option<&str>) -> anyhow::Result<()> {
     if !has_on(vmid, "npm") {
         anyhow::bail!("npm 없음 — prelik install bootstrap 먼저");
     }
+    // pct exec는 이미 root로 실행되므로 sudo 불필요.
+    // 호스트는 필요 시 sudo 추가.
+    let needs_sudo = vmid.is_none() && unsafe { libc_geteuid() } != 0;
+    let sudo = if needs_sudo { "sudo " } else { "" };
+
     if !has_on(vmid, "claude") {
         println!("  claude 설치...");
-        run_on(vmid, "sudo npm install -g @anthropic-ai/claude-code")?;
+        run_on(vmid, &format!("{sudo}npm install -g @anthropic-ai/claude-code"))?;
     } else {
         println!("  ✓ claude 이미 설치됨");
     }
     if !has_on(vmid, "codex") {
         println!("  codex 설치...");
-        run_on(vmid, "sudo npm install -g @openai/codex")?;
+        run_on(vmid, &format!("{sudo}npm install -g @openai/codex"))?;
     } else {
         println!("  ✓ codex 이미 설치됨");
     }
     println!("✓ AI CLI 설치 완료");
     Ok(())
+}
+
+unsafe fn libc_geteuid() -> u32 {
+    extern "C" { fn geteuid() -> u32; }
+    geteuid()
 }
 
 fn octopus_install(vmid: Option<&str>) -> anyhow::Result<()> {
@@ -173,23 +183,53 @@ fn adversarial_review_hook(enable: bool) -> anyhow::Result<()> {
     if !v.is_object() { v = serde_json::json!({}); }
     let obj = v.as_object_mut().unwrap();
 
+    // prelik 훅 식별자 — 기존 훅과 구분용
+    const PRELIK_MARKER: &str = "prelik-adv-review-";
+
+    let hook_cmd = format!(
+        "F=/tmp/.{PRELIK_MARKER}$(echo $CLAUDE_SESSION_ID | md5sum | cut -c1-8); if [ -f $F ]; then exit 0; fi; touch $F; cat <<EOF\n{{\"decision\":\"block\",\"reason\":\"지금까지의 작업을 Codex로 어드버서리얼 리뷰하세요. 실행: /codex:adversarial-review\"}}\nEOF"
+    );
+
+    let hooks_root = obj.entry("hooks".to_string()).or_insert(serde_json::json!({}));
+    let hooks_root = hooks_root.as_object_mut().unwrap();
+
+    // 기존 Stop 배열 파싱 — 없으면 빈 배열
+    let mut stop_arr: Vec<serde_json::Value> = hooks_root
+        .get("Stop")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // prelik 훅 필터링 (marker 포함 command)
+    stop_arr.retain(|entry| {
+        let inner = entry.get("hooks").and_then(|h| h.as_array());
+        !inner.map(|arr| {
+            arr.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.contains(PRELIK_MARKER))
+                    .unwrap_or(false)
+            })
+        }).unwrap_or(false)
+    });
+
     if enable {
-        let hook = serde_json::json!({
+        let prelik_entry = serde_json::json!({
             "hooks": [{
                 "type": "command",
-                "command": "F=/tmp/.prelik-adv-review-$(echo $CLAUDE_SESSION_ID | md5sum | cut -c1-8); if [ -f $F ]; then exit 0; fi; touch $F; cat <<EOF\n{\"decision\":\"block\",\"reason\":\"지금까지의 작업을 Codex로 어드버서리얼 리뷰하세요. 실행: /codex:adversarial-review\"}\nEOF"
+                "command": hook_cmd,
             }]
         });
-        let hooks = obj.entry("hooks".to_string()).or_insert(serde_json::json!({}));
-        if let Some(h) = hooks.as_object_mut() {
-            h.insert("Stop".into(), serde_json::json!([hook]));
-        }
-        println!("  Stop 훅 등록 (세션당 1회 가드)");
+        stop_arr.push(prelik_entry);
+        println!("  Stop 훅 등록 (기존 훅 {} 개 유지)", stop_arr.len() - 1);
     } else {
-        if let Some(hooks) = obj.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-            hooks.remove("Stop");
-        }
-        println!("  Stop 훅 제거");
+        println!("  prelik Stop 훅만 제거 (기존 {} 개 유지)", stop_arr.len());
+    }
+
+    if stop_arr.is_empty() {
+        hooks_root.remove("Stop");
+    } else {
+        hooks_root.insert("Stop".into(), serde_json::json!(stop_arr));
     }
 
     let pretty = serde_json::to_string_pretty(&v)?;
