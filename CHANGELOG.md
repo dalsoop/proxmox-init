@@ -2,6 +2,17 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.3] - 2026-04-15
+
+### Fixed (Codex 재리뷰)
+- **P1 mail postfix-relay 롤백**: main.cf rewrite 후 postfix check / reload
+  실패 시 자동으로 백업 복원. outbound mail 단절 방지.
+- **P2 cf email-worker-attach-all --dry-run**: GET catch-all 실패를
+  "(없음)"으로 은닉하지 않고 명시적으로 실패 리스트에 추가. 403/429가
+  미리보기를 거짓으로 만들던 문제 해결.
+- **P3 postfix 백업 nanosecond**: 동일 초 내 재실행 시 이전 백업이
+  덮어써지는 것 방지. `%Y%m%d-%H%M%S.%N` 포맷.
+
 ## [0.7.2] - 2026-04-15
 
 ### Security / Safety

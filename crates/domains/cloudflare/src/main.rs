@@ -148,13 +148,20 @@ fn worker_attach_all(email: &str, key: &str, worker: &str, dry_run: bool) -> any
         }
 
         if dry_run {
-            // 현재 catch-all rule도 함께 표시
-            let current = cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing/rules/catch_all"), None);
-            let current_action = current.ok()
-                .and_then(|v| v["actions"].as_array().map(|a| a.iter().map(|x| x["type"].as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join(",")))
-                .unwrap_or_else(|| "(없음)".into());
-            println!("  ⤳ {zname}: 현재 catch-all=[{current_action}] → worker:{worker}");
-            attached += 1;
+            match cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing/rules/catch_all"), None) {
+                Ok(v) => {
+                    let current_action = v["actions"].as_array()
+                        .map(|a| a.iter().map(|x| x["type"].as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join(","))
+                        .unwrap_or_else(|| "(없음)".into());
+                    println!("  ⤳ {zname}: 현재 catch-all=[{current_action}] → worker:{worker}");
+                    attached += 1;
+                }
+                Err(e) => {
+                    // read 실패는 명시적으로 노출 (403/429 등 진짜 문제 숨기지 않음)
+                    println!("  ⚠ {zname}: 현재 catch-all 조회 실패 ({e}) — 미리보기 신뢰 불가");
+                    failed.push(format!("{zname}: dry-run read {e}"));
+                }
+            }
             continue;
         }
 
