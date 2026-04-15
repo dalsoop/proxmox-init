@@ -103,13 +103,8 @@ fn doctor() -> anyhow::Result<()> {
 }
 
 fn which(bin: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // 외부 which 바이너리 의존 회피 — PATH 직접 탐색 (which crate)
+    ::which::which(bin).is_ok()
 }
 
 fn list(filter_storage: Option<&str>) -> anyhow::Result<()> {

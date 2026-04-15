@@ -71,13 +71,8 @@ fn bin_ok(b: &str) -> &'static str {
     if which(b) { "✓" } else { "✗" }
 }
 fn which(b: &str) -> bool {
-    Command::new("which")
-        .arg(b)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // 외부 which 바이너리 의존 회피 — PATH 직접 탐색 (which crate)
+    ::which::which(b).is_ok()
 }
 
 fn host() -> anyhow::Result<()> {
