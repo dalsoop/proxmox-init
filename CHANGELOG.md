@@ -2,6 +2,21 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.5] - 2026-04-15
+
+### Fixed (Codex 4차 리뷰)
+- **P1 postfix 백업 실패 마스킹**: `[ -e X ] && cp || true` 패턴이 cp 실패도
+  true로 삼켰음. 존재 판정을 Rust로 옮기고 cp 실패는 명시적 에러.
+- **P2 롤백 안내 불완전**: 출력 메시지가 `main.cf`만 복원하라고 안내했으나
+  sasl_passwd/sender_canonical도 덮어쓰므로 `backup_dir/*` 전체 복원 + postmap
+  재실행 명령으로 수정.
+
+### Enhanced
+- **install_many 단락 평가**: `bootstrap` 첫 도메인이 실패하면 의존성 없는
+  뒤 도메인은 의미 없으므로 중단하고 남은 목록을 에러 메시지에 표시.
+- **ai hook marker 강화**: `prelik-adv-review-` → `__PRELIK_AI_ADV_REVIEW_HOOK__`
+  로 변경. 사용자 자체 훅 커맨드에 오판 가능성 차단.
+
 ## [0.7.4] - 2026-04-15
 
 ### Fixed (Codex 3차 리뷰)

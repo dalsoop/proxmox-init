@@ -122,10 +122,18 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
         files: vec!["main.cf", "sasl_passwd", "sasl_passwd.db", "sender_canonical"],
     };
     for f in &backup.files {
-        // 존재하는 파일만 백업 (sasl_passwd 등은 이 실행 전에는 없을 수도)
+        let src = format!("/etc/postfix/{f}");
+        // 존재 여부를 먼저 Rust 쪽에서 판정 — 쉘 단락 평가의 true 마스킹 회피
+        let exists = std::path::Path::new(&src).exists();
+        if !exists {
+            continue;
+        }
+        // 존재하면 cp는 반드시 성공해야 함. 실패는 명시적 에러.
         common::run_bash(&format!(
-            "[ -e /etc/postfix/{f} ] && sudo cp -a /etc/postfix/{f} {}/{f} || true",
+            "sudo cp -a {src} {}/{f}",
             backup.dir
+        )).map_err(|e| anyhow::anyhow!(
+            "백업 실패 ({f}): {e} — /etc/postfix 권한/공간 확인 필요"
         ))?;
     }
     println!("  백업: {}", backup.dir);
@@ -222,7 +230,11 @@ sender_canonical_maps = regexp:/etc/postfix/sender_canonical
     }
 
     println!("✓ Postfix → [{maddy_ip}]:{port} relay 설정 완료");
-    println!("  롤백: sudo cp -a {backup_dir}/main.cf /etc/postfix/ && sudo systemctl reload postfix");
+    println!("  롤백 (전체 파일 복원):");
+    println!("    sudo cp -a {backup_dir}/* /etc/postfix/ 2>/dev/null");
+    println!("    sudo postmap /etc/postfix/sasl_passwd 2>/dev/null");
+    println!("    sudo systemctl reload postfix");
+    println!("  (백업에 없던 파일은 현재 파일 그대로 유지됨 — 필요시 수동 rm)");
     Ok(())
 }
 

@@ -240,14 +240,27 @@ fn install_many(mut domains: Vec<String>, preset: Option<&str>) -> anyhow::Resul
 
     let total = domains.len();
     let mut failed = vec![];
-    for (i, d) in domains.iter().enumerate() {
+    let mut aborted_remaining: Vec<String> = vec![];
+    let mut iter = domains.iter().enumerate().peekable();
+    while let Some((i, d)) = iter.next() {
         println!("[{}/{total}] {d}", i + 1);
         if let Err(e) = install(d) {
             eprintln!("  ✗ {d}: {e}");
             failed.push(d.clone());
+            // bootstrap이 첫 실패면 뒤 도메인은 의미 없음
+            if d == "bootstrap" {
+                eprintln!("\n⚠ bootstrap 실패 — 남은 도메인 설치 중단");
+                while let Some((_, rest)) = iter.next() {
+                    aborted_remaining.push(rest.clone());
+                }
+                break;
+            }
         }
     }
 
+    if !aborted_remaining.is_empty() {
+        eprintln!("  중단된 대기 도메인: {}", aborted_remaining.join(", "));
+    }
     if !failed.is_empty() {
         anyhow::bail!("{}개 도메인 설치 실패: {}", failed.len(), failed.join(", "));
     }

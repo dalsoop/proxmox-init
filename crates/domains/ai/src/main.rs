@@ -184,7 +184,7 @@ fn adversarial_review_hook(enable: bool) -> anyhow::Result<()> {
     let obj = v.as_object_mut().unwrap();
 
     // prelik 훅 식별자 — 기존 훅과 구분용
-    const PRELIK_MARKER: &str = "prelik-adv-review-";
+    const PRELIK_MARKER: &str = "__PRELIK_AI_ADV_REVIEW_HOOK__";
 
     let hook_cmd = format!(
         "F=/tmp/.{PRELIK_MARKER}$(echo $CLAUDE_SESSION_ID | md5sum | cut -c1-8); if [ -f $F ]; then exit 0; fi; touch $F; cat <<EOF\n{{\"decision\":\"block\",\"reason\":\"지금까지의 작업을 Codex로 어드버서리얼 리뷰하세요. 실행: /codex:adversarial-review\"}}\nEOF"
