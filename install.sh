@@ -1,11 +1,13 @@
 #!/bin/bash
+# install.prelik.com → 이 스크립트.
+# 환경변수:
+#   PRELIK_BIN_DIR  설치 위치 (기본: root → /usr/local/bin, user → ~/.local/bin)
+#   PRELIK_VERSION  특정 버전 핀 (예: v1.5.5). 미지정 시 latest.
+#   PRELIK_FORCE    1 이면 같은 버전이어도 재설치.
 set -euo pipefail
 REPO="dalsoop/prelik-init"
 
-# BIN_DIR 결정:
-# 1) 유저가 PRELIK_BIN_DIR 지정 → 그대로 사용 (없으면 생성 시도)
-# 2) root → /usr/local/bin
-# 3) 나머지 → ~/.local/bin
+# ---------- BIN_DIR 결정 + 검증 ----------
 if [ -n "${PRELIK_BIN_DIR:-}" ]; then
     BIN_DIR="$PRELIK_BIN_DIR"
 elif [ "$(id -u)" -eq 0 ]; then
@@ -13,72 +15,127 @@ elif [ "$(id -u)" -eq 0 ]; then
 else
     BIN_DIR="$HOME/.local/bin"
 fi
-
-# mkdir → 부모 디렉토리 쓰기 가능 여부 확인으로 override 무시 방지
 if ! mkdir -p "$BIN_DIR" 2>/dev/null; then
-    echo "✗ BIN_DIR 생성 실패: $BIN_DIR"
-    echo "  PRELIK_BIN_DIR 환경변수로 쓰기 가능한 경로를 지정하세요."
+    echo "✗ BIN_DIR 생성 실패: $BIN_DIR — PRELIK_BIN_DIR로 쓰기 가능한 경로를 지정하세요." >&2
     exit 1
 fi
 if [ ! -w "$BIN_DIR" ]; then
-    echo "✗ BIN_DIR 쓰기 권한 없음: $BIN_DIR"
-    echo "  sudo 또는 다른 PRELIK_BIN_DIR 사용."
+    echo "✗ BIN_DIR 쓰기 권한 없음: $BIN_DIR" >&2
     exit 1
 fi
 
+# ---------- ARCH ----------
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64) TARGET="x86_64-linux" ;;
+    x86_64)        TARGET="x86_64-linux" ;;
     aarch64|arm64) TARGET="aarch64-linux" ;;
-    *) echo "✗ 지원하지 않는 아키텍처: $ARCH"; exit 1 ;;
+    *) echo "✗ 지원하지 않는 아키텍처: $ARCH" >&2; exit 1 ;;
 esac
 
 echo "=== prelik 설치 ==="
-echo "  bin_dir: $BIN_DIR"
-echo "  target:  $TARGET"
+echo "  bin_dir : $BIN_DIR"
+echo "  target  : $TARGET"
 
-LATEST=$(curl -sSL --fail \
-    -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
-    | grep '"tag_name"' | head -1 | cut -d'"' -f4 || true)
-if [ -z "$LATEST" ]; then
-    echo "✗ 릴리스를 찾을 수 없음. 먼저 'cargo install --path crates/cli' 로 로컬 설치하거나 태그를 푸시하세요."
-    exit 1
+# ---------- 버전 결정 (PRELIK_VERSION 또는 latest, retry) ----------
+fetch_with_retry() {
+    local url=$1 out=$2 attempt
+    for attempt in 1 2 3; do
+        if curl -sSL --fail \
+            --connect-timeout 10 --max-time 60 \
+            -H 'Accept: application/vnd.github+json' \
+            "$url" -o "$out" 2>/dev/null; then
+            return 0
+        fi
+        sleep $((attempt * 2))
+    done
+    return 1
+}
+
+if [ -n "${PRELIK_VERSION:-}" ]; then
+    VERSION="$PRELIK_VERSION"
+    case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac
+else
+    META=$(mktemp)
+    trap 'rm -f "$META"' EXIT
+    if ! fetch_with_retry "https://api.github.com/repos/$REPO/releases/latest" "$META"; then
+        echo "✗ GitHub API 요청 실패 (rate limit / 네트워크). PRELIK_VERSION으로 명시 설치 가능." >&2
+        exit 1
+    fi
+    VERSION=$(grep '"tag_name"' "$META" | head -1 | cut -d'"' -f4 || true)
+    rm -f "$META"; trap - EXIT
+    if [ -z "$VERSION" ]; then
+        echo "✗ 릴리스 태그를 추출하지 못함" >&2
+        exit 1
+    fi
+fi
+echo "  버전     : $VERSION"
+
+# ---------- 같은 버전 이미 설치되어 있으면 skip (PRELIK_FORCE=1로 무시) ----------
+# cargo workspace.version이 git tag와 분리돼 있어서 prelik --version 비교는 부정확.
+# 설치 시점에 태그를 마커 파일로 기록하고 다음 실행에서 비교한다.
+MARKER="$BIN_DIR/.prelik.version"
+if [ -x "$BIN_DIR/prelik" ] && [ -f "$MARKER" ] && [ -z "${PRELIK_FORCE:-}" ]; then
+    INSTALLED=$(cat "$MARKER" 2>/dev/null || true)
+    if [ "$INSTALLED" = "$VERSION" ]; then
+        echo "✓ 이미 $VERSION 설치됨 (PRELIK_FORCE=1로 재설치 가능)"
+        exit 0
+    fi
 fi
 
+# ---------- 다운로드 → atomic install ----------
 ASSET="prelik-${TARGET}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$LATEST/$ASSET"
+URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+echo "  다운로드 : $URL"
 
-echo "  버전:    $LATEST"
-echo "  다운로드: $URL"
-if ! curl -sSL --fail -o "$TMP/$ASSET" "$URL"; then
-    echo "✗ 다운로드 실패"
-    exit 1
-fi
+for attempt in 1 2 3; do
+    if curl -sSL --fail \
+        --connect-timeout 10 --max-time 120 \
+        -o "$TMP/$ASSET" "$URL" 2>/dev/null; then
+        break
+    fi
+    if [ "$attempt" = 3 ]; then
+        echo "✗ 다운로드 실패 (3회 재시도)" >&2
+        exit 1
+    fi
+    sleep $((attempt * 2))
+done
 
-# 최소 무결성 검증 (TLS + 파일 크기 + 압축 해제 성공)
+# 무결성: 크기 + gzip 매직
 SIZE=$(stat -c%s "$TMP/$ASSET" 2>/dev/null || stat -f%z "$TMP/$ASSET")
 if [ -z "$SIZE" ] || [ "$SIZE" -lt 1024 ]; then
-    echo "✗ 다운로드 파일이 비정상적으로 작음 (${SIZE} bytes) — MITM 또는 손상 의심"
+    echo "✗ 다운로드 파일이 비정상적으로 작음 (${SIZE} bytes) — MITM/손상 의심" >&2
     exit 1
 fi
-
-# gzip 매직 바이트 직접 검사 (file 커맨드 의존 제거 — slim 이미지에서 없음)
 MAGIC=$(head -c 2 "$TMP/$ASSET" | od -An -tx1 | tr -d ' \n' || true)
 if [ "$MAGIC" != "1f8b" ]; then
-    echo "✗ 다운로드 파일이 gzip 형식이 아님 (magic: $MAGIC) — HTML 에러 페이지 가능성"
+    echo "✗ gzip 형식 아님 (magic: $MAGIC) — HTML 에러 페이지 가능성" >&2
     exit 1
 fi
 
-if ! tar -xzf "$TMP/$ASSET" -C "$BIN_DIR"; then
-    echo "✗ 압축 해제 실패"
+# TMP에 풀고 atomic mv (실행 중 바이너리 교체 race + text file busy 회피)
+if ! tar -xzf "$TMP/$ASSET" -C "$TMP"; then
+    echo "✗ 압축 해제 실패" >&2
     exit 1
 fi
-chmod +x "$BIN_DIR/prelik"
+if [ ! -f "$TMP/prelik" ]; then
+    echo "✗ tarball에 prelik 바이너리가 없음" >&2
+    exit 1
+fi
+chmod 755 "$TMP/prelik"
+# mv는 같은 파일시스템이면 atomic. /tmp가 다른 fs일 수 있으므로 BIN_DIR 안에 staging.
+STAGING="$BIN_DIR/.prelik.new.$$"
+mv -f "$TMP/prelik" "$STAGING"
+if ! mv -f "$STAGING" "$BIN_DIR/prelik"; then
+    rm -f "$STAGING"
+    echo "✗ 최종 설치 mv 실패" >&2
+    exit 1
+fi
+# 설치 성공 — 마커에 태그 기록 (다음 실행에서 idempotent skip 판정)
+printf '%s\n' "$VERSION" > "$MARKER" 2>/dev/null || true
 
-# PATH 안내
+# ---------- PATH 안내 ----------
 if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$BIN_DIR"; then
     echo ""
     echo "  ⚠ PATH에 $BIN_DIR 없음. shell rc에 추가 권장:"
@@ -92,7 +149,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$BIN_DIR"; then
 fi
 
 echo ""
-echo "✓ prelik $LATEST 설치 완료"
+echo "✓ prelik $VERSION 설치 완료"
 echo "  다음 단계:"
 echo "    $BIN_DIR/prelik setup"
 echo "    $BIN_DIR/prelik install bootstrap"
