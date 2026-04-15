@@ -2,6 +2,189 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [1.9.x] — 2026-04-16 (uninstall + 시스템 정리)
+
+### v1.9.6 — NFS fstab replace TOCTOU 차단
+- `sudo mktemp /etc/...` + `sudo tee` + chown/chmod로 /tmp 심볼릭 링크 race 방지 (codex 65차 P1)
+
+### v1.9.5 — NAS 가이드 regex/순서, NFS 섹션 추가
+- 정규식을 옵션 순서 무관 (`credentials=/etc/cifs-credentials/` 단독)으로 수정 (codex 64차 P1)
+- §3.1 CIFS / §3.2 NFS 분리 (NFS-only 설치도 cleanup 가능)
+
+### v1.9.4 — NAS 제거 §3 재구성
+- "캡처 → 편집 → 삭제" 안전 순서를 본문 단계에 직접 반영 (codex 63차 P1)
+- `_netdev,nofail` + `cifs-credentials/` 조합 필터로 prelik 시그니처 한정
+- `sed -i.bak` + `mount -a` 검증
+
+### v1.9.3 — cifs 가이드 fstab 역추적
+- `safe_name` 비단사 회피 — fstab의 `credentials=` 경로 직접 grep (codex 62차 P1)
+
+### v1.9.2 — cifs safe_name 정확화
+- 비영숫자 `_` 치환 규칙 명시 + dot/IP 두 예시
+
+### v1.9.1 — uninstall purge dedup
+- `BTreeSet` + `canonicalize`로 `/etc/prelik` 중복 제거 (codex 60차 P1)
+- cifs 무차별 삭제 권장 → 선별 삭제 가이드
+
+### v1.9.0 — `prelik uninstall` + `docs/uninstall.md`
+- `prelik uninstall [--confirm] [--purge]` — dry-run 기본
+  - `/usr/local/bin` + `~/.local/bin` 양쪽 스캔
+  - `prelik-*` 도메인 바이너리 + `.prelik.version` 마커 수집
+  - `--purge`: `~/.config/prelik`, `/etc/prelik`, `/var/lib/prelik`까지
+  - LXC/VM/fstab/postfix/CF는 의도적으로 안 건드림 (데이터 유실 방지)
+- `docs/uninstall.md` — 10 섹션 가이드:
+  1. uninstall이 실제 하는 일 + 안 건드리는 항목
+  2. LXC/VM 정리 (vzdump 백업 → stop → delete --force)
+  3. NAS fstab + cifs-credentials (CIFS/NFS 분리)
+  4. Postfix relay 백업 디렉토리 복원
+  5. Traefik LXC + acme.json
+  6. Cloudflare DNS/Worker/Pages 수동 정리
+  7. dotenvx `.env.vault` + `.env.keys` 보존
+  8. systemd timers/services 비활성화
+  9. bootstrap 의존성 (manifest로 정확 안내 — v1.9.7)
+  10. 완료 검증 + 복구 절차
+
+---
+
+## [1.8.x] — 2026-04-15~16 (phs migration)
+
+### v1.8.16 — lxc init dpkg-query probe fail-open 차단
+- `pct_exec().unwrap_or_default()` → `?` 전파 (codex 58차 P1)
+- 각 패키지가 probe 출력에 없으면 fail-fast
+
+### v1.8.15 — lxc init 안전성/idempotency
+- `--packages` `-` 시작 거부 + `apt-get install -- <pkg>...` 옵션 종료 마커 (P0)
+- `--timezone` 실제 zoneinfo 파일 존재 검증 (P1)
+- `dpkg-query`로 누락 패키지만 설치 (idempotent, P1)
+
+### v1.8.14 — `prelik-lxc init` 서브커맨드 [phs batch 6]
+- phs/infra/lxc_init.rs (96줄) → lxc 도메인 흡수
+- `--locale` (기본 ko_KR.UTF-8), `--timezone` (기본 Asia/Seoul), `--packages`
+- 모든 입력 검증: shell injection / path traversal / apt injection 차단
+
+### v1.8.10~v1.8.13 — infisical/ministack 레시피 정합성
+- v1.8.13: infisical `.env` override 매 실행 갱신, 다운로드 atomic mv (codex 55차 P1)
+- v1.8.12: 매 실행 재다운로드 + image latest 추적 disclaimer (codex 54차 P1)
+- v1.8.11: commit SHA/tag pin + docker.sock opt-in (codex 53차 P1)
+- v1.8.10: POSTGRES/REDIS/SITE_URL upstream 정합 (codex 52차 P0×2 + P1)
+
+### v1.8.9 — infisical + ministack 레시피 [phs batch 5]
+- phs/infisical (850줄) + phs/ministack (471줄) → deploy 레시피로 변환
+
+### v1.8.6~v1.8.8 — recovery 도메인 [phs batch 4]
+- v1.8.8: validate_node `..`/`/` 차단, `O_CREAT|O_EXCL` atomic ID, 부분 실패 fail-fast (codex 50차 3 P1)
+- v1.8.7: validate_id, validate_config_filename, 빈 스냅샷 거부 (codex 49차 3 P1)
+- v1.8.6: `prelik-recovery` 신규 (snapshot/restore/audit) + `prelik-host gh-auth`
+
+### v1.8.4~v1.8.5 — host self-update + 3 deploy 레시피 [phs batch 3]
+- v1.8.5: formbricks compose URL 정확화, self-update `set -eo pipefail`, 검증 timeout exit 1 (codex 47차 3 P1)
+- v1.8.4: prelik-host self-update, uptime-kuma/formbricks/matterbridge 레시피
+
+### v1.8.0~v1.8.3 — net + node 도메인 [phs batch 1-2]
+- v1.8.3: node exec를 cluster canonical IP 직접 조회 + `-F /dev/null` + ProxyCommand=none (codex 45차 P1)
+- v1.8.2: node exec 클러스터 멤버십 검증 + StrictHostKey=yes (codex 44차 P1)
+- v1.8.1: `prelik-node` (list/info/exec) + 8 회귀 테스트
+- v1.8.0: `prelik-net` (interfaces/routes/bridges/dns/ping) + 6 회귀 테스트
+
+---
+
+## [1.7.x] — 2026-04-15 (vm/iso --json + 회귀 테스트)
+
+### v1.7.2 — vm list status whitelist 계약 일치
+- `parse_qm_list`도 `STATUS_KNOWN` 검증 — `status` 두 surface 일관성 (codex 41차 P1)
+
+### v1.7.1 — vm list/status `--json` + 17 회귀 테스트
+- `parse_qm_list` (5/6 컬럼, PID=0→null) + `parse_qm_status` (whitelist)
+- VM 전용 상태값: running/stopped/paused/suspended/prelaunch
+
+### v1.7.0 — iso list `--json` + 10 회귀 테스트
+- `parse_pvesm_status` + `parse_pvesm_list` 추출
+- `ListSnap { storages, files }` 통합 스냅샷
+
+---
+
+## [1.6.x] — 2026-04-15 (lxc --json + 회귀 테스트 인프라)
+
+### v1.6.7~v1.6.8 — 회귀 테스트 인프라
+- v1.6.8: monitor 파서 추출 (parse_meminfo/df/qm) + 13 테스트
+- v1.6.7: lxc 파서 추출 (parse_pct_list/status/listsnapshot) + 18 테스트, CI에 `cargo test` 통합
+
+### v1.6.0~v1.6.6 — lxc list/status/snapshot-list `--json` (7라운드 codex)
+- v1.6.6: status whitelist를 upstream pve-container와 정확 일치 (running/stopped/unknown)
+- v1.6.5: status 값 whitelist 검증
+- v1.6.4: status 경로 raw stdout 직접 사용 (common::run trim 회피)
+- v1.6.3: status 단일 라인 + `strip_prefix("status:")` 엄격
+- v1.6.2: snapshot 시간 토큰 ASCII digit 검증, status 키 == "status" 검증
+- v1.6.1: snapshot 파서 재작성 (parent → timestamp), JSON fail-fast 강화
+- v1.6.0: `--json` 글로벌 플래그 추가 (list/status/snapshot-list)
+
+---
+
+## [1.5.x] — 2026-04-14~15 (monitor/iso/install.sh)
+
+### v1.5.6 — install.sh 견고화
+- `PRELIK_VERSION` / `PRELIK_FORCE` 환경변수
+- `BIN_DIR/.prelik.version` 마커로 idempotent skip
+- API/다운로드 retry 3회 + curl timeout
+- atomic install (BIN_DIR 안 staging mv)
+
+### v1.5.5 — monitor 텍스트 모드 soft-fail 복구 (회귀)
+- v1.5.4가 텍스트 모드까지 fail-fast로 만든 것을 분리 (codex 28차 P1)
+
+### v1.5.4 — monitor JSON fail-fast
+- `--json lxc/vm`은 pct/qm 누락 시 EXIT 1 (자동화 false negative 차단)
+- `AllSnap`에 `lxc_supported`/`vm_supported` 플래그
+
+### v1.5.3 — monitor `--json` 출력
+- doctor/host/lxc/vm/all 모두 JSON 지원
+
+### v1.5.2 — 안정성 스윕
+- `common::run_secret()` 추가 — 비밀 argv 노출 방지 표준
+- monitor/iso의 자체 `which()` 헬퍼 → `common::has_cmd` 통합
+- doctor 일관성 18/18 (CI smoke 안전)
+
+### v1.5.1 — monitor/iso 외부 `which` 바이너리 의존 제거
+- workspace의 `which` crate (PATH 직접 탐색) 사용
+
+### v1.5.0 — `prelik-monitor` (호스트/LXC/VM read-only)
+- 18번째 도메인. host (CPU/RAM/disk/온도/uptime), lxc (mem%/disk%), vm, all
+
+---
+
+## [1.4.x] — 2026-04-14 (iso 도메인)
+
+### v1.4.1 — iso SMB 비밀번호 로그 노출 차단
+- `storage_add_cifs`를 직접 `Command::status()`로 호출 (실패 시 argv 비공개) — common::run_secret 도입의 모태
+
+### v1.4.0 — `prelik-iso` (Proxmox ISO 스토리지 + 파일)
+- `list`, `storage-add-nfs/cifs`, `download`, `remove` (pvesm 래퍼)
+
+---
+
+## [1.3.x] — 2026-04-14 (deploy 도메인)
+
+### v1.3.1 — deploy IP /16 강제 회귀 수정
+- bare IP를 prelik-lxc에 그대로 전달 (`config.network.subnet` 존중)
+
+### v1.3.0 — `prelik-deploy` (TOML 레시피)
+- 레시피 기반 LXC 자동 배포 (`service`, `list-recipes`)
+- examples/recipes/nginx.toml
+
+---
+
+## [1.0.0~1.2.x] — 2026-04-14 (Phase 1-2 안정화)
+
+### v1.2.0 — backup 도메인 + cloudflare pages-deploy
+(원본 항목 유지, 아래 §[1.2.0] 참조)
+
+### v1.1.0 — `prelik-vm` (Proxmox QEMU)
+- list/status/start/stop/reboot/delete/backup/resize/console
+
+### v1.0.0 — Phase 2 안정화 + install.prelik.com
+- 14 도메인 안정화, GitHub Actions release CI, install 채널 가동
+
+---
+
 ## [1.2.0] - 2026-04-15
 
 ### Added

@@ -1,0 +1,65 @@
+name: shellcheck
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "tests/**.sh"
+      - "examples/recipes/**.toml"
+      - ".github/workflows/shellcheck.yml"
+  pull_request:
+    paths:
+      - "install.sh"
+      - "tests/**.sh"
+      - "examples/recipes/**.toml"
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      # 1) install.sh + tests/*.sh — 직접 검증
+      - name: shellcheck install.sh + tests/
+        run: |
+          shellcheck install.sh
+          if ls tests/*.sh >/dev/null 2>&1; then
+            shellcheck tests/*.sh
+          fi
+
+      # 2) deploy 레시피 step의 'run' 블록 — TOML에서 추출 후 shellcheck.
+      #    각 step.run은 deploy가 LXC 안에서 bash -c로 실행 → shell 스크립트로 검증.
+      - name: shellcheck deploy recipes (extracted run blocks)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/recipe-shells
+          # python3로 TOML 파싱 (3.11+ 표준 tomllib)
+          python3 - <<'PY'
+          import tomllib, pathlib, sys
+          out = pathlib.Path("/tmp/recipe-shells")
+          out.mkdir(exist_ok=True)
+          fail = False
+          for toml in pathlib.Path("examples/recipes").glob("*.toml"):
+              with open(toml, "rb") as f:
+                  data = tomllib.load(f)
+              steps = data.get("install", {}).get("steps", [])
+              for i, s in enumerate(steps):
+                  run = s.get("run", "")
+                  if not run.strip():
+                      continue
+                  name = f"{toml.stem}_{i:02d}.sh"
+                  body = "#!/bin/bash\nset -euo pipefail\n" + run
+                  (out / name).write_text(body)
+          PY
+          # 추출된 모든 스크립트 검증. 일부 recipe는 LXC 안의 bash이라
+          # disable: SC1091 (source not followable), SC2086 (단어 분할 의도된 곳)
+          fail=0
+          for f in /tmp/recipe-shells/*.sh; do
+            echo "=== $(basename "$f") ==="
+            shellcheck -e SC1091,SC2086,SC2016 "$f" || fail=1
+          done
+          exit $fail

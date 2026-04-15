@@ -26,6 +26,15 @@ enum Cmd {
     Doctor,
     /// 설치 가능한 도구 목록
     List,
+    /// 각 도구가 설치하는 정확한 항목 (apt 패키지/바이너리 경로/제거 절차) 출력
+    Manifest {
+        /// 특정 도구만
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<Tool>,
+        /// JSON 출력
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -60,6 +69,46 @@ impl Tool {
             Self::Nickel => "nickel",
         }
     }
+    /// 정확히 무엇을 깔고/어디에 두는지/어떻게 지우는지 — uninstall.md §9의 단순 안내를 정확화.
+    fn manifest_entry(&self) -> serde_json::Value {
+        match self {
+            Self::Apt => serde_json::json!({
+                "tool": "apt",
+                "apt_packages": ["curl", "ca-certificates", "build-essential", "git", "jq"],
+                "binaries": [],
+                "files": [],
+                "uninstall": "sudo apt remove --purge curl ca-certificates build-essential git jq\n# 주의: build-essential은 다른 패키지가 의존할 수 있음 (apt autoremove 신중히)",
+            }),
+            Self::Rust => serde_json::json!({
+                "tool": "rust",
+                "apt_packages": [],
+                "binaries": ["~/.cargo/bin/cargo", "~/.cargo/bin/rustc", "~/.cargo/bin/rustup"],
+                "files": ["~/.cargo/", "~/.rustup/"],
+                "uninstall": "rustup self uninstall\n# 또는: rm -rf ~/.cargo ~/.rustup\n# .bashrc/.zshrc의 'source $HOME/.cargo/env' 라인도 수동 제거",
+            }),
+            Self::Gh => serde_json::json!({
+                "tool": "gh",
+                "apt_packages": ["gh"],
+                "binaries": ["/usr/bin/gh"],
+                "files": ["/etc/apt/sources.list.d/github-cli.list", "/usr/share/keyrings/githubcli-archive-keyring.gpg", "~/.config/gh/"],
+                "uninstall": "sudo apt remove --purge gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg\nrm -rf ~/.config/gh    # 인증 토큰 포함",
+            }),
+            Self::Dotenvx => serde_json::json!({
+                "tool": "dotenvx",
+                "apt_packages": [],
+                "binaries": ["/usr/local/bin/dotenvx"],
+                "files": [],
+                "uninstall": "sudo rm -f /usr/local/bin/dotenvx\n# .env.keys / .env.vault 파일은 프로젝트별로 별도 관리 (자동 삭제 금지)",
+            }),
+            Self::Nickel => serde_json::json!({
+                "tool": "nickel",
+                "apt_packages": [],
+                "binaries": ["/usr/local/bin/nickel"],
+                "files": [],
+                "uninstall": "sudo rm -f /usr/local/bin/nickel",
+            }),
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -77,7 +126,49 @@ fn main() -> anyhow::Result<()> {
             list();
             Ok(())
         }
+        Cmd::Manifest { only, json } => {
+            let tools = if only.is_empty() { Tool::all() } else { only };
+            manifest(&tools, json)
+        }
     }
+}
+
+fn manifest(tools: &[Tool], json: bool) -> anyhow::Result<()> {
+    let entries: Vec<serde_json::Value> = tools.iter().map(|t| t.manifest_entry()).collect();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+    println!("=== bootstrap manifest ===\n");
+    for (t, e) in tools.iter().zip(&entries) {
+        println!("[{}]", t.name());
+        if let Some(arr) = e["apt_packages"].as_array() {
+            if !arr.is_empty() {
+                println!("  apt 패키지: {}",
+                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
+            }
+        }
+        if let Some(arr) = e["binaries"].as_array() {
+            if !arr.is_empty() {
+                println!("  바이너리:   {}",
+                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
+            }
+        }
+        if let Some(arr) = e["files"].as_array() {
+            if !arr.is_empty() {
+                println!("  파일:       {}",
+                    arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
+            }
+        }
+        if let Some(s) = e["uninstall"].as_str() {
+            println!("  제거 절차:");
+            for line in s.lines() {
+                println!("    {line}");
+            }
+        }
+        println!();
+    }
+    Ok(())
 }
 
 fn install_tools(tools: &[Tool]) -> anyhow::Result<()> {

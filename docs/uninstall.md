@@ -253,19 +253,36 @@ sudo systemctl daemon-reload
 
 ---
 
-## 9. dotenvx / nickel / rust 등 의존성 도구
+## 9. dotenvx / nickel / rust 등 의존성 도구 (bootstrap)
 
-`prelik install bootstrap`이 시스템 패키지를 깔았습니다. 다른 용도로도 쓸 수 있어 자동 제거 안 됩니다.
+`prelik install bootstrap`이 시스템 패키지/바이너리를 설치했습니다. 다른 용도로도 쓸 수 있어 자동 제거 안 합니다.
+
+**먼저 manifest로 정확히 무엇이 깔렸는지 확인:**
 
 ```bash
-# 깐 것들
-which dotenvx nickel cargo gh
-
-# 개별 제거 (예시)
-sudo apt remove --purge gh
-cargo uninstall ...    # cargo로 깐 것들
-sudo rm -f /usr/local/bin/dotenvx
+prelik run bootstrap manifest             # 사람용 표
+prelik run bootstrap manifest --json      # 자동화/스크립트용
+prelik run bootstrap manifest --only gh   # 특정 도구만
 ```
+
+각 도구가 깐 정확한 apt 패키지/바이너리 경로/추가 파일 + 제거 절차가 출력됩니다.
+
+**예시 (gh):**
+```
+[gh]
+  apt 패키지: gh
+  바이너리:   /usr/bin/gh
+  파일:       /etc/apt/sources.list.d/github-cli.list,
+              /usr/share/keyrings/githubcli-archive-keyring.gpg,
+              ~/.config/gh/
+  제거 절차:
+    sudo apt remove --purge gh
+    sudo rm -f /etc/apt/sources.list.d/github-cli.list \
+               /usr/share/keyrings/githubcli-archive-keyring.gpg
+    rm -rf ~/.config/gh    # 인증 토큰 포함
+```
+
+manifest의 "제거 절차" 그대로 실행하면 됩니다. apt 패키지는 `apt autoremove`를 절대 즉시 실행하지 마세요 — `build-essential` 등이 다른 시스템 패키지의 의존이라 함께 사라질 수 있습니다.
 
 ---
 
