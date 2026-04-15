@@ -700,6 +700,13 @@ fn setup_timezone(vmid: &str, tz: &str) -> anyhow::Result<()> {
     if tz.contains("..") || tz.starts_with('/') {
         anyhow::bail!("timezone 값에 '..' 또는 선행 '/' 금지: {tz:?}");
     }
+    // 실제 zoneinfo 파일 존재 검증 — 'Asia/Seou' 같은 오타 거부.
+    // 이거 빠지면 broken symlink로 /etc/timezone만 쓰고 skip 영구화.
+    let check = pct_exec(vmid, &format!("test -f /usr/share/zoneinfo/{tz} && echo ok"))
+        .unwrap_or_default();
+    if !check.contains("ok") {
+        anyhow::bail!("LXC {vmid} 안에 /usr/share/zoneinfo/{tz} 파일 없음 — 유효한 tz인지 확인");
+    }
     let current = pct_exec(vmid, "cat /etc/timezone 2>/dev/null || true").unwrap_or_default();
     if current.trim() == tz {
         println!("[tz] 이미 {tz}");
@@ -716,17 +723,45 @@ fn setup_timezone(vmid: &str, tz: &str) -> anyhow::Result<()> {
 
 fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
     for p in pkgs {
-        // 패키지 이름 검증 — apt injection 방지
+        // 선행 '-' 차단 — apt option injection (--allow-downgrades 등) 방지
+        if p.starts_with('-') {
+            anyhow::bail!("패키지 이름이 '-'로 시작할 수 없음: {p:?}");
+        }
         if !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '+') {
             anyhow::bail!("패키지 이름이 비정상: {p:?}");
         }
     }
-    let joined = pkgs.join(" ");
-    println!("[packages] 설치 중: {joined}");
+    // idempotency: 이미 설치된 것 제외. dpkg-query로 누락만 계산.
+    // `dpkg-query -W -f='${Status}' <pkg>`가 "install ok installed"면 있음.
+    let check = pkgs.iter().map(|p| {
+        // 패키지명은 이미 검증됨
+        format!("printf '%s\\t' '{p}'; dpkg-query -W -f='${{Status}}\\n' '{p}' 2>/dev/null || echo 'missing'")
+    }).collect::<Vec<_>>().join("; ");
+    let out = pct_exec(vmid, &check).unwrap_or_default();
+    let mut missing: Vec<&str> = Vec::new();
+    for line in out.lines() {
+        let (name, status) = match line.split_once('\t') {
+            Some(v) => v,
+            None => continue,
+        };
+        if !status.contains("install ok installed") {
+            if let Some(&p) = pkgs.iter().find(|p| **p == name) {
+                missing.push(p);
+            }
+        }
+    }
+    if missing.is_empty() {
+        println!("[packages] ✓ 이미 모두 설치됨 ({} 개)", pkgs.len());
+        return Ok(());
+    }
+    let joined = missing.join(" ");
+    println!("[packages] 누락 설치: {joined}");
+    // '--'로 옵션 종료 강제 — 패키지명이 '-'로 시작하면 앞선 검증이 거부했지만
+    // 이중 방어.
     pct_exec(vmid, &format!(
         "DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
-         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {joined}"
+         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -- {joined}"
     ))?;
-    println!("[packages] ✓ {} 개 패키지", pkgs.len());
+    println!("[packages] ✓ {} 개 설치", missing.len());
     Ok(())
 }
