@@ -26,7 +26,7 @@ struct LxcRow {
 #[derive(Serialize)]
 struct SnapshotRow {
     name: String,
-    parent: String,
+    timestamp: String,
     description: String,
 }
 
@@ -179,21 +179,33 @@ fn snapshot_list(vmid: &str, json: bool) -> anyhow::Result<()> {
         println!("{out}");
         return Ok(());
     }
-    // pct listsnapshot 출력은 트리 형태: `-> name parent description`
-    // 첫 토큰이 "->" 또는 "`->" 같은 그래프 문자임. 현재 상태는 "current" 표시.
-    let rows: Vec<SnapshotRow> = out.lines().filter_map(|l| {
-        // 그래프 문자/공백 제거 후 토큰 추출
-        let trimmed = l.trim_start_matches(|c: char| c == '`' || c == '-' || c == '>' || c.is_whitespace());
-        let p: Vec<&str> = trimmed.splitn(3, char::is_whitespace).collect();
-        if p.is_empty() || p[0].is_empty() { return None; }
-        let name = p[0].to_string();
-        if name == "current" { return None; }
-        Some(SnapshotRow {
-            name,
-            parent: p.get(1).map(|s| s.trim().to_string()).unwrap_or_default(),
-            description: p.get(2).map(|s| s.trim().to_string()).unwrap_or_default(),
-        })
-    }).collect();
+    // 실제 출력 형식: `-> name [YYYY-MM-DD HH:MM:SS] description...
+    // current는 timestamp 없이 "You are here!"만 옴 → skip.
+    let mut rows = Vec::new();
+    for l in out.lines() {
+        let trimmed = l.trim_start_matches(|c: char| {
+            c == '`' || c == '-' || c == '>' || c.is_whitespace()
+        });
+        if trimmed.is_empty() { continue; }
+        let toks: Vec<&str> = trimmed.split_whitespace().collect();
+        if toks.is_empty() { continue; }
+        let name = toks[0].to_string();
+        if name == "current" { continue; }
+        // 2번째 토큰이 YYYY-MM-DD 패턴이면 timestamp = "tok1 tok2", 나머지 = description.
+        // 아니면 fail-fast (자동화 안전).
+        let is_date = toks.get(1).map(|t| {
+            t.len() == 10 && t.as_bytes()[4] == b'-' && t.as_bytes()[7] == b'-'
+        }).unwrap_or(false);
+        if is_date {
+            let timestamp = format!("{} {}", toks[1], toks.get(2).unwrap_or(&""));
+            let description = toks.iter().skip(3).copied().collect::<Vec<_>>().join(" ");
+            rows.push(SnapshotRow { name, timestamp, description });
+        } else {
+            anyhow::bail!(
+                "pct listsnapshot 라인 파싱 실패 (timestamp 컬럼이 YYYY-MM-DD 아님): {l:?}"
+            );
+        }
+    }
     println!("{}", serde_json::to_string_pretty(&rows)?);
     Ok(())
 }
@@ -248,26 +260,26 @@ fn list(json: bool) -> anyhow::Result<()> {
         println!("{out}");
         return Ok(());
     }
-    // pct list 출력 파싱: VMID Status Lock Name (헤더 1줄)
-    let rows: Vec<LxcRow> = out.lines().skip(1).filter_map(|l| {
+    // pct list 헤더: VMID Status Lock Name. Lock이 비어 있으면 컬럼이 1개 줄어듦.
+    // 자동화 모드는 fail-fast — 예상 못 한 라인이 있으면 bail!.
+    let mut rows = Vec::new();
+    for l in out.lines().skip(1) {
+        if l.trim().is_empty() { continue; }
         let p: Vec<&str> = l.split_whitespace().collect();
-        match p.len() {
-            // status, lock, name 순서 — pct list 컬럼: VMID Status Lock Name
-            // Lock이 비어있으면 4컬럼이 안 됨. 가능한 형태:
-            //   "100 running       - myhost"  (4)
-            //   "101 stopped         myhost"  (3, Lock 누락)
-            4 => Some(LxcRow {
+        let row = match p.len() {
+            4 => LxcRow {
                 vmid: p[0].into(), status: p[1].into(),
                 lock: if p[2] == "-" { String::new() } else { p[2].into() },
                 name: p[3].into(),
-            }),
-            3 => Some(LxcRow {
+            },
+            3 => LxcRow {
                 vmid: p[0].into(), status: p[1].into(),
                 lock: String::new(), name: p[2].into(),
-            }),
-            _ => None,
-        }
-    }).collect();
+            },
+            _ => anyhow::bail!("pct list 라인 파싱 실패 (컬럼 {}개): {l:?}", p.len()),
+        };
+        rows.push(row);
+    }
     println!("{}", serde_json::to_string_pretty(&rows)?);
     Ok(())
 }
@@ -278,10 +290,10 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
         println!("{out}");
         return Ok(());
     }
-    // "status: running" 형식
-    let parts: Vec<&str> = out.splitn(2, ':').collect();
-    let status_value = parts.get(1).map(|s| s.trim()).unwrap_or("unknown");
-    let payload = serde_json::json!({ "vmid": vmid, "status": status_value });
+    // "status: running" 형식. ':' 없으면 출력 형식 변경 — fail-fast.
+    let (_, value) = out.split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("pct status 출력에 ':' 없음: {out:?}"))?;
+    let payload = serde_json::json!({ "vmid": vmid, "status": value.trim() });
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
 }
