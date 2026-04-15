@@ -20,9 +20,11 @@ run = """
 mkdir -p /opt/infisical
 cd /opt/infisical
 
-# 공식 self-host compose (backend + postgres + redis)
+# 공식 self-host compose — commit SHA 핀 (main 추적 금지, 재현성 보장).
+# 업그레이드는 INFISICAL_PIN 환경변수 또는 레시피 bump로 명시적으로.
+PIN="${INFISICAL_PIN:-73b274e3dcbaa89afa9f3caed2db2ff101f39c7d}"
 [ -f docker-compose.yml ] || curl -fsSL \
-  https://raw.githubusercontent.com/Infisical/infisical/main/docker-compose.prod.yml \
+  "https://raw.githubusercontent.com/Infisical/infisical/${PIN}/docker-compose.prod.yml" \
   -o docker-compose.yml
 
 if [ ! -f .env ]; then

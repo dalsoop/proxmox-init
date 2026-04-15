@@ -15,17 +15,26 @@ name = "Docker daemon enable"
 run = "systemctl enable --now docker"
 
 [[install.steps]]
-name = "upstream docker-compose.yml 다운로드 (redis + docker.sock 포함)"
+name = "upstream compose 다운로드 (핀: v1.2.15) + 로컬 안전 패치"
 run = """
 mkdir -p /opt/ministack
 cd /opt/ministack
+
+# 태그 핀 — main 추적 금지. 재현성 + 공급망 드리프트 차단.
+# 업그레이드는 레시피 버전 bump로 명시적으로.
+PIN="${MINISTACK_PIN:-v1.2.15}"
 [ -f docker-compose.yml ] || curl -fsSL \
-  https://raw.githubusercontent.com/ministackorg/ministack/main/docker-compose.yml \
+  "https://raw.githubusercontent.com/ministackorg/ministack/${PIN}/docker-compose.yml" \
   -o docker-compose.yml
 
-# upstream compose는 build: . (로컬 빌드). prelik은 pre-built image만 사용하도록 패치.
-# 'build: .' 라인 제거 → 'image: ministackorg/ministack:latest'만 사용.
+# 1) build: . 제거 — pre-built image만 사용
 sed -i '/^\\s*build:\\s*\\.\\s*$/d' docker-compose.yml
+
+# 2) docker.sock 마운트 제거 — 컨테이너 침해 시 Docker 호스트 root-equivalent 권한 회피.
+#    MINISTACK_DOCKER=1 환경변수로 opt-in 가능 (ECS/Fargate 에뮬 필요 시).
+if [ "${MINISTACK_DOCKER:-0}" != "1" ]; then
+  sed -i '/\\/var\\/run\\/docker\\.sock:\\/var\\/run\\/docker\\.sock/d' docker-compose.yml
+fi
 """
 
 [[install.steps]]
