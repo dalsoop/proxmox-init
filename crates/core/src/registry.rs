@@ -69,9 +69,9 @@ impl Registry {
             ("connect", "외부 서비스 연결 관리 (.env + dotenvx)", true),
             ("manager", "도메인 설치/업데이트 매니저", true),
             ("lxc", "LXC 수명 관리 (Proxmox pct 래퍼)", true),
-            ("traefik", "Traefik 리버스 프록시", false),
-            ("mail", "Maddy + Mailpit + Postfix relay 번들", false),
-            ("cloudflare", "CF DNS/Email Routing/Worker", false),
+            ("traefik", "Traefik 리버스 프록시", true),
+            ("mail", "Maddy + Mailpit + Postfix relay 번들", true),
+            ("cloudflare", "CF DNS/Email Routing/Worker", true),
             ("ai", "Claude/Codex + 플러그인", false),
         ] {
             domains.insert(

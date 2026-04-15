@@ -49,7 +49,7 @@ in
     traefik = {
       name = "traefik",
       description = "Traefik 리버스 프록시 + compose 기반 재생성",
-      enabled = false,
+      enabled = true,
       tags = { product = 'infra, layer = 'remote, platform = 'debian },
       requires = ["lxc"],
       provides = ["traefik install", "traefik route-add", "traefik recreate"],
@@ -58,7 +58,7 @@ in
     mail = {
       name = "mail",
       description = "Maddy + Mailpit + Postfix relay 번들",
-      enabled = false,
+      enabled = true,
       tags = { product = 'mail, layer = 'remote, platform = 'debian },
       requires = ["lxc"],
       provides = ["mail install", "mail status"],
@@ -67,7 +67,7 @@ in
     cloudflare = {
       name = "cloudflare",
       description = "CF DNS / Email Routing / Worker",
-      enabled = false,
+      enabled = true,
       tags = { product = 'infra, layer = 'tool, platform = 'any },
       provides = ["cf dns-add", "cf email-worker-attach"],
     } | Domain,
