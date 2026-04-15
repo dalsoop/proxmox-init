@@ -2,6 +2,18 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.8.2] - 2026-04-15
+
+### Added
+- **tests/smoke.sh**: 모든 바이너리의 `--help` + `doctor`를 한 방에 검증.
+  CI `Build` 단계 뒤에 자동 실행 (x86_64 only).
+- **CI 트리거 확장**: main push + PR에서도 빌드+smoke test 실행.
+  태그 푸시 전에 회귀 조기 발견.
+- **prelik doctor 강화**:
+  - `config_dir` 존재 여부 표시
+  - 의존성을 "core 의존성" 섹션으로 분리 (curl/tar/systemctl/dotenvx/nickel)
+  - 설치된 도메인 목록 + 바이너리 존재 체크 (누락 감지)
+
 ## [0.8.1] - 2026-04-15
 
 ### Fixed / Stability

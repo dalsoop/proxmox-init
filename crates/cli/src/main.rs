@@ -378,7 +378,7 @@ fn doctor() {
     println!("  root: {}", paths::is_root());
 
     match paths::config_dir() {
-        Ok(p) => println!("  config_dir: {}", p.display()),
+        Ok(p) => println!("  config_dir: {} (exists: {})", p.display(), p.exists()),
         Err(e) => println!("  config_dir: ✗ {e}"),
     }
     match paths::bin_dir() {
@@ -386,26 +386,47 @@ fn doctor() {
         Err(e) => println!("  bin_dir:    ✗ {e}"),
     }
 
+    println!("\n[core 의존성]");
+    for (name, cmd) in &[("curl", "curl"), ("tar", "tar"), ("systemctl", "systemctl")] {
+        println!("  {} {name}", if common::has_cmd(cmd) { "✓" } else { "✗" });
+    }
     println!(
-        "  dotenvx:    {}",
-        if prelik_core::dotenvx::is_installed() {
-            "✓"
-        } else {
-            "✗ (prelik install bootstrap)"
+        "  {} dotenvx {}",
+        if prelik_core::dotenvx::is_installed() { "✓" } else { "✗" },
+        if prelik_core::dotenvx::is_installed() { "" } else { "(prelik install bootstrap)" }
+    );
+    println!(
+        "  {} nickel (runtime registry export)",
+        if common::has_cmd("nickel") { "✓" } else { "✗" }
+    );
+
+    // 설치된 도메인 + 각자 doctor 실행
+    println!("\n[설치된 도메인]");
+    let bin_dir = match paths::bin_dir() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let domains_dir = match paths::domains_dir() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if !domains_dir.exists() {
+        println!("  (prelik setup 필요)");
+        return;
+    }
+    let mut any = false;
+    if let Ok(entries) = std::fs::read_dir(&domains_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let bin = bin_dir.join(format!("prelik-{name}"));
+            let status = if bin.exists() { "✓" } else { "✗ (바이너리 누락)" };
+            println!("  {status} {name}");
+            any = true;
         }
-    );
-    println!(
-        "  curl:       {}",
-        if common::has_cmd("curl") { "✓" } else { "✗" }
-    );
-    println!(
-        "  systemctl:  {}",
-        if common::has_cmd("systemctl") {
-            "✓"
-        } else {
-            "✗"
-        }
-    );
+    }
+    if !any {
+        println!("  (설치된 도메인 없음 — prelik install <domain>)");
+    }
 }
 
 fn detect_target() -> anyhow::Result<String> {

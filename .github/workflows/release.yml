@@ -5,6 +5,8 @@ permissions:
 on:
   push:
     tags: ['v*']
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -33,6 +35,9 @@ jobs:
           else
             cargo build --release --target ${{ matrix.rust_target }}
           fi
+      - name: Smoke test
+        if: matrix.target == 'x86_64-linux'
+        run: bash tests/smoke.sh target/${{ matrix.rust_target }}/release
       - name: Package per-binary tarballs
         run: |
           BIN_DIR="target/${{ matrix.rust_target }}/release"
