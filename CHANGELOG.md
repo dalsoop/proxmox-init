@@ -2,6 +2,24 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [1.1.0] - 2026-04-15
+
+### Added
+- **lxc snapshot**: create/list/restore/delete
+  - `prelik run lxc snapshot-create X name --description "msg"`
+  - rollback 전에 현재 상태 저장, 테스트 후 되돌리기
+- **lxc resize**: CPU/RAM/disk 동적 변경
+  - `--cores N --memory MB --disk-expand +4G`
+- **cloudflare ssl**: Let's Encrypt DNS-01 발급/갱신 (acme.sh 래퍼)
+  - `prelik run cloudflare ssl-issue --domain X [--wildcard]`
+  - `prelik run cloudflare ssl-renew --domain X`
+- **vm 도메인 신규**: Proxmox QEMU VM 관리 (qm 래퍼)
+  - list/status/start/stop/reboot/delete/backup/resize/console
+
+### 총 14 도메인
+ai, account, bootstrap, cloudflare, comfyui, connect, host, lxc, mail, nas,
+telegram, traefik, vm, workspace
+
 ## [1.0.0] - 2026-04-15
 
 ### 🎉 첫 공식 릴리스

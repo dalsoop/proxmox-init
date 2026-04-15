@@ -66,6 +66,19 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// SSL 인증서 발급 (Let's Encrypt + CF DNS-01 챌린지, acme.sh 필요)
+    SslIssue {
+        #[arg(long)]
+        domain: String,
+        /// 와일드카드 포함 (*.domain)
+        #[arg(long)]
+        wildcard: bool,
+    },
+    /// SSL 인증서 갱신
+    SslRenew {
+        #[arg(long)]
+        domain: String,
+    },
     Doctor,
 }
 
@@ -102,8 +115,61 @@ fn main() -> anyhow::Result<()> {
             dns_delete(&email, &key, &domain, &record_type, &name)
         }
         Cmd::EmailWorkerAttachAll { worker, dry_run } => worker_attach_all(&email, &key, &worker, dry_run),
+        Cmd::SslIssue { domain, wildcard } => ssl_issue(&email, &key, &domain, wildcard),
+        Cmd::SslRenew { domain } => ssl_renew(&domain),
         Cmd::Doctor => unreachable!("Doctor는 위에서 early return"),
     }
+}
+
+fn ssl_issue(email: &str, key: &str, domain: &str, wildcard: bool) -> anyhow::Result<()> {
+    println!("=== SSL 발급: {domain} (wildcard: {wildcard}) ===");
+    if !common::has_cmd("acme.sh") {
+        anyhow::bail!(
+            "acme.sh 미설치. 설치: curl https://get.acme.sh | sh\n\
+             또는 sudo snap install acme, 또는 자체 경로."
+        );
+    }
+    // CF credentials env로 acme.sh에 전달
+    // wildcard: -d *.domain -d domain 둘 다 필요
+    let mut args: Vec<String> = vec!["--issue".into(), "--dns".into(), "dns_cf".into()];
+    if wildcard {
+        args.push("-d".into());
+        args.push(format!("*.{domain}"));
+    }
+    args.push("-d".into());
+    args.push(domain.to_string());
+
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let output = std::process::Command::new("acme.sh")
+        .args(&args_ref)
+        .env("CF_Email", email)
+        .env("CF_Key", key)
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "acme.sh 발급 실패: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    println!("✓ 인증서 발급 완료 — ~/.acme.sh/{domain}/ 확인");
+    println!("  설치: acme.sh --install-cert -d {domain} --key-file <path> --fullchain-file <path>");
+    Ok(())
+}
+
+fn ssl_renew(domain: &str) -> anyhow::Result<()> {
+    println!("=== SSL 갱신: {domain} ===");
+    if !common::has_cmd("acme.sh") {
+        anyhow::bail!("acme.sh 미설치");
+    }
+    let output = std::process::Command::new("acme.sh")
+        .args(["--renew", "-d", domain, "--force"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("갱신 실패: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    println!("✓ 갱신 완료");
+    Ok(())
 }
 
 fn creds() -> anyhow::Result<(String, String)> {

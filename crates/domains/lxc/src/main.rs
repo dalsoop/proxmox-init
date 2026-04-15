@@ -65,6 +65,40 @@ enum Cmd {
         #[arg(long, default_value = "snapshot")]
         mode: String,
     },
+    /// LXC 스냅샷 생성
+    SnapshotCreate {
+        vmid: String,
+        /// 스냅샷 이름
+        name: String,
+        /// 설명 (선택)
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// LXC 스냅샷 목록
+    SnapshotList { vmid: String },
+    /// LXC 스냅샷 복원
+    SnapshotRestore {
+        vmid: String,
+        name: String,
+    },
+    /// LXC 스냅샷 삭제
+    SnapshotDelete {
+        vmid: String,
+        name: String,
+    },
+    /// LXC 리소스 변경 (CPU/RAM/disk)
+    Resize {
+        vmid: String,
+        /// CPU 코어
+        #[arg(long)]
+        cores: Option<String>,
+        /// RAM MB
+        #[arg(long)]
+        memory: Option<String>,
+        /// 디스크 확장 크기 (+GB, 예: +4G)
+        #[arg(long)]
+        disk_expand: Option<String>,
+    },
     /// 상태 점검 (pct 존재, PVE 노드 확인)
     Doctor,
 }
@@ -97,11 +131,71 @@ fn main() -> anyhow::Result<()> {
         Cmd::Delete { vmid, force } => delete(&vmid, force),
         Cmd::Enter { vmid } => enter(&vmid),
         Cmd::Backup { vmid, storage, mode } => backup(&vmid, &storage, &mode),
+        Cmd::SnapshotCreate { vmid, name, description } => snapshot_create(&vmid, &name, description.as_deref()),
+        Cmd::SnapshotList { vmid } => snapshot_list(&vmid),
+        Cmd::SnapshotRestore { vmid, name } => snapshot_restore(&vmid, &name),
+        Cmd::SnapshotDelete { vmid, name } => snapshot_delete(&vmid, &name),
+        Cmd::Resize { vmid, cores, memory, disk_expand } => resize(&vmid, cores.as_deref(), memory.as_deref(), disk_expand.as_deref()),
         Cmd::Doctor => {
             doctor();
             Ok(())
         }
     }
+}
+
+fn snapshot_create(vmid: &str, name: &str, description: Option<&str>) -> anyhow::Result<()> {
+    println!("=== LXC {vmid} 스냅샷 생성: {name} ===");
+    let mut args: Vec<&str> = vec!["snapshot", vmid, name];
+    if let Some(d) = description {
+        args.push("--description");
+        args.push(d);
+    }
+    common::run("pct", &args)?;
+    println!("✓ 스냅샷 생성 완료");
+    Ok(())
+}
+
+fn snapshot_list(vmid: &str) -> anyhow::Result<()> {
+    let out = common::run("pct", &["listsnapshot", vmid])?;
+    println!("{out}");
+    Ok(())
+}
+
+fn snapshot_restore(vmid: &str, name: &str) -> anyhow::Result<()> {
+    println!("=== LXC {vmid} 스냅샷 복원: {name} ===");
+    common::run("pct", &["rollback", vmid, name])?;
+    println!("✓ 복원 완료 — LXC 상태가 '{name}' 시점으로 되돌아감");
+    Ok(())
+}
+
+fn snapshot_delete(vmid: &str, name: &str) -> anyhow::Result<()> {
+    println!("=== LXC {vmid} 스냅샷 삭제: {name} ===");
+    common::run("pct", &["delsnapshot", vmid, name])?;
+    println!("✓ 삭제 완료");
+    Ok(())
+}
+
+fn resize(vmid: &str, cores: Option<&str>, memory: Option<&str>, disk_expand: Option<&str>) -> anyhow::Result<()> {
+    println!("=== LXC {vmid} 리소스 변경 ===");
+    if cores.is_none() && memory.is_none() && disk_expand.is_none() {
+        anyhow::bail!("--cores / --memory / --disk-expand 중 최소 하나 필요");
+    }
+
+    if let Some(c) = cores {
+        common::run("pct", &["set", vmid, "--cores", c])?;
+        println!("  ✓ cores: {c}");
+    }
+    if let Some(m) = memory {
+        common::run("pct", &["set", vmid, "--memory", m])?;
+        println!("  ✓ memory: {m} MB");
+    }
+    if let Some(d) = disk_expand {
+        // +4G 형식. rootfs 확장
+        common::run("pct", &["resize", vmid, "rootfs", d])?;
+        println!("  ✓ disk expand: {d}");
+    }
+    println!("변경 사항은 재시작 후 반영될 수 있습니다 (cores/memory는 라이브 가능)");
+    Ok(())
 }
 
 fn require_proxmox() -> anyhow::Result<()> {

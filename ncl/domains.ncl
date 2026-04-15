@@ -66,6 +66,14 @@ in
       provides = ["comfyui install", "comfyui gpu-passthrough", "comfyui status"],
     } | Domain,
 
+    vm = {
+      name = "vm",
+      description = "Proxmox QEMU VM 수명관리",
+      tags = { product = 'infra, layer = 'remote, platform = 'proxmox },
+      provides = ["vm list", "vm status", "vm start/stop/reboot", "vm backup", "vm resize"],
+    } | Domain,
+
+
 
 
 

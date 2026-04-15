@@ -78,6 +78,7 @@ impl Registry {
             ("account", "리눅스 계정 관리", true),
             ("telegram", "Telegram 봇 관리", true),
             ("comfyui", "ComfyUI LXC 설치 관리", true),
+            ("vm", "Proxmox QEMU VM 관리", true),
             ("connect", "외부 서비스 연결 관리 (.env + dotenvx)", true),
             ("lxc", "LXC 수명 관리 (Proxmox pct 래퍼)", true),
             ("traefik", "Traefik 리버스 프록시", true),
