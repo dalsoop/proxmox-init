@@ -2,12 +2,42 @@
 
 use clap::{Parser, Subcommand};
 use prelik_core::common;
+use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "prelik-iso", about = "Proxmox ISO 스토리지 관리")]
 struct Cli {
+    /// list를 JSON으로 출력 (자동화/CI 친화)
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+struct StorageRow {
+    name: String,
+    storage_type: String,
+    status: String,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+struct IsoFile {
+    volid: String,
+    format: String,
+    size: u64,
+}
+
+#[derive(Serialize)]
+struct ListSnap {
+    storages: Vec<StorageRow>,
+    files: Vec<IsoFileGroup>,
+}
+
+#[derive(Serialize)]
+struct IsoFileGroup {
+    storage: String,
+    files: Vec<IsoFile>,
 }
 
 #[derive(Subcommand)]
@@ -69,9 +99,10 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let json = cli.json;
     match cli.cmd {
         Cmd::Doctor => doctor(),
-        Cmd::List { storage } => list(storage.as_deref()),
+        Cmd::List { storage } => list(storage.as_deref(), json),
         Cmd::StorageAddNfs { id, server, export, nfs_version } => {
             storage_add_nfs(&id, &server, &export, &nfs_version)
         }
@@ -106,42 +137,88 @@ fn which(bin: &str) -> bool {
     common::has_cmd(bin)
 }
 
-fn list(filter_storage: Option<&str>) -> anyhow::Result<()> {
-    println!("=== ISO 스토리지 ===");
-    common::run("pvesm", &["status", "--content", "iso"])?;
-    println!("\n=== ISO 파일 ===");
-    let storages = list_iso_storages()?;
-    if storages.is_empty() {
-        println!("(ISO content 지원하는 스토리지 없음)");
+// 순수 파서 — pvesm status 출력 (Name Type Status Total Used Avail %)
+fn parse_pvesm_status(text: &str) -> anyhow::Result<Vec<StorageRow>> {
+    let mut rows = Vec::new();
+    for line in text.lines().skip(1) {
+        if line.trim().is_empty() { continue; }
+        let p: Vec<&str> = line.split_whitespace().collect();
+        if p.len() < 3 {
+            anyhow::bail!("pvesm status 라인 파싱 실패 (컬럼 {}개): {line:?}", p.len());
+        }
+        rows.push(StorageRow {
+            name: p[0].into(),
+            storage_type: p[1].into(),
+            status: p[2].into(),
+        });
+    }
+    Ok(rows)
+}
+
+// 순수 파서 — pvesm list 출력 (Volid Format Type Size [VMID])
+fn parse_pvesm_list(text: &str) -> anyhow::Result<Vec<IsoFile>> {
+    let mut rows = Vec::new();
+    for line in text.lines().skip(1) {
+        if line.trim().is_empty() { continue; }
+        let p: Vec<&str> = line.split_whitespace().collect();
+        if p.len() < 4 {
+            anyhow::bail!("pvesm list 라인 파싱 실패 (컬럼 {}개): {line:?}", p.len());
+        }
+        let size: u64 = p[3].parse()
+            .map_err(|_| anyhow::anyhow!("pvesm list size 컬럼이 숫자 아님: {line:?}"))?;
+        rows.push(IsoFile {
+            volid: p[0].into(),
+            format: p[1].into(),
+            size,
+        });
+    }
+    Ok(rows)
+}
+
+fn list(filter_storage: Option<&str>, json: bool) -> anyhow::Result<()> {
+    if !json {
+        println!("=== ISO 스토리지 ===");
+        common::run("pvesm", &["status", "--content", "iso"])?;
+        println!("\n=== ISO 파일 ===");
+        let storages = list_iso_storage_ids()?;
+        if storages.is_empty() {
+            println!("(ISO content 지원하는 스토리지 없음)");
+            return Ok(());
+        }
+        for s in &storages {
+            if filter_storage.is_some_and(|f| f != s) { continue; }
+            println!("\n--- {s} ---");
+            let _ = common::run("pvesm", &["list", s, "--content", "iso"]);
+        }
         return Ok(());
     }
+
+    // JSON: 통합 스냅샷
+    let status_out = run_pvesm(&["status", "--content", "iso"])?;
+    let storages = parse_pvesm_status(&status_out)?;
+    let mut files = Vec::new();
     for s in &storages {
-        if let Some(f) = filter_storage {
-            if f != s {
-                continue;
-            }
-        }
-        println!("\n--- {s} ---");
-        let _ = common::run("pvesm", &["list", s, "--content", "iso"]);
+        if filter_storage.is_some_and(|f| f != s.name) { continue; }
+        let list_out = run_pvesm(&["list", &s.name, "--content", "iso"])?;
+        let entries = parse_pvesm_list(&list_out)?;
+        files.push(IsoFileGroup { storage: s.name.clone(), files: entries });
     }
+    let snap = ListSnap { storages, files };
+    println!("{}", serde_json::to_string_pretty(&snap)?);
     Ok(())
 }
 
-fn list_iso_storages() -> anyhow::Result<Vec<String>> {
-    let out = std::process::Command::new("pvesm")
-        .args(["status", "--content", "iso"])
-        .output()?;
+fn run_pvesm(args: &[&str]) -> anyhow::Result<String> {
+    let out = std::process::Command::new("pvesm").args(args).output()?;
     if !out.status.success() {
-        anyhow::bail!("pvesm status 실패");
+        anyhow::bail!("pvesm {args:?} 실패: {}", String::from_utf8_lossy(&out.stderr));
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut ids = Vec::new();
-    for line in text.lines().skip(1) {
-        if let Some(id) = line.split_whitespace().next() {
-            ids.push(id.to_string());
-        }
-    }
-    Ok(ids)
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn list_iso_storage_ids() -> anyhow::Result<Vec<String>> {
+    let text = run_pvesm(&["status", "--content", "iso"])?;
+    Ok(parse_pvesm_status(&text)?.into_iter().map(|r| r.name).collect())
 }
 
 fn storage_add_nfs(id: &str, server: &str, export: &str, nfs_version: &str) -> anyhow::Result<()> {
@@ -231,4 +308,98 @@ fn remove(volid: &str) -> anyhow::Result<()> {
     common::run("pvesm", &["free", volid])?;
     println!("✓ {volid} 삭제됨");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ----- parse_pvesm_status -----
+
+    #[test]
+    fn status_basic() {
+        let text = "Name               Type     Status     Total      Used   Avail        %\n\
+                    local               dir     active     98497780   71976  21471940    73.07%\n\
+                    truenas-iso         nfs     active     4022270    14919  4020779     0.04%\n";
+        let rows = parse_pvesm_status(text).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], StorageRow {
+            name: "local".into(), storage_type: "dir".into(), status: "active".into(),
+        });
+        assert_eq!(rows[1].name, "truenas-iso");
+        assert_eq!(rows[1].storage_type, "nfs");
+    }
+
+    #[test]
+    fn status_skips_empty_lines() {
+        let text = "Name Type Status\n\
+                    local dir active\n\
+                    \n\
+                    other nfs inactive\n";
+        assert_eq!(parse_pvesm_status(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn status_fails_on_short_line() {
+        let text = "Name Type Status\n\
+                    local dir\n";
+        assert!(parse_pvesm_status(text).is_err());
+    }
+
+    #[test]
+    fn status_only_header() {
+        assert!(parse_pvesm_status("Name Type Status").unwrap().is_empty());
+    }
+
+    // ----- parse_pvesm_list -----
+
+    #[test]
+    fn list_basic() {
+        let text = "Volid                                       Format  Type            Size VMID\n\
+                    local:iso/linuxmint-22.iso                  iso     iso       3091660800\n";
+        let rows = parse_pvesm_list(text).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], IsoFile {
+            volid: "local:iso/linuxmint-22.iso".into(),
+            format: "iso".into(),
+            size: 3091660800,
+        });
+    }
+
+    #[test]
+    fn list_with_vmid_column() {
+        let text = "Volid Format Type Size VMID\n\
+                    local:iso/x.iso iso iso 1024 100\n";
+        // 5컬럼이지만 첫 4개만 사용
+        let rows = parse_pvesm_list(text).unwrap();
+        assert_eq!(rows[0].size, 1024);
+    }
+
+    #[test]
+    fn list_fails_on_bad_size() {
+        let text = "Volid Format Type Size\n\
+                    local:iso/x.iso iso iso notanumber\n";
+        assert!(parse_pvesm_list(text).is_err());
+    }
+
+    #[test]
+    fn list_fails_on_short_line() {
+        let text = "Volid Format Type Size\n\
+                    local:iso/x.iso iso\n";
+        assert!(parse_pvesm_list(text).is_err());
+    }
+
+    #[test]
+    fn list_skips_empty_lines() {
+        let text = "Volid Format Type Size\n\
+                    a iso iso 100\n\
+                    \n\
+                    b iso iso 200\n";
+        assert_eq!(parse_pvesm_list(text).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn list_only_header_returns_empty() {
+        assert!(parse_pvesm_list("Volid Format Type Size").unwrap().is_empty());
+    }
 }
