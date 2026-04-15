@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/cli",
+    "crates/domains/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["dalsoop"]
+license = "MIT"
+repository = "https://github.com/dalsoop/prelik-init"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+thiserror = "2"
+reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
+dirs = "5"
+which = "6"
+prelik-core = { path = "crates/core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
