@@ -72,6 +72,7 @@ impl Registry {
         let mut domains = BTreeMap::new();
         for (name, desc, enabled) in [
             ("bootstrap", "apt/rust/gh/dotenvx 의존성 설치", true),
+            ("host", "호스트 시스템 관리 (status/monitor/ssh-keygen/smb-open)", true),
             ("connect", "외부 서비스 연결 관리 (.env + dotenvx)", true),
             ("lxc", "LXC 수명 관리 (Proxmox pct 래퍼)", true),
             ("traefik", "Traefik 리버스 프록시", true),

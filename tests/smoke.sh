@@ -21,7 +21,7 @@ check "prelik --help" "$BIN_DIR/prelik --help"
 check "prelik available" "$BIN_DIR/prelik available"
 check "prelik doctor" "$BIN_DIR/prelik doctor"
 
-for dom in ai bootstrap cloudflare connect lxc mail traefik; do
+for dom in ai bootstrap cloudflare connect host lxc mail traefik; do
     echo ""
     echo "=== prelik-$dom ==="
     check "$dom --help" "$BIN_DIR/prelik-$dom --help"
