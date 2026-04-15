@@ -222,8 +222,9 @@ fn collect_lxc(running_only: bool) -> anyhow::Result<Vec<LxcRow>> {
 
 fn lxc(running_only: bool, json: bool) -> anyhow::Result<()> {
     if !common::has_cmd("pct") {
-        if json { println!("[]"); } else { println!("(pct 미설치 — Proxmox 호스트 아님)"); }
-        return Ok(());
+        // "지원 안 됨"을 빈 결과로 위장하지 않음 — 자동화가 false negative를 내지 않도록.
+        if !json { eprintln!("(pct 미설치 — Proxmox 호스트 아님)"); }
+        anyhow::bail!("pct unavailable");
     }
     let rows = collect_lxc(running_only)?;
     if json { println!("{}", serde_json::to_string_pretty(&rows)?); return Ok(()); }
@@ -280,8 +281,8 @@ fn collect_vm(running_only: bool) -> anyhow::Result<Vec<VmRow>> {
 
 fn vm(running_only: bool, json: bool) -> anyhow::Result<()> {
     if !common::has_cmd("qm") {
-        if json { println!("[]"); } else { println!("(qm 미설치 — Proxmox 호스트 아님)"); }
-        return Ok(());
+        if !json { eprintln!("(qm 미설치 — Proxmox 호스트 아님)"); }
+        anyhow::bail!("qm unavailable");
     }
     let rows = collect_vm(running_only)?;
     if json { println!("{}", serde_json::to_string_pretty(&rows)?); return Ok(()); }
@@ -296,16 +297,22 @@ fn vm(running_only: bool, json: bool) -> anyhow::Result<()> {
 #[derive(Serialize)]
 struct AllSnap {
     host: HostSnap,
+    lxc_supported: bool,
     lxc: Vec<LxcRow>,
+    vm_supported: bool,
     vm: Vec<VmRow>,
 }
 
 fn all(json: bool) -> anyhow::Result<()> {
     if json {
+        // unwrap_or_default 금지 — 수집 실패는 자동화에 그대로 노출.
+        // 미지원(pct/qm 없음)은 빈 배열로 표현하되, lxc_supported/vm_supported 플래그로 구분.
         let snap = AllSnap {
             host: collect_host(),
-            lxc: if common::has_cmd("pct") { collect_lxc(true).unwrap_or_default() } else { vec![] },
-            vm:  if common::has_cmd("qm")  { collect_vm(true).unwrap_or_default()  } else { vec![] },
+            lxc_supported: common::has_cmd("pct"),
+            lxc: if common::has_cmd("pct") { collect_lxc(true)? } else { vec![] },
+            vm_supported: common::has_cmd("qm"),
+            vm:  if common::has_cmd("qm")  { collect_vm(true)?  } else { vec![] },
         };
         println!("{}", serde_json::to_string_pretty(&snap)?);
         return Ok(());
