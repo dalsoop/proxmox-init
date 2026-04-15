@@ -1,12 +1,12 @@
-# 도메인 레지스트리 — 이후 각 도메인 설치 메타데이터로 사용
+# 도메인 레지스트리 — 각 도메인 설치 메타데이터
 {
   bootstrap = {
     description = "apt/rust/gh/dotenvx 의존성 설치",
-    platforms = ["debian", "ubuntu", "alpine"],
+    platforms = ["debian", "ubuntu"],
   },
   connect = {
     description = "외부 서비스 연결 관리 (.env + dotenvx)",
-    platforms = ["any"],
+    platforms = ["debian", "ubuntu"],
   },
   lxc = {
     description = "LXC 수명 관리 (Proxmox pct 래퍼)",
@@ -14,11 +14,11 @@
   },
   traefik = {
     description = "Traefik 리버스 프록시",
-    platforms = ["any"],
+    platforms = ["debian", "ubuntu"],
   },
   mail = {
     description = "Maddy + Mailpit + Postfix relay 번들",
-    platforms = ["any"],
+    platforms = ["debian", "ubuntu"],
   },
   cloudflare = {
     description = "CF DNS/Email Routing/Worker",

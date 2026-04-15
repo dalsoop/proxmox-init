@@ -11,7 +11,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 초기 세팅 (경로 생성, dotenvx 설치, 자동 업데이트 등록)
+    /// 초기 세팅 (경로 생성)
     Setup,
     /// 사용 가능한 도메인 목록
     Available,
@@ -21,17 +21,17 @@ enum Cmd {
     Install { domain: String },
     /// 도메인 제거
     Remove { domain: String },
-    /// 도메인 업데이트
+    /// 도메인 업데이트 (install과 동일 동작 — 최신 릴리스 재다운로드)
     Update { domain: String },
-    /// 전체 업그레이드 (prelik 자체 + 모든 도메인)
+    /// 전체 업그레이드 (미구현)
     Upgrade,
-    /// 도메인 실행 (`prelik run lxc list`)
+    /// 도메인 실행
     Run {
         domain: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// 상태 점검 (경로, 권한, 의존성)
+    /// 상태 점검
     Doctor,
 }
 
@@ -41,33 +41,45 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Setup => setup(),
-        Cmd::Available => list_available(),
+        Cmd::Available => {
+            list_available();
+            Ok(())
+        }
         Cmd::List => list_installed(),
         Cmd::Install { domain } => install(&domain),
         Cmd::Remove { domain } => remove(&domain),
         Cmd::Update { domain } => install(&domain),
-        Cmd::Upgrade => upgrade(),
+        Cmd::Upgrade => {
+            println!("(미구현) 전체 업그레이드 예정");
+            Ok(())
+        }
         Cmd::Run { domain, args } => run_domain(&domain, &args),
-        Cmd::Doctor => doctor(),
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
 fn setup() -> anyhow::Result<()> {
     println!("=== prelik 초기 세팅 ===");
-    std::fs::create_dir_all(paths::config_dir())?;
-    std::fs::create_dir_all(paths::data_dir())?;
-    std::fs::create_dir_all(paths::domains_dir())?;
-    std::fs::create_dir_all(paths::bin_dir())?;
-    println!("  config:  {}", paths::config_dir().display());
-    println!("  data:    {}", paths::data_dir().display());
-    println!("  domains: {}", paths::domains_dir().display());
-    println!("  bin:     {}", paths::bin_dir().display());
+    let config = paths::config_dir()?;
+    let data = paths::data_dir()?;
+    let domains = paths::domains_dir()?;
+    let bin = paths::bin_dir()?;
+    std::fs::create_dir_all(&config)?;
+    std::fs::create_dir_all(&data)?;
+    std::fs::create_dir_all(&domains)?;
+    std::fs::create_dir_all(&bin)?;
+    println!("  config:  {}", config.display());
+    println!("  data:    {}", data.display());
+    println!("  domains: {}", domains.display());
+    println!("  bin:     {}", bin.display());
     println!("\n다음 단계: prelik install bootstrap");
     Ok(())
 }
 
-fn list_available() -> anyhow::Result<()> {
-    // Nickel 레지스트리를 나중에 추가. 지금은 하드코드.
+fn list_available() {
     let domains = [
         ("bootstrap", "apt/rust/gh/dotenvx 의존성 설치"),
         ("connect", "외부 서비스 연결 관리 (.env + dotenvx)"),
@@ -81,19 +93,23 @@ fn list_available() -> anyhow::Result<()> {
     for (name, desc) in &domains {
         println!("  {name:<12} {desc}");
     }
-    Ok(())
 }
 
 fn list_installed() -> anyhow::Result<()> {
-    let dir = paths::domains_dir();
+    let dir = paths::domains_dir()?;
     if !dir.exists() {
         println!("(설치된 도메인 없음)");
         return Ok(());
     }
+    let mut count = 0;
     println!("설치된 도메인:");
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         println!("  {}", entry.file_name().to_string_lossy());
+        count += 1;
+    }
+    if count == 0 {
+        println!("  (없음)");
     }
     Ok(())
 }
@@ -109,63 +125,111 @@ fn install(domain: &str) -> anyhow::Result<()> {
 
     github::download_asset(REPO, &tag, &asset, &dest_tar)?;
 
-    let dom_dir = paths::domains_dir().join(domain);
+    let dom_dir = paths::domains_dir()?.join(domain);
     std::fs::create_dir_all(&dom_dir)?;
     common::run(
         "tar",
-        &["-xzf", &dest_tar.display().to_string(), "-C", &dom_dir.display().to_string()],
+        &[
+            "-xzf",
+            &dest_tar.display().to_string(),
+            "-C",
+            &dom_dir.display().to_string(),
+        ],
     )?;
+    // tarball 파일 정리
+    let _ = std::fs::remove_file(&dest_tar);
 
-    // 바이너리를 PATH에
-    let bin_src = dom_dir.join(format!("prelik-{domain}"));
-    let bin_dst = paths::bin_dir().join(format!("prelik-{domain}"));
-    if bin_src.exists() {
-        std::fs::copy(&bin_src, &bin_dst)?;
-        common::run("chmod", &["+x", &bin_dst.display().to_string()])?;
+    // 기대 바이너리 검증
+    let bin_name = format!("prelik-{domain}");
+    let bin_src = dom_dir.join(&bin_name);
+    if !bin_src.exists() {
+        // 실패 시 받은 디렉토리 정리 (부분 설치 금지)
+        let _ = std::fs::remove_dir_all(&dom_dir);
+        anyhow::bail!(
+            "압축 해제 후 기대한 바이너리가 없음: {} \
+             — tarball 레이아웃이 잘못되었을 수 있음",
+            bin_src.display()
+        );
     }
-    println!("✓ {domain} 설치 완료");
+
+    let bin_dst = paths::bin_dir()?.join(&bin_name);
+    std::fs::copy(&bin_src, &bin_dst)
+        .map_err(|e| anyhow::anyhow!("바이너리 복사 실패 ({}): {}", bin_dst.display(), e))?;
+    common::run("chmod", &["+x", &bin_dst.display().to_string()])?;
+    println!("✓ {domain} 설치 완료 → {}", bin_dst.display());
     Ok(())
 }
 
 fn remove(domain: &str) -> anyhow::Result<()> {
-    let dom_dir = paths::domains_dir().join(domain);
-    let bin_dst = paths::bin_dir().join(format!("prelik-{domain}"));
+    let dom_dir = paths::domains_dir()?.join(domain);
+    let bin_dst = paths::bin_dir()?.join(format!("prelik-{domain}"));
+
+    let mut removed_any = false;
     if dom_dir.exists() {
         std::fs::remove_dir_all(&dom_dir)?;
+        removed_any = true;
     }
     if bin_dst.exists() {
         std::fs::remove_file(&bin_dst)?;
+        removed_any = true;
     }
-    println!("✓ {domain} 제거 완료");
-    Ok(())
-}
-
-fn upgrade() -> anyhow::Result<()> {
-    println!("(미구현) 전체 업그레이드 예정");
+    if !removed_any {
+        println!("(이미 제거됨 또는 설치된 적 없음: {domain})");
+    } else {
+        println!("✓ {domain} 제거 완료");
+    }
     Ok(())
 }
 
 fn run_domain(domain: &str, args: &[String]) -> anyhow::Result<()> {
-    let bin = paths::bin_dir().join(format!("prelik-{domain}"));
+    let bin = paths::bin_dir()?.join(format!("prelik-{domain}"));
     if !bin.exists() {
-        anyhow::bail!("도메인 바이너리 없음: {} (prelik install {})", bin.display(), domain);
+        anyhow::bail!(
+            "도메인 바이너리 없음: {} (prelik install {})",
+            bin.display(),
+            domain
+        );
     }
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let status = std::process::Command::new(&bin).args(&args_str).status()?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
-fn doctor() -> anyhow::Result<()> {
+fn doctor() {
     println!("=== prelik doctor ===");
     println!("  OS: {:?}", os::Distro::detect());
     println!("  Proxmox: {}", os::is_proxmox());
     println!("  root: {}", paths::is_root());
-    println!("  config_dir: {}", paths::config_dir().display());
-    println!("  bin_dir:    {}", paths::bin_dir().display());
-    println!("  dotenvx:    {}", if prelik_core::dotenvx::is_installed() { "✓" } else { "✗ (prelik install bootstrap)" });
-    println!("  curl:       {}", if common::has_cmd("curl") { "✓" } else { "✗" });
-    println!("  systemctl:  {}", if common::has_cmd("systemctl") { "✓" } else { "✗" });
-    Ok(())
+
+    match paths::config_dir() {
+        Ok(p) => println!("  config_dir: {}", p.display()),
+        Err(e) => println!("  config_dir: ✗ {e}"),
+    }
+    match paths::bin_dir() {
+        Ok(p) => println!("  bin_dir:    {}", p.display()),
+        Err(e) => println!("  bin_dir:    ✗ {e}"),
+    }
+
+    println!(
+        "  dotenvx:    {}",
+        if prelik_core::dotenvx::is_installed() {
+            "✓"
+        } else {
+            "✗ (prelik install bootstrap)"
+        }
+    );
+    println!(
+        "  curl:       {}",
+        if common::has_cmd("curl") { "✓" } else { "✗" }
+    );
+    println!(
+        "  systemctl:  {}",
+        if common::has_cmd("systemctl") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 }
 
 fn detect_target() -> anyhow::Result<String> {

@@ -1,56 +1,62 @@
 //! 경로 규약
-//! - system: /etc/prelik, /var/lib/prelik, /usr/local/bin
-//! - user:   ~/.config/prelik, ~/.local/share/prelik, ~/.local/bin
+//! - root: /etc/prelik, /var/lib/prelik, /usr/local/bin
+//! - user: $XDG_CONFIG_HOME 또는 $HOME/.config/prelik (절대경로 필수)
+//!
+//! HOME/XDG 환경변수가 비어있으면 상대경로로 fallback 금지 — 명시적 에러.
 
+use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 
-pub fn config_dir() -> PathBuf {
+pub fn config_dir() -> Result<PathBuf> {
     if is_root() {
-        PathBuf::from("/etc/prelik")
+        Ok(PathBuf::from("/etc/prelik"))
     } else {
-        dirs::config_dir().unwrap_or_default().join("prelik")
+        dirs::config_dir()
+            .map(|p| p.join("prelik"))
+            .ok_or_else(|| anyhow!("XDG_CONFIG_HOME/HOME 미설정 — sudo -E 또는 HOME 지정 필요"))
     }
 }
 
-pub fn data_dir() -> PathBuf {
+pub fn data_dir() -> Result<PathBuf> {
     if is_root() {
-        PathBuf::from("/var/lib/prelik")
+        Ok(PathBuf::from("/var/lib/prelik"))
     } else {
-        dirs::data_dir().unwrap_or_default().join("prelik")
+        dirs::data_dir()
+            .map(|p| p.join("prelik"))
+            .ok_or_else(|| anyhow!("XDG_DATA_HOME/HOME 미설정"))
     }
 }
 
-pub fn bin_dir() -> PathBuf {
+pub fn bin_dir() -> Result<PathBuf> {
     if is_root() {
-        PathBuf::from("/usr/local/bin")
+        Ok(PathBuf::from("/usr/local/bin"))
     } else {
-        dirs::home_dir().unwrap_or_default().join(".local/bin")
+        dirs::home_dir()
+            .map(|h| h.join(".local/bin"))
+            .ok_or_else(|| anyhow!("HOME 미설정"))
     }
 }
 
-pub fn domains_dir() -> PathBuf {
-    data_dir().join("domains")
+pub fn domains_dir() -> Result<PathBuf> {
+    Ok(data_dir()?.join("domains"))
 }
 
-pub fn env_file() -> PathBuf {
-    config_dir().join(".env")
+pub fn env_file() -> Result<PathBuf> {
+    Ok(config_dir()?.join(".env"))
 }
 
-pub fn env_vault() -> PathBuf {
-    config_dir().join(".env.vault")
+pub fn env_vault() -> Result<PathBuf> {
+    Ok(config_dir()?.join(".env.vault"))
 }
 
-pub fn env_keys() -> PathBuf {
-    config_dir().join(".env.keys")
+pub fn env_keys() -> Result<PathBuf> {
+    Ok(config_dir()?.join(".env.keys"))
 }
 
 pub fn is_root() -> bool {
-    unsafe { libc_geteuid() == 0 }
+    unsafe { geteuid() == 0 }
 }
 
-unsafe fn libc_geteuid() -> u32 {
-    extern "C" {
-        fn geteuid() -> u32;
-    }
-    geteuid()
+extern "C" {
+    fn geteuid() -> u32;
 }

@@ -14,6 +14,6 @@ pub fn encrypt(env_path: &Path) -> anyhow::Result<()> {
 }
 
 pub fn get(key: &str) -> anyhow::Result<String> {
-    let env = paths::env_file();
+    let env = paths::env_file()?;
     common::run("dotenvx", &["get", key, "-f", &env.display().to_string()])
 }

@@ -30,16 +30,23 @@ jobs:
           else
             cargo build --release --target ${{ matrix.rust_target }}
           fi
-      - name: Package
+      - name: Package per-binary tarballs
         run: |
+          BIN_DIR="target/${{ matrix.rust_target }}/release"
+          TARGET="${{ matrix.target }}"
           mkdir -p dist
-          cd target/${{ matrix.rust_target }}/release
-          for bin in prelik prelik-bootstrap prelik-connect prelik-manager; do
-            [ -f "$bin" ] && cp "$bin" ../../../dist/
+          # CLI: install.sh가 내려받는 단일 엔트리
+          if [ -f "$BIN_DIR/prelik" ]; then
+            tar czf "dist/prelik-${TARGET}.tar.gz" -C "$BIN_DIR" prelik
+          fi
+          # Domains: prelik-{domain}-{target}.tar.gz
+          for bin in prelik-bootstrap prelik-connect prelik-manager; do
+            if [ -f "$BIN_DIR/$bin" ]; then
+              tar czf "dist/${bin}-${TARGET}.tar.gz" -C "$BIN_DIR" "$bin"
+            fi
           done
-          cd ../../../dist
-          tar czf "../prelik-${{ matrix.target }}.tar.gz" *
+          ls -la dist/
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: prelik-${{ matrix.target }}.tar.gz
+          files: dist/*.tar.gz

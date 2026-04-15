@@ -33,11 +33,13 @@ pub struct NetworkConfig {
 fn default_subnet() -> u8 { 16 }
 
 impl Config {
-    pub fn load() -> Self {
-        let path = paths::config_dir().join("config.toml");
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default()
+    pub fn load() -> anyhow::Result<Self> {
+        let path = paths::config_dir()?.join("config.toml");
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let raw = fs::read_to_string(&path)?;
+        let cfg = toml::from_str(&raw)?;
+        Ok(cfg)
     }
 }
