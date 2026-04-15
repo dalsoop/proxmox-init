@@ -313,9 +313,11 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
     }
     let value = body.strip_prefix("status: ")
         .ok_or_else(|| anyhow::anyhow!("pct status 출력 형식이 'status: <value>' 아님: {raw:?}"))?;
-    // 값은 비어 있어선 안 되고, 양끝 공백/내부 공백/추가 콜론 등 드리프트 거부.
-    // pct status가 반환할 수 있는 정상 상태값 whitelist.
-    const KNOWN: &[&str] = &["running", "stopped", "paused", "suspended"];
+    // upstream pve-container `pct status` 실제 출력값과 일치하는 whitelist:
+    //   - 정상: "running", "stopped"
+    //   - $stat->{status}가 없을 때 fallback: "unknown"
+    // (paused/suspended는 LXC 도메인엔 적용 안 됨 — VM은 prelik-vm 별도)
+    const KNOWN: &[&str] = &["running", "stopped", "unknown"];
     if !KNOWN.contains(&value) {
         anyhow::bail!("pct status 값이 알 수 없는 형태: {value:?} (허용: {KNOWN:?})");
     }
