@@ -1,0 +1,13 @@
+[package]
+name = "prelik-monitor"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "prelik-monitor"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+prelik-core = { workspace = true }
+anyhow = { workspace = true }

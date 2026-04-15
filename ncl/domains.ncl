@@ -95,6 +95,13 @@ in
       provides = ["iso list", "iso storage-add-nfs", "iso storage-add-cifs", "iso download", "iso remove"],
     } | Domain,
 
+    monitor = {
+      name = "monitor",
+      description = "호스트/LXC/VM 리소스 모니터링 (read-only)",
+      tags = { product = 'infra, layer = 'platform, platform = 'debian },
+      provides = ["monitor host", "monitor lxc", "monitor vm", "monitor all"],
+    } | Domain,
+
 
 
 

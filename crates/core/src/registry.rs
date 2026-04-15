@@ -88,6 +88,7 @@ impl Registry {
             ("cloudflare", "CF DNS/Email Routing/Worker", true),
             ("ai", "Claude/Codex + 플러그인", true),
             ("iso", "Proxmox ISO 스토리지 + ISO 파일 관리", true),
+            ("monitor", "호스트/LXC/VM 리소스 모니터링", true),
         ] {
             domains.insert(
                 name.to_string(),
