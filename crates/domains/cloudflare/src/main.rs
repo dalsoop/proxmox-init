@@ -35,6 +35,9 @@ enum Cmd {
     EmailWorkerAttachAll {
         #[arg(long)]
         worker: String,
+        /// 실제 변경 없이 대상 목록만 출력
+        #[arg(long)]
+        dry_run: bool,
     },
     Doctor,
 }
@@ -58,7 +61,7 @@ fn main() -> anyhow::Result<()> {
             };
             dns_add(&email, &key, &domain, &record_type, &name, &content, p)
         }
-        Cmd::EmailWorkerAttachAll { worker } => worker_attach_all(&email, &key, &worker),
+        Cmd::EmailWorkerAttachAll { worker, dry_run } => worker_attach_all(&email, &key, &worker, dry_run),
         Cmd::Doctor => { doctor(); Ok(()) }
     }
 }
@@ -111,8 +114,11 @@ fn dns_add(email: &str, key: &str, domain: &str, rec_type: &str, name: &str, con
     Ok(())
 }
 
-fn worker_attach_all(email: &str, key: &str, worker: &str) -> anyhow::Result<()> {
-    println!("=== Email Routing Worker 일괄 연결: {worker} ===");
+fn worker_attach_all(email: &str, key: &str, worker: &str, dry_run: bool) -> anyhow::Result<()> {
+    println!(
+        "=== Email Routing Worker 일괄 연결: {worker} {}===",
+        if dry_run { "[DRY-RUN] " } else { "" }
+    );
     let zones = cf_api(email, key, "GET", "/zones?per_page=50", None)?;
     let Some(arr) = zones.as_array() else { anyhow::bail!("zones 응답 파싱 실패") };
 
@@ -139,6 +145,17 @@ fn worker_attach_all(email: &str, key: &str, worker: &str) -> anyhow::Result<()>
                 failed.push(format!("{zname}: routing-check {e}"));
                 continue;
             }
+        }
+
+        if dry_run {
+            // 현재 catch-all rule도 함께 표시
+            let current = cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing/rules/catch_all"), None);
+            let current_action = current.ok()
+                .and_then(|v| v["actions"].as_array().map(|a| a.iter().map(|x| x["type"].as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join(",")))
+                .unwrap_or_else(|| "(없음)".into());
+            println!("  ⤳ {zname}: 현재 catch-all=[{current_action}] → worker:{worker}");
+            attached += 1;
+            continue;
         }
 
         let body = serde_json::json!({

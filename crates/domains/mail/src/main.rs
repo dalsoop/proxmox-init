@@ -106,6 +106,12 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
         anyhow::bail!("Postfix 미설치. apt install postfix 먼저");
     }
 
+    // main.cf 자동 백업 (실수 복구용)
+    let ts = common::run("date", &["+%Y%m%d-%H%M%S"]).unwrap_or_else(|_| "backup".into());
+    let backup = format!("/etc/postfix/main.cf.prelik-{ts}");
+    common::run_bash(&format!("sudo cp /etc/postfix/main.cf {backup}"))?;
+    println!("  백업: {backup}");
+
     // libsasl2-modules (SASL plugin — 누락 시 relay가 조용히 깨짐)
     if common::run("dpkg", &["-s", "libsasl2-modules"]).is_err() {
         println!("  libsasl2-modules 설치...");
@@ -129,13 +135,28 @@ sender_canonical_maps = regexp:/etc/postfix/sender_canonical
 ");
     common::run_bash(&format!("echo '{}' | sudo tee -a /etc/postfix/main.cf >/dev/null", append.replace('\'', "'\\''")))?;
 
+    // SASL 패스워드가 /tmp에 순간이라도 평문 노출되지 않게 먼저 권한 0600으로 생성
     let sasl = format!("[{maddy_ip}]:{port} {smtp_user}:{smtp_pass}\n");
-    fs::write("/tmp/prelik-sasl_passwd", sasl)?;
-    common::run_bash("sudo mv /tmp/prelik-sasl_passwd /etc/postfix/sasl_passwd && sudo chmod 600 /etc/postfix/sasl_passwd && sudo postmap /etc/postfix/sasl_passwd")?;
+    let sasl_tmp = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let sasl_tmp = sasl_tmp.trim().to_string();
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+    let _g1 = Cleanup(std::path::PathBuf::from(&sasl_tmp));
+
+    common::run("chmod", &["600", &sasl_tmp])?;
+    fs::write(&sasl_tmp, sasl)?;
+    common::run_bash(&format!(
+        "sudo install -m 600 -o root -g root {sasl_tmp} /etc/postfix/sasl_passwd && sudo postmap /etc/postfix/sasl_passwd"
+    ))?;
 
     let canonical = format!("/.+/    {smtp_user}\n");
-    fs::write("/tmp/prelik-sender_canonical", canonical)?;
-    common::run_bash("sudo mv /tmp/prelik-sender_canonical /etc/postfix/sender_canonical")?;
+    let can_tmp = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let can_tmp = can_tmp.trim().to_string();
+    let _g2 = Cleanup(std::path::PathBuf::from(&can_tmp));
+    fs::write(&can_tmp, canonical)?;
+    common::run_bash(&format!(
+        "sudo install -m 644 -o root -g root {can_tmp} /etc/postfix/sender_canonical"
+    ))?;
 
     common::run_bash("sudo systemctl reload postfix && sudo postfix flush")?;
     println!("✓ Postfix → [{maddy_ip}]:{port} relay 설정 완료");

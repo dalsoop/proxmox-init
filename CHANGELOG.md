@@ -2,6 +2,16 @@
 
 Semantic Versioning (https://semver.org/)
 
+## [0.7.2] - 2026-04-15
+
+### Security / Safety
+- `mail postfix-relay`: SASL 패스워드를 `/tmp/prelik-sasl_passwd` 평문으로
+  잠시 노출하던 경로 제거. mktemp + chmod 600 + `install -m 600 -o root` 패턴.
+- `mail postfix-relay`: 실행 전 `/etc/postfix/main.cf.prelik-<timestamp>`
+  자동 백업 (실수 복구용).
+- `cloudflare email-worker-attach-all --dry-run`: 실제 변경 없이 대상 목록 +
+  현재 catch-all action 표시. 무심코 모든 도메인 포워딩 덮어쓰는 사고 방지.
+
 ## [0.7.1] - 2026-04-15
 
 ### Removed
