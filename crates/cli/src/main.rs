@@ -11,7 +11,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 초기 세팅 (경로 생성)
+    /// 인터랙티브 초기 세팅 (추천 — 첫 사용자용)
+    Init,
+    /// 비인터랙티브 경로만 생성
     Setup,
     /// 사용 가능한 도메인 목록
     Available,
@@ -40,6 +42,7 @@ const REPO: &str = "dalsoop/prelik-init";
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Init => init(),
         Cmd::Setup => setup(),
         Cmd::Available => list_available(),
         Cmd::List => list_installed(),
@@ -72,7 +75,87 @@ fn setup() -> anyhow::Result<()> {
     println!("  data:    {}", data.display());
     println!("  domains: {}", domains.display());
     println!("  bin:     {}", bin.display());
-    println!("\n다음 단계: prelik install bootstrap");
+    println!("\n다음 단계: prelik install bootstrap  또는  prelik init (인터랙티브)");
+    Ok(())
+}
+
+fn init() -> anyhow::Result<()> {
+    use std::io::{self, Write};
+    println!("=== prelik 초기 세팅 (인터랙티브) ===\n");
+
+    setup()?;
+
+    let config = paths::config_dir()?;
+    let env_path = config.join(".env");
+    let cfg_path = config.join("config.toml");
+    std::fs::create_dir_all(&config)?;
+
+    let prompt = |q: &str, default: &str| -> io::Result<String> {
+        print!("  {q}");
+        if !default.is_empty() {
+            print!(" [{default}]");
+        }
+        print!(": ");
+        io::stdout().flush()?;
+        let mut s = String::new();
+        io::stdin().read_line(&mut s)?;
+        let v = s.trim();
+        Ok(if v.is_empty() { default.to_string() } else { v.to_string() })
+    };
+
+    println!("[1/3] Cloudflare 크리덴셜 (생략 가능)");
+    let cf_email = prompt("CLOUDFLARE_EMAIL", "")?;
+    let cf_key = if !cf_email.is_empty() {
+        prompt("CLOUDFLARE_API_KEY (Global API Key)", "")?
+    } else { String::new() };
+
+    println!("\n[2/3] SMTP (발송 릴레이용, 생략 가능)");
+    let smtp_user = prompt("SMTP_USER (예: devops@example.com)", "")?;
+    let smtp_pass = if !smtp_user.is_empty() {
+        prompt("SMTP_PASSWORD", "")?
+    } else { String::new() };
+
+    println!("\n[3/3] Proxmox 네트워크 (LXC 도메인 쓸 때 필요)");
+    let detected_proxmox = os::is_proxmox();
+    let bridge = prompt("network bridge", if detected_proxmox { "vmbr1" } else { "" })?;
+    let gateway = prompt("기본 게이트웨이 (예: 10.0.50.1)", "")?;
+    let subnet: u8 = prompt("subnet prefix", "16")?.parse().unwrap_or(16);
+
+    // .env 작성
+    let mut env_lines = vec![];
+    if !cf_email.is_empty() {
+        env_lines.push(format!("CLOUDFLARE_EMAIL={cf_email}"));
+        env_lines.push(format!("CLOUDFLARE_API_KEY={cf_key}"));
+    }
+    if !smtp_user.is_empty() {
+        env_lines.push(format!("SMTP_USER={smtp_user}"));
+        env_lines.push(format!("SMTP_PASSWORD={smtp_pass}"));
+    }
+    if !env_lines.is_empty() {
+        std::fs::write(&env_path, env_lines.join("\n") + "\n")?;
+        common::run("chmod", &["600", &env_path.display().to_string()])?;
+        println!("\n✓ {} 저장 (0600)", env_path.display());
+    }
+
+    // config.toml 작성
+    let mut cfg = String::from("# prelik config — 자동 생성\n\n");
+    if !bridge.is_empty() || !gateway.is_empty() {
+        cfg.push_str("[network]\n");
+        cfg.push_str(&format!("bridge = \"{bridge}\"\n"));
+        cfg.push_str(&format!("gateway = \"{gateway}\"\n"));
+        cfg.push_str(&format!("subnet = {subnet}\n"));
+    }
+    if !cfg.trim_end().ends_with("자동 생성") {
+        std::fs::write(&cfg_path, cfg)?;
+        println!("✓ {} 저장", cfg_path.display());
+    }
+
+    println!("\n=== 다음 단계 ===");
+    println!("  prelik install bootstrap                   # 의존성");
+    if detected_proxmox {
+        println!("  prelik install lxc traefik mail cloudflare connect ai");
+    }
+    println!("  prelik doctor                              # 상태 점검");
     Ok(())
 }
 
