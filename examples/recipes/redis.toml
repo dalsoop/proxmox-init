@@ -1,0 +1,36 @@
+[service]
+name = "redis"
+description = "Redis 7 + 외부 접속 허용 + 기본 비밀번호 (changeme)"
+
+[lxc]
+cores = "1"
+memory = "1024"
+disk = "4"
+
+[install]
+packages = ["redis-server"]
+
+[[install.steps]]
+name = "외부 접속 허용 (bind 0.0.0.0)"
+run = """
+sed -i 's/^bind .*/bind 0.0.0.0 -::1/' /etc/redis/redis.conf
+"""
+
+[[install.steps]]
+name = "protected-mode + requirepass (REDIS_PASSWORD 환경변수 또는 'changeme')"
+run = """
+PW="${REDIS_PASSWORD:-changeme}"
+sed -i "s/^# *requirepass .*/requirepass $PW/" /etc/redis/redis.conf
+sed -i 's/^protected-mode .*/protected-mode yes/' /etc/redis/redis.conf
+"""
+
+[[install.steps]]
+name = "systemd 재시작"
+run = "systemctl restart redis-server && systemctl enable redis-server"
+
+[[install.steps]]
+name = "검증"
+run = """
+PW="${REDIS_PASSWORD:-changeme}"
+redis-cli -a "$PW" PING 2>/dev/null | grep -q PONG && echo '✓ redis 동작'
+"""
