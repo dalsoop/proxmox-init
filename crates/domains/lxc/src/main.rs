@@ -3,12 +3,31 @@
 
 use clap::{Parser, Subcommand};
 use prelik_core::{common, os};
+use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "prelik-lxc", about = "LXC 수명 관리 (Proxmox pct 래퍼)")]
 struct Cli {
+    /// list/snapshot-list/status를 JSON으로 출력 (자동화/CI 친화)
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+#[derive(Serialize)]
+struct LxcRow {
+    vmid: String,
+    status: String,
+    lock: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct SnapshotRow {
+    name: String,
+    parent: String,
+    description: String,
 }
 
 #[derive(Subcommand)]
@@ -105,14 +124,13 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // --help/--version은 clap이 parse 중 종료. doctor는 환경 점검용이므로
-    // require_proxmox 검사 건너뜀.
+    let json = cli.json;
     if !matches!(cli.cmd, Cmd::Doctor) {
         require_proxmox()?;
     }
     match cli.cmd {
-        Cmd::List => list(),
-        Cmd::Status { vmid } => status(&vmid),
+        Cmd::List => list(json),
+        Cmd::Status { vmid } => status(&vmid, json),
         Cmd::Create {
             vmid,
             hostname,
@@ -132,7 +150,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Enter { vmid } => enter(&vmid),
         Cmd::Backup { vmid, storage, mode } => backup(&vmid, &storage, &mode),
         Cmd::SnapshotCreate { vmid, name, description } => snapshot_create(&vmid, &name, description.as_deref()),
-        Cmd::SnapshotList { vmid } => snapshot_list(&vmid),
+        Cmd::SnapshotList { vmid } => snapshot_list(&vmid, json),
         Cmd::SnapshotRestore { vmid, name } => snapshot_restore(&vmid, &name),
         Cmd::SnapshotDelete { vmid, name } => snapshot_delete(&vmid, &name),
         Cmd::Resize { vmid, cores, memory, disk_expand } => resize(&vmid, cores.as_deref(), memory.as_deref(), disk_expand.as_deref()),
@@ -155,9 +173,28 @@ fn snapshot_create(vmid: &str, name: &str, description: Option<&str>) -> anyhow:
     Ok(())
 }
 
-fn snapshot_list(vmid: &str) -> anyhow::Result<()> {
+fn snapshot_list(vmid: &str, json: bool) -> anyhow::Result<()> {
     let out = common::run("pct", &["listsnapshot", vmid])?;
-    println!("{out}");
+    if !json {
+        println!("{out}");
+        return Ok(());
+    }
+    // pct listsnapshot 출력은 트리 형태: `-> name parent description`
+    // 첫 토큰이 "->" 또는 "`->" 같은 그래프 문자임. 현재 상태는 "current" 표시.
+    let rows: Vec<SnapshotRow> = out.lines().filter_map(|l| {
+        // 그래프 문자/공백 제거 후 토큰 추출
+        let trimmed = l.trim_start_matches(|c: char| c == '`' || c == '-' || c == '>' || c.is_whitespace());
+        let p: Vec<&str> = trimmed.splitn(3, char::is_whitespace).collect();
+        if p.is_empty() || p[0].is_empty() { return None; }
+        let name = p[0].to_string();
+        if name == "current" { return None; }
+        Some(SnapshotRow {
+            name,
+            parent: p.get(1).map(|s| s.trim().to_string()).unwrap_or_default(),
+            description: p.get(2).map(|s| s.trim().to_string()).unwrap_or_default(),
+        })
+    }).collect();
+    println!("{}", serde_json::to_string_pretty(&rows)?);
     Ok(())
 }
 
@@ -205,15 +242,47 @@ fn require_proxmox() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn list() -> anyhow::Result<()> {
+fn list(json: bool) -> anyhow::Result<()> {
     let out = common::run("pct", &["list"])?;
-    println!("{out}");
+    if !json {
+        println!("{out}");
+        return Ok(());
+    }
+    // pct list 출력 파싱: VMID Status Lock Name (헤더 1줄)
+    let rows: Vec<LxcRow> = out.lines().skip(1).filter_map(|l| {
+        let p: Vec<&str> = l.split_whitespace().collect();
+        match p.len() {
+            // status, lock, name 순서 — pct list 컬럼: VMID Status Lock Name
+            // Lock이 비어있으면 4컬럼이 안 됨. 가능한 형태:
+            //   "100 running       - myhost"  (4)
+            //   "101 stopped         myhost"  (3, Lock 누락)
+            4 => Some(LxcRow {
+                vmid: p[0].into(), status: p[1].into(),
+                lock: if p[2] == "-" { String::new() } else { p[2].into() },
+                name: p[3].into(),
+            }),
+            3 => Some(LxcRow {
+                vmid: p[0].into(), status: p[1].into(),
+                lock: String::new(), name: p[2].into(),
+            }),
+            _ => None,
+        }
+    }).collect();
+    println!("{}", serde_json::to_string_pretty(&rows)?);
     Ok(())
 }
 
-fn status(vmid: &str) -> anyhow::Result<()> {
+fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
     let out = common::run("pct", &["status", vmid])?;
-    println!("{out}");
+    if !json {
+        println!("{out}");
+        return Ok(());
+    }
+    // "status: running" 형식
+    let parts: Vec<&str> = out.splitn(2, ':').collect();
+    let status_value = parts.get(1).map(|s| s.trim()).unwrap_or("unknown");
+    let payload = serde_json::json!({ "vmid": vmid, "status": status_value });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
 }
 
