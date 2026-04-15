@@ -41,7 +41,7 @@ in
     lxc = {
       name = "lxc",
       description = "LXC 수명 관리 (Proxmox pct 래퍼)",
-      enabled = false,
+      enabled = true,
       tags = { product = 'infra, layer = 'remote, platform = 'proxmox },
       provides = ["lxc create", "lxc delete", "lxc backup"],
     } | Domain,

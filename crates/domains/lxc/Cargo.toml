@@ -1,0 +1,15 @@
+[package]
+name = "prelik-lxc"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "prelik-lxc"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+prelik-core = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

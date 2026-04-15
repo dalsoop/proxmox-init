@@ -33,6 +33,7 @@ const REQUIRED: &[(&str, &str)] = &[
     ("cargo", "rust"),
     ("gh", "gh"),
     ("dotenvx", "dotenvx"),
+    ("nickel", "nickel"),
     ("systemctl", "systemd"),
 ];
 
@@ -55,6 +56,7 @@ fn install() -> anyhow::Result<()> {
     install_rust()?;
     install_gh()?;
     install_dotenvx()?;
+    install_nickel()?;
 
     println!("\n=== bootstrap 완료 ===");
     if !doctor() {
@@ -130,6 +132,17 @@ fn install_dotenvx() -> anyhow::Result<()> {
     }
     println!("  dotenvx 설치 중 (npm -g)...");
     common::run_bash("sudo npm install -g @dotenvx/dotenvx@latest")?;
+    Ok(())
+}
+
+fn install_nickel() -> anyhow::Result<()> {
+    if common::has_cmd("nickel") {
+        println!("  ✓ nickel 이미 설치됨");
+        return Ok(());
+    }
+    println!("  nickel 설치 중 (cargo install)...");
+    // cargo로 설치 (rust 이미 설치된 상태 전제)
+    common::run_bash("cargo install nickel-lang-cli --locked")?;
     Ok(())
 }
 
