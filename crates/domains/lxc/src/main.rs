@@ -193,18 +193,28 @@ fn snapshot_list(vmid: &str, json: bool) -> anyhow::Result<()> {
         if name == "current" { continue; }
         // 2번째 토큰이 YYYY-MM-DD 패턴이면 timestamp = "tok1 tok2", 나머지 = description.
         // 아니면 fail-fast (자동화 안전).
-        let is_date = toks.get(1).map(|t| {
-            t.len() == 10 && t.as_bytes()[4] == b'-' && t.as_bytes()[7] == b'-'
+        let date_ok = toks.get(1).map(|t| {
+            let b = t.as_bytes();
+            t.len() == 10 && b[4] == b'-' && b[7] == b'-'
+                && b[..4].iter().all(|c| c.is_ascii_digit())
+                && b[5..7].iter().all(|c| c.is_ascii_digit())
+                && b[8..10].iter().all(|c| c.is_ascii_digit())
         }).unwrap_or(false);
-        if is_date {
-            let timestamp = format!("{} {}", toks[1], toks.get(2).unwrap_or(&""));
-            let description = toks.iter().skip(3).copied().collect::<Vec<_>>().join(" ");
-            rows.push(SnapshotRow { name, timestamp, description });
-        } else {
+        let time_ok = toks.get(2).map(|t| {
+            let b = t.as_bytes();
+            t.len() == 8 && b[2] == b':' && b[5] == b':'
+                && b[..2].iter().all(|c| c.is_ascii_digit())
+                && b[3..5].iter().all(|c| c.is_ascii_digit())
+                && b[6..8].iter().all(|c| c.is_ascii_digit())
+        }).unwrap_or(false);
+        if !date_ok || !time_ok {
             anyhow::bail!(
-                "pct listsnapshot 라인 파싱 실패 (timestamp 컬럼이 YYYY-MM-DD 아님): {l:?}"
+                "pct listsnapshot 라인 파싱 실패 (timestamp가 YYYY-MM-DD HH:MM:SS 아님): {l:?}"
             );
         }
+        let timestamp = format!("{} {}", toks[1], toks[2]);
+        let description = toks.iter().skip(3).copied().collect::<Vec<_>>().join(" ");
+        rows.push(SnapshotRow { name, timestamp, description });
     }
     println!("{}", serde_json::to_string_pretty(&rows)?);
     Ok(())
@@ -290,9 +300,13 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
         println!("{out}");
         return Ok(());
     }
-    // "status: running" 형식. ':' 없으면 출력 형식 변경 — fail-fast.
-    let (_, value) = out.split_once(':')
+    // 정확히 "status: <value>" 형식 요구 — 키가 'status'가 아니거나
+    // 'warning:' 같은 prefix가 붙으면 fail-fast.
+    let (key, value) = out.split_once(':')
         .ok_or_else(|| anyhow::anyhow!("pct status 출력에 ':' 없음: {out:?}"))?;
+    if key.trim() != "status" {
+        anyhow::bail!("pct status 출력 형식 변경 (key='{}'): {out:?}", key.trim());
+    }
     let payload = serde_json::json!({ "vmid": vmid, "status": value.trim() });
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
