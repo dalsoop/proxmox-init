@@ -69,43 +69,57 @@ impl Tool {
             Self::Nickel => "nickel",
         }
     }
-    /// 정확히 무엇을 깔고/어디에 두는지/어떻게 지우는지 — uninstall.md §9의 단순 안내를 정확화.
+    /// "prelik이 설치할 수 있는 항목" 카탈로그. 호스트 현재 상태가 아니라 **정적 안내**.
+    /// 실제 install_*는 idempotent (이미 있는 도구는 skip)이므로, 호스트의 어떤 항목이
+    /// prelik이 깐 것인지 manifest만으로는 알 수 없다 — 'detected' 필드로 표시.
+    /// 제거 절차는 실제 remove_* 로직과 정확히 일치.
     fn manifest_entry(&self) -> serde_json::Value {
+        let detected = common::has_cmd(self.check_cmd());
         match self {
             Self::Apt => serde_json::json!({
                 "tool": "apt",
-                "apt_packages": ["curl", "ca-certificates", "build-essential", "git", "jq"],
+                "static_install_packages": ["curl", "ca-certificates", "build-essential", "git", "jq"],
                 "binaries": [],
                 "files": [],
-                "uninstall": "sudo apt remove --purge curl ca-certificates build-essential git jq\n# 주의: build-essential은 다른 패키지가 의존할 수 있음 (apt autoremove 신중히)",
+                "detected_on_host": detected,
+                "warning": "이 패키지들이 이미 시스템에 있었다면 prelik이 설치한 것이 아닙니다 (idempotent install).",
+                "uninstall_actual": "sudo apt-get remove -y build-essential\n# prelik bootstrap remove --only apt 가 실제로 하는 일과 동일.\n# curl/ca-certificates/git/jq는 시스템 핵심이라 제거하지 않음 (사용자가 명시적으로 깔았다고 확신할 때만 수동 제거)",
             }),
             Self::Rust => serde_json::json!({
                 "tool": "rust",
-                "apt_packages": [],
+                "static_install_packages": [],
                 "binaries": ["~/.cargo/bin/cargo", "~/.cargo/bin/rustc", "~/.cargo/bin/rustup"],
                 "files": ["~/.cargo/", "~/.rustup/"],
-                "uninstall": "rustup self uninstall\n# 또는: rm -rf ~/.cargo ~/.rustup\n# .bashrc/.zshrc의 'source $HOME/.cargo/env' 라인도 수동 제거",
+                "detected_on_host": detected,
+                "warning": "Rust가 이미 있었다면 prelik이 설치한 게 아닐 수 있음. ~/.cargo/는 다른 cargo install 산출물도 포함.",
+                "uninstall_actual": "rustup self uninstall\n# 또는: rm -rf ~/.cargo ~/.rustup\n# .bashrc/.zshrc의 'source $HOME/.cargo/env' 수동 제거 필요",
             }),
             Self::Gh => serde_json::json!({
                 "tool": "gh",
-                "apt_packages": ["gh"],
+                "static_install_packages": ["gh"],
                 "binaries": ["/usr/bin/gh"],
                 "files": ["/etc/apt/sources.list.d/github-cli.list", "/usr/share/keyrings/githubcli-archive-keyring.gpg", "~/.config/gh/"],
-                "uninstall": "sudo apt remove --purge gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg\nrm -rf ~/.config/gh    # 인증 토큰 포함",
+                "detected_on_host": detected,
+                "warning": null,
+                "uninstall_actual": "sudo apt remove --purge gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg\nrm -rf ~/.config/gh    # 인증 토큰 포함",
             }),
             Self::Dotenvx => serde_json::json!({
                 "tool": "dotenvx",
-                "apt_packages": [],
-                "binaries": ["/usr/local/bin/dotenvx"],
-                "files": [],
-                "uninstall": "sudo rm -f /usr/local/bin/dotenvx\n# .env.keys / .env.vault 파일은 프로젝트별로 별도 관리 (자동 삭제 금지)",
+                "static_install_packages": ["nodejs", "npm"],
+                "binaries": ["/usr/local/bin/dotenvx (대안)", "npm -g @dotenvx/dotenvx (실제)"],
+                "files": ["~/.npm/", "/usr/lib/node_modules/@dotenvx/dotenvx/"],
+                "detected_on_host": detected,
+                "warning": "prelik install이 npm 없으면 nodejs+npm을 같이 깔고 'sudo npm install -g @dotenvx/dotenvx'로 설치. nodejs/npm은 시스템 의존이라 제거 시 신중.",
+                "uninstall_actual": "sudo npm uninstall -g @dotenvx/dotenvx\n# /usr/local/bin/dotenvx도 있으면: sudo rm -f /usr/local/bin/dotenvx\n# nodejs/npm은 다른 도구가 쓸 수 있으니 자동 제거 안 함\n# .env.keys / .env.vault는 프로젝트별 별도 관리 (자동 삭제 금지)",
             }),
             Self::Nickel => serde_json::json!({
                 "tool": "nickel",
-                "apt_packages": [],
-                "binaries": ["/usr/local/bin/nickel"],
+                "static_install_packages": [],
+                "binaries": ["/usr/local/bin/nickel (바이너리 다운로드 성공 시)", "~/.cargo/bin/nickel (cargo install 폴백)"],
                 "files": [],
-                "uninstall": "sudo rm -f /usr/local/bin/nickel",
+                "detected_on_host": detected,
+                "warning": "GitHub 다운로드 실패 시 'cargo install nickel-lang-cli'로 폴백됨. 두 경로 모두 확인 필요.",
+                "uninstall_actual": "sudo rm -f /usr/local/bin/nickel\n# cargo install로 깔렸다면: cargo uninstall nickel-lang-cli",
             }),
         }
     }
@@ -139,29 +153,34 @@ fn manifest(tools: &[Tool], json: bool) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&entries)?);
         return Ok(());
     }
-    println!("=== bootstrap manifest ===\n");
+    println!("=== bootstrap manifest ===");
+    println!("⚠ 정적 카탈로그 — prelik이 깐 것인지 호스트의 다른 출처인지 구분하지 않음.");
+    println!("  detected=true는 'PATH에 명령이 있다'는 뜻일 뿐 prelik 출처 보장 아님.\n");
     for (t, e) in tools.iter().zip(&entries) {
-        println!("[{}]", t.name());
-        if let Some(arr) = e["apt_packages"].as_array() {
+        println!("[{}] (detected={})", t.name(), e["detected_on_host"].as_bool().unwrap_or(false));
+        if let Some(arr) = e["static_install_packages"].as_array() {
             if !arr.is_empty() {
-                println!("  apt 패키지: {}",
+                println!("  설치 가능 apt 패키지: {}",
                     arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
             }
         }
         if let Some(arr) = e["binaries"].as_array() {
             if !arr.is_empty() {
-                println!("  바이너리:   {}",
+                println!("  바이너리 후보:        {}",
                     arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
             }
         }
         if let Some(arr) = e["files"].as_array() {
             if !arr.is_empty() {
-                println!("  파일:       {}",
+                println!("  부가 파일:            {}",
                     arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "));
             }
         }
-        if let Some(s) = e["uninstall"].as_str() {
-            println!("  제거 절차:");
+        if let Some(w) = e["warning"].as_str() {
+            println!("  ⚠ {w}");
+        }
+        if let Some(s) = e["uninstall_actual"].as_str() {
+            println!("  제거 절차 (실제 remove_* 로직과 일치):");
             for line in s.lines() {
                 println!("    {line}");
             }

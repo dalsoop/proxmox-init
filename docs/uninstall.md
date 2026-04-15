@@ -257,7 +257,7 @@ sudo systemctl daemon-reload
 
 `prelik install bootstrap`이 시스템 패키지/바이너리를 설치했습니다. 다른 용도로도 쓸 수 있어 자동 제거 안 합니다.
 
-**먼저 manifest로 정확히 무엇이 깔렸는지 확인:**
+**먼저 manifest로 prelik이 *설치할 수 있는* 항목 카탈로그를 확인:**
 
 ```bash
 prelik run bootstrap manifest             # 사람용 표
@@ -265,7 +265,9 @@ prelik run bootstrap manifest --json      # 자동화/스크립트용
 prelik run bootstrap manifest --only gh   # 특정 도구만
 ```
 
-각 도구가 깐 정확한 apt 패키지/바이너리 경로/추가 파일 + 제거 절차가 출력됩니다.
+⚠️ **manifest는 정적 카탈로그입니다** — prelik install이 idempotent라서, 이미 호스트에 있던 도구는 prelik이 깐 것이 아닐 수 있습니다. `detected_on_host=true` 표시는 단순히 "PATH에 명령이 있다"는 뜻일 뿐, prelik이 출처라는 보장은 아닙니다.
+
+각 항목은 **prelik install이 깔 수 있는 후보** + **prelik remove가 실제로 하는 동작**입니다.
 
 **예시 (gh):**
 ```
@@ -282,7 +284,13 @@ prelik run bootstrap manifest --only gh   # 특정 도구만
     rm -rf ~/.config/gh    # 인증 토큰 포함
 ```
 
-manifest의 "제거 절차" 그대로 실행하면 됩니다. apt 패키지는 `apt autoremove`를 절대 즉시 실행하지 마세요 — `build-essential` 등이 다른 시스템 패키지의 의존이라 함께 사라질 수 있습니다.
+manifest의 **`uninstall_actual`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치합니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요.
+
+추가 주의:
+- **apt**: prelik의 `remove --only apt`는 `build-essential`만 제거합니다 (curl/git/jq 등 시스템 핵심은 보존). manifest의 `static_install_packages`를 그대로 `apt remove --purge`하지 마세요.
+- **dotenvx**: prelik이 nodejs/npm까지 깔았을 수 있지만 다른 도구도 쓰는 의존이라 자동 제거 안 합니다.
+- **nickel**: 다운로드 실패 시 `cargo install nickel-lang-cli`로 폴백되었을 수 있으니 양쪽(`/usr/local/bin/nickel`, `~/.cargo/bin/nickel`) 모두 확인.
+- **`apt autoremove`는 절대 즉시 실행 금지** — `build-essential` 등이 다른 시스템 패키지 의존이라 같이 사라질 수 있습니다.
 
 ---
 
