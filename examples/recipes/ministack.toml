@@ -20,15 +20,17 @@ run = "systemctl enable --now docker"
 [[install.steps]]
 name = "upstream compose 다운로드 (핀: v1.2.15) + 로컬 안전 패치"
 run = """
+set -euo pipefail
 mkdir -p /opt/ministack
 cd /opt/ministack
 
-# 매 실행마다 pristine compose를 다시 받고 patch 재적용 — env override 계약 유지.
-# 기존 파일 캐시 시 MINISTACK_PIN / MINISTACK_DOCKER 변경이 안 먹히는 문제 회피.
+# 매 실행 pristine compose 재다운로드. curl -f 실패 시 즉시 step 실패.
+# tmp로 받고 atomic mv — 다운로드 도중 실패 시 기존 파일 유지.
 PIN="${MINISTACK_PIN:-v1.2.15}"
 curl -fsSL \
   "https://raw.githubusercontent.com/ministackorg/ministack/${PIN}/docker-compose.yml" \
-  -o docker-compose.yml
+  -o docker-compose.yml.tmp
+mv -f docker-compose.yml.tmp docker-compose.yml
 
 # 1) build: . 제거 — pre-built image만 사용
 sed -i '/^\\s*build:\\s*\\.\\s*$/d' docker-compose.yml

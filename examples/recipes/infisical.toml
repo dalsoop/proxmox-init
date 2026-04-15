@@ -18,48 +18,52 @@ name = "Docker daemon enable"
 run = "systemctl enable --now docker"
 
 [[install.steps]]
-name = "compose + .env 자동 생성 (POSTGRES/REDIS 포함)"
+name = "compose + .env (시크릿은 1회 생성, 시크릿 외 값은 매 실행 갱신)"
 run = """
+set -euo pipefail
 mkdir -p /opt/infisical
 cd /opt/infisical
 
-# 공식 self-host compose — commit SHA 핀 (main 추적 금지, compose 구조 안정화).
-# 매 실행마다 재다운로드 — INFISICAL_PIN 변경이 즉시 반영되도록.
+# 공식 self-host compose — commit SHA 핀.
+# 매 실행 재다운로드. curl -f는 HTTP 에러에서 exit 1 → step 즉시 실패.
 PIN="${INFISICAL_PIN:-73b274e3dcbaa89afa9f3caed2db2ff101f39c7d}"
 curl -fsSL \
   "https://raw.githubusercontent.com/Infisical/infisical/${PIN}/docker-compose.prod.yml" \
-  -o docker-compose.yml
+  -o docker-compose.yml.tmp
+mv -f docker-compose.yml.tmp docker-compose.yml
 
-if [ ! -f .env ]; then
-  ENCRYPTION_KEY=$(openssl rand -hex 16)
-  AUTH_SECRET=$(openssl rand -base64 32)
-  JWT_SIGNUP_SECRET=$(openssl rand -hex 32)
-  JWT_REFRESH_SECRET=$(openssl rand -hex 32)
-  JWT_AUTH_SECRET=$(openssl rand -hex 32)
-  JWT_MFA_SECRET=$(openssl rand -hex 32)
-  JWT_SERVICE_SECRET=$(openssl rand -hex 32)
-  JWT_PROVIDER_AUTH_SECRET=$(openssl rand -hex 32)
-  PG_PASSWORD=$(openssl rand -hex 16)
-
-  # upstream compose가 backend:80 → host:80으로 publish함. SITE_URL/검증 모두 :80.
-  cat > .env << ENV
-ENCRYPTION_KEY=${ENCRYPTION_KEY}
-AUTH_SECRET=${AUTH_SECRET}
-JWT_SIGNUP_SECRET=${JWT_SIGNUP_SECRET}
-JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-JWT_AUTH_SECRET=${JWT_AUTH_SECRET}
-JWT_MFA_SECRET=${JWT_MFA_SECRET}
-JWT_SERVICE_SECRET=${JWT_SERVICE_SECRET}
-JWT_PROVIDER_AUTH_SECRET=${JWT_PROVIDER_AUTH_SECRET}
-POSTGRES_USER=infisical
-POSTGRES_PASSWORD=${PG_PASSWORD}
-POSTGRES_DB=infisical
-DB_CONNECTION_URI=postgres://infisical:${PG_PASSWORD}@db:5432/infisical
-REDIS_URL=redis://redis:6379
-SITE_URL=${INFISICAL_SITE_URL:-http://localhost:80}
+# 시크릿 파일 — 최초 1회만. 기존 시크릿 유지 (돌고 있는 DB와 호환).
+# 시크릿 재생성이 필요하면 /opt/infisical/.env.secrets를 수동 삭제 후 재실행.
+if [ ! -f .env.secrets ]; then
+  cat > .env.secrets << ENV
+ENCRYPTION_KEY=$(openssl rand -hex 16)
+AUTH_SECRET=$(openssl rand -base64 32)
+JWT_SIGNUP_SECRET=$(openssl rand -hex 32)
+JWT_REFRESH_SECRET=$(openssl rand -hex 32)
+JWT_AUTH_SECRET=$(openssl rand -hex 32)
+JWT_MFA_SECRET=$(openssl rand -hex 32)
+JWT_SERVICE_SECRET=$(openssl rand -hex 32)
+JWT_PROVIDER_AUTH_SECRET=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
 ENV
-  chmod 600 .env
+  chmod 600 .env.secrets
 fi
+
+# .env는 매 실행 재생성: 시크릿(.env.secrets) + env overrides.
+# INFISICAL_SITE_URL 변경이 재실행 즉시 반영됨.
+# upstream compose는 backend:80 → host:80 publish. 기본 SITE_URL 맞춤.
+{
+  cat .env.secrets
+  echo "POSTGRES_USER=infisical"
+  echo "POSTGRES_DB=infisical"
+  # POSTGRES_PASSWORD는 .env.secrets에서 나옴 — DB_CONNECTION_URI가 다시 참조
+  PG_PASSWORD=$(grep ^POSTGRES_PASSWORD= .env.secrets | cut -d= -f2-)
+  echo "DB_CONNECTION_URI=postgres://infisical:${PG_PASSWORD}@db:5432/infisical"
+  echo "REDIS_URL=redis://redis:6379"
+  echo "SITE_URL=${INFISICAL_SITE_URL:-http://localhost:80}"
+} > .env.tmp
+chmod 600 .env.tmp
+mv -f .env.tmp .env
 """
 
 [[install.steps]]
