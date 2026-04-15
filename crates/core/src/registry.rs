@@ -91,6 +91,7 @@ impl Registry {
             ("monitor", "호스트/LXC/VM 리소스 모니터링", true),
             ("net", "네트워크 진단 (인터페이스/라우트/브리지/DNS/ping)", true),
             ("node", "Proxmox 클러스터 노드 관리 (list/info/exec)", true),
+            ("recovery", "LXC config 스냅샷/복원 + audit log", true),
         ] {
             domains.insert(
                 name.to_string(),

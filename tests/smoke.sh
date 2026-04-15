@@ -21,7 +21,7 @@ check "prelik --help" "$BIN_DIR/prelik --help"
 check "prelik available" "$BIN_DIR/prelik available"
 check "prelik doctor" "$BIN_DIR/prelik doctor"
 
-for dom in account ai backup bootstrap cloudflare comfyui connect deploy host iso lxc mail monitor nas net node telegram traefik vm workspace; do
+for dom in account ai backup bootstrap cloudflare comfyui connect deploy host iso lxc mail monitor nas net node recovery telegram traefik vm workspace; do
     echo ""
     echo "=== prelik-$dom ==="
     check "$dom --help" "$BIN_DIR/prelik-$dom --help"

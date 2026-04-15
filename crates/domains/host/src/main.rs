@@ -30,6 +30,8 @@ enum Cmd {
     SmbOpen,
     /// SMB 포트 닫기
     SmbClose,
+    /// gh CLI 풀스코프 인증 갱신 (repo/admin:org/admin:repo_hook 등 18개 스코프)
+    GhAuth,
     /// prelik CLI 자체 업데이트 (install.prelik.com 재실행)
     SelfUpdate {
         /// 특정 버전 핀 (예: v1.8.3). 미지정 시 latest.
@@ -56,6 +58,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::SshKeygen { label, email } => ssh_keygen(&label, email.as_deref()),
         Cmd::SmbOpen => smb_set(true),
         Cmd::SmbClose => smb_set(false),
+        Cmd::GhAuth => gh_auth(),
         Cmd::SelfUpdate { version, force } => self_update(version.as_deref(), force),
         Cmd::Doctor => {
             doctor();
@@ -233,5 +236,33 @@ fn self_update(version: Option<&str>, force: bool) -> anyhow::Result<()> {
     if !status.success() {
         anyhow::bail!("self-update 실패 (exit {})", status.code().unwrap_or(-1));
     }
+    Ok(())
+}
+
+/// gh CLI 풀스코프 인증 — `gh auth refresh -s <scopes>`.
+/// 인터랙티브 (브라우저 device flow). prelik이 아니라 gh가 처리.
+fn gh_auth() -> anyhow::Result<()> {
+    const SCOPES: &[&str] = &[
+        "repo", "admin:org", "admin:public_key", "admin:repo_hook",
+        "admin:org_hook", "gist", "notifications", "user", "delete_repo",
+        "write:packages", "read:packages", "admin:gpg_key", "codespace",
+        "project", "admin:ssh_signing_key", "audit_log", "copilot", "workflow",
+    ];
+    println!("=== gh CLI 풀스코프 인증 ===");
+    if !common::has_cmd("gh") {
+        anyhow::bail!("gh CLI 없음 — prelik install bootstrap 먼저");
+    }
+    let scopes = SCOPES.join(",");
+    println!("요청 스코프: {scopes}\n");
+    let status = std::process::Command::new("gh")
+        .args(["auth", "refresh", "-h", "github.com", "-s", &scopes])
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("gh auth refresh 실패 (exit {})", status.code().unwrap_or(-1));
+    }
+    println!("\n✓ 인증 완료");
     Ok(())
 }

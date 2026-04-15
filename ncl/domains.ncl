@@ -116,6 +116,13 @@ in
       provides = ["node list", "node info", "node exec"],
     } | Domain,
 
+    recovery = {
+      name = "recovery",
+      description = "LXC config 스냅샷/복원 + audit log (destructive op 안전망)",
+      tags = { product = 'infra, layer = 'platform, platform = 'proxmox },
+      provides = ["recovery create", "recovery list", "recovery restore", "recovery delete", "recovery audit-log", "recovery audit-show"],
+    } | Domain,
+
 
 
 
