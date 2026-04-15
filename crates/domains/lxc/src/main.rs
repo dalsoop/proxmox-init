@@ -737,17 +737,23 @@ fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
         // 패키지명은 이미 검증됨
         format!("printf '%s\\t' '{p}'; dpkg-query -W -f='${{Status}}\\n' '{p}' 2>/dev/null || echo 'missing'")
     }).collect::<Vec<_>>().join("; ");
-    let out = pct_exec(vmid, &check).unwrap_or_default();
+    let out = pct_exec(vmid, &check)?;
+    // 각 패키지가 probe 출력에 정확히 한 줄로 나와야 함. 누락되면 fail-open 방지.
     let mut missing: Vec<&str> = Vec::new();
-    for line in out.lines() {
-        let (name, status) = match line.split_once('\t') {
-            Some(v) => v,
-            None => continue,
-        };
-        if !status.contains("install ok installed") {
-            if let Some(&p) = pkgs.iter().find(|p| **p == name) {
-                missing.push(p);
+    for p in pkgs {
+        let matched = out.lines().find_map(|line| {
+            let (name, status) = line.split_once('\t')?;
+            if name == *p { Some(status) } else { None }
+        });
+        match matched {
+            Some(status) => {
+                if !status.contains("install ok installed") {
+                    missing.push(p);
+                }
             }
+            None => anyhow::bail!(
+                "dpkg-query probe 출력에 '{p}' 라인 없음 — LXC에 dpkg-query가 없거나 probe 실패"
+            ),
         }
     }
     if missing.is_empty() {
