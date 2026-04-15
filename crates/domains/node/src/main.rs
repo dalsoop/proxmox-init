@@ -158,16 +158,30 @@ fn exec(node: &str, cmd: &[String]) -> anyhow::Result<()> {
     if !common::has_cmd("ssh") {
         anyhow::bail!("ssh 없음");
     }
+    if !common::has_cmd("pvesh") {
+        anyhow::bail!("pvesh 없음 — 노드 멤버십 검증 불가");
+    }
     if cmd.is_empty() {
         anyhow::bail!("실행 명령이 비어 있음");
     }
+    // 권한 경계: 실제 Proxmox 클러스터 멤버만 허용. 임의 호스트 SSH 프리미티브로 변질 금지.
+    let nodes_json = common::run("pvesh", &["get", "/nodes", "--output-format", "json"])?;
+    let rows = parse_pvesh_nodes(&nodes_json)?;
+    if !rows.iter().any(|r| r.node == node) {
+        anyhow::bail!(
+            "노드 '{node}'는 클러스터 멤버가 아님 (prelik-node list 로 확인). \
+             임의 호스트 SSH는 차단됩니다."
+        );
+    }
+
     let target = format!("root@{node}");
-    // 명령은 공백 분리된 토큰을 ssh가 원격에서 단일 라인으로 평가하도록 join
     let joined = cmd.join(" ");
+    // StrictHostKeyChecking=yes — 첫 연결 자동 신뢰 금지.
+    // 사전에 known_hosts에 등록되어 있어야 함 (Proxmox 클러스터는 보통 가입 시 등록됨).
     let status = Command::new("ssh")
         .args([
             "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "StrictHostKeyChecking=yes",
             "-o", "BatchMode=yes",
             &target, &joined,
         ])
