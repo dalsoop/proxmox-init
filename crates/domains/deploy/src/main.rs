@@ -193,11 +193,21 @@ fn service(
 
 fn list_recipes() {
     println!("=== 사용 가능한 레시피 ===");
-    let mut dirs: Vec<PathBuf> = vec![];
+    // root 실행 시 config_dir() == /etc/prelik이라 /etc/prelik/recipes가 중복.
+    // canonicalize 기반 dedup으로 중복 출력 차단.
+    let mut candidates: Vec<PathBuf> = vec![];
     if let Ok(p) = paths::config_dir() {
-        dirs.push(p.join("recipes"));
+        candidates.push(p.join("recipes"));
     }
-    dirs.push(PathBuf::from("/etc/prelik/recipes"));
+    candidates.push(PathBuf::from("/etc/prelik/recipes"));
+    let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for p in candidates {
+        let key = p.canonicalize().unwrap_or(p.clone());
+        if seen.insert(key) {
+            dirs.push(p);
+        }
+    }
 
     let mut count = 0;
     for dir in &dirs {

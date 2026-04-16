@@ -51,11 +51,20 @@ jobs:
             tar czf "dist/prelik-${TARGET}.tar.gz" -C "$BIN_DIR" prelik
           fi
           # Domains: prelik-{domain}-{target}.tar.gz
-          for bin in prelik-ai prelik-bootstrap prelik-cloudflare prelik-host prelik-nas prelik-workspace prelik-account prelik-telegram prelik-comfyui prelik-vm prelik-backup prelik-deploy prelik-connect prelik-lxc prelik-mail prelik-traefik prelik-iso prelik-monitor prelik-net prelik-node prelik-recovery; do
+          for bin in prelik-ai prelik-bootstrap prelik-cloudflare prelik-host prelik-nas prelik-workspace prelik-account prelik-telegram prelik-comfyui prelik-vm prelik-backup prelik-connect prelik-lxc prelik-mail prelik-traefik prelik-iso prelik-monitor prelik-net prelik-node prelik-recovery; do
             if [ -f "$BIN_DIR/$bin" ]; then
               tar czf "dist/${bin}-${TARGET}.tar.gz" -C "$BIN_DIR" "$bin"
             fi
           done
+          # deploy: 바이너리 + 기본 레시피 번들 (install 시 자동 배포)
+          if [ -f "$BIN_DIR/prelik-deploy" ]; then
+            STAGE=$(mktemp -d)
+            cp "$BIN_DIR/prelik-deploy" "$STAGE/"
+            mkdir -p "$STAGE/recipes"
+            cp examples/recipes/*.toml "$STAGE/recipes/" 2>/dev/null || true
+            tar czf "dist/prelik-deploy-${TARGET}.tar.gz" -C "$STAGE" .
+            rm -rf "$STAGE"
+          fi
           ls -la dist/
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')

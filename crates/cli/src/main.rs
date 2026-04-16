@@ -3,7 +3,11 @@ use prelik_core::{common, github, os, paths};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "prelik", version, about = "Proxmox/LXC 도메인 기반 설치형 CLI")]
+#[command(
+    name = "prelik",
+    version = env!("PRELIK_GIT_VERSION"),
+    about = "Proxmox/LXC 도메인 기반 설치형 CLI",
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -35,7 +39,7 @@ enum Cmd {
     Update {
         domains: Vec<String>,
     },
-    /// 전체 업그레이드 (미구현)
+    /// 설치된 모든 도메인을 latest 릴리스로 일괄 재설치
     Upgrade,
     /// 도메인 실행
     Run {
@@ -69,10 +73,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Install { domains, preset } => install_many(domains, preset.as_deref()),
         Cmd::Remove { domains } => remove_many(&domains),
         Cmd::Update { domains } => install_many(domains, None),
-        Cmd::Upgrade => {
-            println!("(미구현) 전체 업그레이드 예정");
-            Ok(())
-        }
+        Cmd::Upgrade => upgrade_all(),
         Cmd::Run { domain, args } => run_domain(&domain, &args),
         Cmd::Uninstall { confirm, purge } => uninstall(confirm, purge),
         Cmd::Doctor => {
@@ -262,21 +263,40 @@ fn list_available() -> anyhow::Result<()> {
 }
 
 fn list_installed() -> anyhow::Result<()> {
-    let dir = paths::domains_dir()?;
-    if !dir.exists() {
+    let names = installed_domains()?;
+    if names.is_empty() {
         println!("(설치된 도메인 없음)");
         return Ok(());
     }
-    let mut count = 0;
     println!("설치된 도메인:");
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        println!("  {}", entry.file_name().to_string_lossy());
-        count += 1;
+    for n in names { println!("  {n}"); }
+    Ok(())
+}
+
+/// domains_dir 기반 설치된 도메인 이름 목록 (정렬).
+fn installed_domains() -> anyhow::Result<Vec<String>> {
+    let dir = paths::domains_dir()?;
+    if !dir.exists() { return Ok(vec![]); }
+    let mut names: Vec<String> = std::fs::read_dir(&dir)?
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+fn upgrade_all() -> anyhow::Result<()> {
+    let domains = installed_domains()?;
+    if domains.is_empty() {
+        println!("(설치된 도메인 없음 — upgrade 생략)");
+        return Ok(());
     }
-    if count == 0 {
-        println!("  (없음)");
-    }
+    let tag = github::latest_tag(REPO)?;
+    println!("=== prelik upgrade — 설치된 도메인 {}개를 {}로 ===", domains.len(), tag);
+    println!("  대상: {}\n", domains.join(", "));
+    // install_many는 개별 실패도 누적해 리포트. upgrade도 동일 정책.
+    install_many(domains, None)?;
+    println!("\n✓ upgrade 완료");
     Ok(())
 }
 
@@ -403,6 +423,28 @@ fn install(domain: &str) -> anyhow::Result<()> {
     std::fs::copy(&bin_src, &bin_dst)
         .map_err(|e| anyhow::anyhow!("바이너리 복사 실패 ({}): {}", bin_dst.display(), e))?;
     common::run("chmod", &["+x", &bin_dst.display().to_string()])?;
+
+    // deploy 도메인은 tarball에 recipes/도 포함 — config_dir/recipes에 배포.
+    // 기존 파일 보존 (사용자 수정 레시피 덮어쓰기 방지).
+    let recipes_src = dom_dir.join("recipes");
+    if recipes_src.is_dir() {
+        let recipes_dst = paths::config_dir()?.join("recipes");
+        std::fs::create_dir_all(&recipes_dst)?;
+        let mut copied = 0;
+        for entry in std::fs::read_dir(&recipes_src)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let dst = recipes_dst.join(&name);
+            if !dst.exists() {
+                std::fs::copy(entry.path(), &dst)?;
+                copied += 1;
+            }
+        }
+        if copied > 0 {
+            println!("  레시피 {copied}개 배포 → {}", recipes_dst.display());
+        }
+    }
+
     println!("✓ {domain} 설치 완료 → {}", bin_dst.display());
     Ok(())
 }
