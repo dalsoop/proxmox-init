@@ -101,9 +101,9 @@ fn setup() -> anyhow::Result<()> {
 }
 
 fn init() -> anyhow::Result<()> {
-    use std::io::{self, Write};
-    println!("=== prelik 초기 세팅 (인터랙티브) ===\n");
+    use dialoguer::{Confirm, Input, MultiSelect, Password};
 
+    println!("=== prelik 초기 세팅 ===\n");
     setup()?;
 
     let config = paths::config_dir()?;
@@ -111,38 +111,81 @@ fn init() -> anyhow::Result<()> {
     let cfg_path = config.join("config.toml");
     std::fs::create_dir_all(&config)?;
 
-    let prompt = |q: &str, default: &str| -> io::Result<String> {
-        print!("  {q}");
-        if !default.is_empty() {
-            print!(" [{default}]");
-        }
-        print!(": ");
-        io::stdout().flush()?;
-        let mut s = String::new();
-        io::stdin().read_line(&mut s)?;
-        let v = s.trim();
-        Ok(if v.is_empty() { default.to_string() } else { v.to_string() })
-    };
-
-    println!("[1/3] Cloudflare 크리덴셜 (생략 가능)");
-    let cf_email = prompt("CLOUDFLARE_EMAIL", "")?;
-    let cf_key = if !cf_email.is_empty() {
-        prompt("CLOUDFLARE_API_KEY (Global API Key)", "")?
-    } else { String::new() };
-
-    println!("\n[2/3] SMTP (발송 릴레이용, 생략 가능)");
-    let smtp_user = prompt("SMTP_USER (예: devops@example.com)", "")?;
-    let smtp_pass = if !smtp_user.is_empty() {
-        prompt("SMTP_PASSWORD", "")?
-    } else { String::new() };
-
-    println!("\n[3/3] Proxmox 네트워크 (LXC 도메인 쓸 때 필요)");
     let detected_proxmox = os::is_proxmox();
-    let bridge = prompt("network bridge", if detected_proxmox { "vmbr1" } else { "" })?;
-    let gateway = prompt("기본 게이트웨이 (예: 10.0.50.1)", "")?;
-    let subnet: u8 = prompt("subnet prefix", "16")?.parse().unwrap_or(16);
 
-    // .env 작성
+    // ─── 1/4 Cloudflare (선택) ───
+    let use_cf = Confirm::new()
+        .with_prompt("Cloudflare DNS/Email 사용?")
+        .default(false)
+        .interact()?;
+
+    let (cf_email, cf_key) = if use_cf {
+        let email: String = Input::new()
+            .with_prompt("  CLOUDFLARE_EMAIL")
+            .interact_text()?;
+        let key: String = Password::new()
+            .with_prompt("  CLOUDFLARE_API_KEY (Global API Key)")
+            .interact()?;
+        (email, key)
+    } else { (String::new(), String::new()) };
+
+    // ─── 2/4 SMTP (선택) ───
+    let use_smtp = Confirm::new()
+        .with_prompt("SMTP 발송 릴레이 사용?")
+        .default(false)
+        .interact()?;
+
+    let (smtp_user, smtp_pass) = if use_smtp {
+        let user: String = Input::new()
+            .with_prompt("  SMTP_USER (예: devops@example.com)")
+            .interact_text()?;
+        let pass: String = Password::new()
+            .with_prompt("  SMTP_PASSWORD")
+            .interact()?;
+        (user, pass)
+    } else { (String::new(), String::new()) };
+
+    // ─── 3/4 네트워크 ───
+    let bridge: String = Input::new()
+        .with_prompt("network bridge")
+        .default(if detected_proxmox { "vmbr1".into() } else { String::new() })
+        .allow_empty(true)
+        .interact_text()?;
+
+    let gateway: String = Input::new()
+        .with_prompt("기본 게이트웨이 (예: 10.0.50.1)")
+        .default(String::new())
+        .allow_empty(true)
+        .interact_text()?;
+
+    let subnet: u8 = Input::new()
+        .with_prompt("subnet prefix")
+        .default(16u8)
+        .interact_text()?;
+
+    // ─── 4/4 설치할 도메인 선택 ───
+    let reg = prelik_core::registry::Registry::load()?;
+    let avail: Vec<&prelik_core::registry::Domain> = reg.available();
+    let labels: Vec<String> = avail.iter()
+        .map(|d| format!("{:<14} {}", d.name, d.description))
+        .collect();
+
+    // 기본 선택: bootstrap + proxmox면 lxc도
+    let defaults: Vec<bool> = avail.iter()
+        .map(|d| d.name == "bootstrap" || (detected_proxmox && d.name == "lxc"))
+        .collect();
+
+    println!("\n설치할 도메인 선택 (스페이스로 토글, 엔터로 확인):");
+    let selected = MultiSelect::new()
+        .items(&labels)
+        .defaults(&defaults)
+        .interact()?;
+
+    let selected_names: Vec<String> = selected.iter()
+        .map(|&i| avail[i].name.clone())
+        .collect();
+
+    // ─── 저장 ───
     let mut env_lines = vec![];
     if !cf_email.is_empty() {
         env_lines.push(format!("CLOUDFLARE_EMAIL={cf_email}"));
@@ -158,7 +201,6 @@ fn init() -> anyhow::Result<()> {
         println!("\n✓ {} 저장 (0600)", env_path.display());
     }
 
-    // config.toml 작성
     let mut cfg = String::from("# prelik config — 자동 생성\n\n");
     if !bridge.is_empty() || !gateway.is_empty() {
         cfg.push_str("[network]\n");
@@ -171,12 +213,17 @@ fn init() -> anyhow::Result<()> {
         println!("✓ {} 저장", cfg_path.display());
     }
 
-    println!("\n=== 다음 단계 ===");
-    println!("  prelik install bootstrap                   # 의존성");
-    if detected_proxmox {
-        println!("  prelik install lxc traefik mail cloudflare connect ai");
+    // ─── 선택 도메인 설치 ───
+    if !selected_names.is_empty() {
+        println!("\n설치 시작: {}", selected_names.join(", "));
+        install_many(selected_names, None)?;
+    } else {
+        println!("\n(도메인 선택 안 함 — 나중에 'prelik install <domain>' 으로 개별 설치)");
     }
-    println!("  prelik doctor                              # 상태 점검");
+
+    println!("\n=== 완료 ===");
+    println!("  prelik doctor    # 상태 점검");
+    println!("  prelik available # 전체 도메인 목록");
     Ok(())
 }
 
