@@ -1,8 +1,9 @@
 # prelik-init
 
-[![Version](https://img.shields.io/badge/version-1.5.2-blue)](https://github.com/dalsoop/prelik-init/releases/tag/v1.5.2)
-[![Codex Reviews](https://img.shields.io/badge/codex--reviewed-26x-green)]()
-[![Domains](https://img.shields.io/badge/domains-18-blueviolet)]()
+[![Version](https://img.shields.io/badge/version-1.9.11-blue)](https://github.com/dalsoop/prelik-init/releases/tag/v1.9.11)
+[![Codex Reviews](https://img.shields.io/badge/codex--reviewed-71x-green)]()
+[![Domains](https://img.shields.io/badge/domains-21-blueviolet)]()
+[![Tests](https://img.shields.io/badge/unit--tests-84-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
 
 > Proxmox/LXC/Debian 서버용 **도메인 기반 설치형 CLI**.

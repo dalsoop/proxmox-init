@@ -1,132 +1,108 @@
-# phs ↔ prelik 비교표
+# phs ↔ prelik-init 비교 (v1.9.11 기준)
 
-prelik-init은 dalsoop의 내부 도구 **phs (proxmox-host-setup)**에서 공유 가치 있는
-부분만 추출해 독립 프로젝트로 분리한 것입니다. 이 문서는 **실제 동작 차이**를
-솔직하게 기록합니다.
+prelik-init은 dalsoop의 내부 도구 **phs (proxmox-host-setup)**에서 공유 가치
+있는 부분을 **도메인별 독립 바이너리**로 재설계한 프로젝트입니다.
 
-## 스코프 비교
+---
 
-| 도메인 | phs 커맨드 수 | prelik 이식 | 상태 |
-|--------|-------------|-------------|------|
-| lxc | 14 | 10 | 대부분 (부트스트랩 옵션 누락) |
-| traefik | 10 | 4 | 핵심만 (원격 노드 지원 없음) |
-| mail | 12 | 3 | 부분 (mailpit + postfix-relay만) |
-| cloudflare | 16 | 6 | 부분 (DNS CRUD + Worker — SSL/Pages 없음) |
-| ai | 41 | 5 | 극히 일부 (플러그인 설치 중심) |
-| connect | — | 4 | 신규 (phs의 config에 해당) |
-| bootstrap | — | 1 도메인 | 신규 (의존성 설치 통합) |
-| **host** | 8 | **0** | **미이식** |
-| **nas** | 10 | **0** | **미이식** |
-| **telegram** | 14 | **0** | **미이식** |
-| **workspace** | 12 | **0** | **미이식** |
-| **account** | 4 | **0** | **미이식** |
+## 핵심 차이
 
-## 커맨드 대응표
+| 항목 | phs | prelik-init |
+|------|-----|-------------|
+| 아키텍처 | 단일 바이너리 (18MB+) | 도메인별 독립 바이너리 (각 2~4MB) |
+| 설치 | `cargo build` from source | `curl install.prelik.com \| bash` + `prelik install <domain>` |
+| 설정 | `.env` + control-plane JSON | `~/.config/prelik/config.toml` + Nickel SSOT |
+| 범위 | dalsoop 운영 100% | 범용 공유 가능 서브셋 |
+| 제거 | 없음 | `prelik uninstall [--purge]` + 10 섹션 가이드 |
+| 리뷰 | 없음 | 71차 Codex 어드버서리얼 리뷰 |
+| 테스트 | 0 | 84 unit tests + shellcheck CI |
 
-### lxc
+---
 
-| phs | prelik | 동등성 |
-|-----|--------|--------|
-| `phs infra lxc-create --vmid X --hostname Y [--bootstrap]` | `prelik run lxc create --vmid X --hostname Y --ip Z` | **부분** — prelik은 `--ip` 필수, `--bootstrap` 없음 |
-| `phs infra lxc-delete --vmid X` | `prelik run lxc delete X --force` | 동등 (prelik은 --force 필수) |
-| `phs infra lxc-start --vmid X` | `prelik run lxc start X` | 동등 |
-| `phs infra lxc-stop --vmid X` | `prelik run lxc stop X` | 동등 |
-| `phs infra lxc-reboot --vmid X` | `prelik run lxc restart X` | 동등 |
-| `phs infra lxc-enter --vmid X` | `prelik run lxc enter X` | 동등 |
-| `phs infra lxc-list` | `prelik run lxc list` | 동등 |
-| `phs infra lxc-config --vmid X` | **없음** | 미이식 — `pct config X`로 대체 |
-| `phs infra lxc-mount` | **없음** | 미이식 |
-| `phs infra lxc-resize` | **없음** | 미이식 |
-| `phs infra lxc-bootstrap` | **없음** | 미이식 (tmux/셸 설정) |
-| `phs infra lxc-align-vmid-ip` | **없음** | 미이식 (VMID 재배치) |
-| `phs infra backup --vmid X` | `prelik run lxc backup X` | 동등 |
+## 이식 현황 (21 도메인 + 8 레시피)
 
-### traefik
+### ✅ 완전 이식 (독립 바이너리)
 
-| phs | prelik | 동등성 |
-|-----|--------|--------|
-| `phs infra traefik-add --name --domain --backend [--node]` | `prelik run traefik route-add --vmid --name --domain --backend [--use-cf]` | **부분** — prelik은 `--vmid` 필수, `--node` 미지원 |
-| `phs infra traefik-remove` | `prelik run traefik route-remove` | 동등 |
-| `phs infra traefik-list` | `prelik run traefik route-list` | 동등 |
-| `phs infra traefik-recreate` | `prelik run traefik recreate` | 동등 (CF env 자동 주입 동일) |
-| `phs infra traefik-setup` | **없음** | 미이식 (LXC 생성까지 통합) |
-| `phs infra traefik-drift` | **없음** | 미이식 |
-| `phs infra traefik-resync` | **없음** | 미이식 |
-| `phs infra traefik-cloudflare-sync` | **recreate에 통합됨** | 동등 |
-| `phs infra traefik-cert-verify` | **없음** | 미이식 |
-| `phs infra traefik-cert-recheck` | **없음** | 미이식 |
+| prelik 도메인 | phs 원본 | 이식 상태 |
+|---|---|---|
+| **bootstrap** | phs host bootstrap | 완전 + **manifest** 신규 |
+| **host** | phs host status/monitor/ssh/smb | 완전 + **self-update** + **gh-auth** 신규 |
+| **lxc** | phs infra lxc-* | 완전 + **snapshot-\***, **resize**, **init**, **--json** 신규 |
+| **vm** | phs infra vm-* | 완전 + **--json** 신규 |
+| **backup** | phs infra backup-* | 완전 |
+| **nas** | phs nas mount/unmount/list | 완전 (cifs-credentials 분리 + fstab append 안전) |
+| **account** | phs accounts | 완전 |
+| **telegram** | phs telegram | 완전 |
+| **workspace** | phs workspace | 완전 |
+| **traefik** | phs infra traefik-* | 핵심 (recreate/route-add/remove/list) |
+| **cloudflare** | phs cloudflare dns/email/ssl/pages | DNS CRUD + Email Worker + SSL issue + Pages deploy |
+| **mail** | phs infra mail/host postfix | Mailpit + postfix-relay (자동 백업/롤백) |
+| **ai** | phs ai install/octopus/superpowers/codex | 플러그인 설치 중심 |
+| **comfyui** | phs ai comfyui-* | GPU LXC + ComfyUI |
+| **connect** | phs config (.env) | dotenvx 암호화 관리 |
+| **deploy** | phs infra deploy | TOML 레시피 기반 LXC 배포 |
+| **iso** | phs infra iso-storage | NFS/CIFS ISO 스토리지 + 파일 + **--json** 신규 |
+| **monitor** | phs host monitor | 호스트/LXC/VM + **--json** 신규 |
+| **net** | phs infra net | 인터페이스/라우트/브리지/DNS/ping + **--json** 신규 |
+| **node** | phs infra node | list/info/exec (canonical IP 직접 조회) |
+| **recovery** | phs infra recovery | snapshot/restore/audit (O_EXCL atomic, path traversal 차단) |
 
-### cloudflare
+### ✅ 레시피로 이식 (deploy 도메인이 처리)
 
-| phs | prelik | 동등성 |
-|-----|--------|--------|
-| `phs cloudflare dns records` | `prelik run cloudflare dns-list` | 동등 |
-| `phs cloudflare dns add` | `prelik run cloudflare dns-add [--audience]` | **prelik이 우수** (audience 기반 proxied 자동) |
-| `phs cloudflare dns update` | `prelik run cloudflare dns-update` | 동등 |
-| `phs cloudflare dns delete` | `prelik run cloudflare dns-delete` | 동등 |
-| `phs cloudflare email status` | **없음** | 미이식 |
-| `phs cloudflare email forward` | **없음** | 미이식 |
-| `phs cloudflare email worker-attach-all` | `prelik run cloudflare email-worker-attach-all [--dry-run]` | **prelik이 우수** (--dry-run) |
-| `phs cloudflare ssl issue` | **없음** | 미이식 |
-| `phs cloudflare pages deploy` | **없음** | 미이식 |
+| 레시피 | phs 원본 | 비고 |
+|---|---|---|
+| nginx.toml | - | 신규 |
+| postgres.toml | - | 신규 (DB_PASSWORD 환경변수) |
+| redis.toml | - | 신규 (REDIS_PASSWORD) |
+| uptime-kuma.toml | phs infra kuma | Docker + :3001 |
+| formbricks.toml | phs infra formbricks | Docker Compose + secret 자동 생성 |
+| matterbridge.toml | phs infra matterbridge | systemd + 바이너리 |
+| infisical.toml | phs infisical | Docker Compose + SHA pin |
+| ministack.toml | phs ministack | Docker + tag pin + docker.sock opt-in |
 
-### mail
+### ⚠️ dalsoop 특화로 제외
 
-| phs | prelik | 동등성 |
-|-----|--------|--------|
-| `phs host postfix-relay` | `prelik run mail postfix-relay` | **prelik이 우수** (자동 백업, 전체 롤백) |
-| `phs infra mail-setup` | **없음** | 미이식 (Maddy 풀 스택 설치) |
-| `phs infra mail-status` | `prelik run mail status` | 부분 |
-| (Mailpit 설치) | `prelik run mail install-mailpit` | **prelik 전용** |
+| phs 모듈 | 이유 |
+|---|---|
+| agent_orchestrator | dal AI 에이전트 오케스트레이션 |
+| dalcenter_provision | dalcenter 전용 프로비저닝 |
+| infra_control | dalsoop LXC 50101 전용 |
+| openclaw-* (12개) | OpenClaw 게이트웨이 (dalsoop 인프라) |
+| cluster-files | sshfs 클러스터 파일 집계 (Synology/vmbr1 의존) |
+| homelable (1162줄) | Traefik + DNS + LXC 자동 연결 (control-plane JSON 의존) |
+| ingress | PUBLIC_IP / ROUTER_FORWARD_TARGET 환경 의존 |
+| mgmt_setup | 관리 LXC SSH+API 설정 |
+| exec_proxy | HTTP whitelist exec (보안 민감) |
+| global_verify | phs inventory/route/sync/kuma 검증 |
+| rbac (836줄) | pveum + roles.toml (규모 크고 Proxmox API deep) |
+| omarchy | Arch Linux 자동 설치 |
 
-### ai
+---
 
-| phs | prelik | 동등성 |
-|-----|--------|--------|
-| `phs ai install` | `prelik run ai install` | 동등 |
-| `phs ai octopus-install` | `prelik run ai octopus-install` | 동등 |
-| `phs ai superpowers-install` | `prelik run ai superpowers-install` | 동등 |
-| `phs ai codex-plugin-install --fork` | `prelik run ai codex-plugin-install --fork` | 동등 |
-| `phs ai adversarial-review-hook` | `prelik run ai adversarial-review-hook` | **prelik이 우수** (기존 훅 보존) |
-| `phs ai comfyui-*` (10개) | **없음** | 미이식 (ComfyUI 워크플로우) |
-| `phs ai openclaw-*` (12개) | **없음** | 미이식 (OpenClaw 게이트웨이) |
-| `phs ai codex-review-bot`, `mount`, `unmount`, `credential-sync` 등 | **없음** | 미이식 |
+## prelik이 phs보다 우수한 점
 
-## "prelik이 우수한 점"
+1. **도메인별 독립 설치** — 필요한 것만, 영향 범위 최소화
+2. **71차 Codex 어드버서리얼 리뷰** — 50건+ P0/P1 수정
+3. **84 unit tests + shellcheck CI** — phs는 테스트 0
+4. **완전한 uninstall 경로** — `prelik uninstall` + 10 섹션 가이드 + bootstrap manifest
+5. **--json 출력** — monitor/lxc/vm/iso/net/node 6개 도메인 자동화 친화
+6. **recovery** — O_CREAT|O_EXCL atomic ID + path traversal 차단 + audit log
+7. **NAS 안전성** — cifs-credentials 분리(0600) + fstab append-only + EOF 개행 검증
+8. **postfix relay 완전 롤백** — main.cf + sasl_passwd + sender_canonical 일괄
+9. **node exec 권한 경계** — cluster canonical IP 직접 조회 + `-F /dev/null` + ProxyCommand=none
+10. **install.sh** — idempotent skip + PRELIK_VERSION pin + atomic install + retry
 
-phs 대비 prelik이 **개선한** 부분:
+## prelik이 못 하는 점 (phs 전용)
 
-1. **audience 기반 proxied 자동** — `--audience kr/global/internal`로 실수 방지
-2. **--dry-run** — 파괴적 CF 작업 미리보기
-3. **완전한 postfix-relay 롤백** — main.cf + sasl_passwd + sender_canonical 일괄 백업/복원
-4. **기존 Stop 훅 보존** — marker 기반 append/filter로 사용자 다른 훅 파괴 안 함
-5. **mktemp + chmod 600 + RAII 가드** — secrets을 /tmp에 평문 노출 안 함
-6. **install flock** — 동시 설치 race 차단
-7. **도구 단위 install/remove** — `--only rust,nickel`로 선택
-8. **Nickel SSOT** — 도메인 메타데이터 ncl 파일 단일 소스
+1. **OpenClaw 게이트웨이 운영** — 12개 커맨드
+2. **cluster-files (sshfs 집계)** — NAS/sshfs mount 포인트 통합
+3. **homelable 도메인 자동 연결** — Traefik + CF DNS + LXC IP 일괄
+4. **RBAC/roles.toml** — pveum 역할 기반 접근 제어
+5. **global-verify** — 인벤토리/라우트/동기화 체인 검증
+6. **exec-proxy** — whitelist 기반 HTTP 원격 실행
 
-## "prelik이 못 하는 점"
-
-phs 대비 prelik이 **못 하는** 주요 기능:
-
-1. **원격 노드 관리** — phs는 `--node ranode-3960x` 옵션, prelik은 로컬만
-2. **LXC 부트스트랩** — phs의 `--bootstrap`이 자동 tmux/셸/veil 설치
-3. **NAS/Synology/TrueNAS** — phs는 마운트/공유 관리, prelik 없음
-4. **Telegram 봇** — phs는 8개 봇 통합 관리, prelik 없음
-5. **Workspace 설정** — tmux/셸 환경 일괄, prelik 없음
-6. **RBAC/roles.toml** — phs는 dalroot 역할 기반, prelik 없음
-7. **ComfyUI/OpenClaw** — phs의 대형 AI 도메인
+---
 
 ## 결론
 
-**prelik-init은 phs의 "공유 가치 있는 ~25%"만 추출한 서브셋**입니다.
-개인 사용자가 새 Proxmox/LXC 환경에서 빠르게 시작할 수 있는 기본기는
-갖추었지만, dalsoop의 실제 운영에 필요한 모든 기능은 없습니다.
-
-향후 로드맵:
-- `--node` 원격 지원 (traefik, lxc)
-- `lxc create --bootstrap` 이식
-- `cloudflare` SSL/Pages/email forward
-- `nas`, `host` 도메인 신규
-
-자세한 내용은 [CHANGELOG.md](../CHANGELOG.md) 참조.
+**prelik-init은 phs의 범용 가치 있는 기능을 모두 이식하고, 안전성/테스트/제거 경로에서 크게 개선한 OSS 프로젝트**입니다. dalsoop 특화 운영 기능(OpenClaw, homelable, rbac 등)만 제외하고 나머지는 전부 이식 완료.
