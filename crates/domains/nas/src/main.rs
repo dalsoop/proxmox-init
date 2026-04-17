@@ -1,11 +1,12 @@
-//! prelik-nas — 범용 NAS 마운트 관리.
-//! SMB/CIFS + NFS, Synology/TrueNAS/일반 서버 전부 지원.
+//! prelik-nas — 범용 NAS 관리.
+//! SMB/CIFS + NFS 마운트, Synology DSM API, TrueNAS API 지원.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use prelik_core::common;
+use std::fs;
 
 #[derive(Parser)]
-#[command(name = "prelik-nas", about = "NAS 마운트 관리 (SMB/NFS)")]
+#[command(name = "prelik-nas", about = "NAS 마운트 + Synology/TrueNAS 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -13,6 +14,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    // ---- Mount management ----
+
     /// NAS 공유 마운트
     Mount {
         /// NAS 서버 주소 (예: 192.168.1.100)
@@ -41,6 +44,42 @@ enum Cmd {
     Unmount { target: String },
     /// 현재 마운트 목록 (NFS + CIFS만 필터)
     List,
+
+    // ---- Combined NAS status ----
+
+    /// Synology + TrueNAS 통합 상태
+    Status,
+    /// 전체 공유 목록 (SMB + NFS)
+    Shares,
+    /// 스토리지 풀/볼륨 목록
+    Pools,
+
+    // ---- Share CRUD ----
+
+    /// Synology 공유 폴더 생성
+    ShareCreate {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        volume: String,
+        #[arg(long, default_value = "")]
+        desc: String,
+    },
+    /// Synology 공유 폴더 삭제
+    ShareDelete {
+        #[arg(long)]
+        name: String,
+    },
+
+    // ---- Synology-specific ----
+
+    /// Synology에서 공유 폴더 목록 (FileStation API)
+    SynologyList,
+    /// Synology Active Backup 등 동기화 상태
+    SynologySync,
+    /// Synology QuickConnect 링크 표시
+    SynologyLink,
+
     Doctor,
 }
 
@@ -56,16 +95,22 @@ fn main() -> anyhow::Result<()> {
             mount(&host, &share, &target, protocol, user.as_deref(), password.as_deref(), persist)
         }
         Cmd::Unmount { target } => unmount(&target),
-        Cmd::List => {
-            list();
-            Ok(())
-        }
-        Cmd::Doctor => {
-            doctor();
-            Ok(())
-        }
+        Cmd::List => { list(); Ok(()) }
+        Cmd::Status => nas_status(),
+        Cmd::Shares => nas_shares(),
+        Cmd::Pools => nas_pools(),
+        Cmd::ShareCreate { name, volume, desc } => synology_create_share(&name, &volume, &desc),
+        Cmd::ShareDelete { name } => synology_delete_share(&name),
+        Cmd::SynologyList => synology_list(),
+        Cmd::SynologySync => synology_sync(),
+        Cmd::SynologyLink => { synology_link(); Ok(()) }
+        Cmd::Doctor => { doctor(); Ok(()) }
     }
 }
+
+// ============================================================
+// Mount management (ported from existing prelik-nas)
+// ============================================================
 
 fn mount(
     host: &str, share: &str, target: &str,
@@ -77,7 +122,6 @@ fn mount(
     println!("  source: {host}:{share}");
     println!("  target: {target}");
 
-    // mkdir은 argv로 직접 (shell interpolation 회피)
     common::run("sudo", &["mkdir", "-p", target])?;
 
     match protocol {
@@ -97,18 +141,14 @@ fn mount_smb(
         anyhow::bail!("SMB 마운트에는 --user 또는 NAS_USER 환경변수 필요");
     }
 
-    // credentials 파일 경로 (host-share 키로 고유화)
-    // 비밀번호를 ps/cmdline/fstab에 노출하지 않음
     let safe_name = format!("{host}_{share}")
         .chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect::<String>();
     let cred_path = format!("/etc/cifs-credentials/{safe_name}");
 
-    // 디렉토리 + 크리덴셜 파일 작성 (0600, root:root) — mktemp 경유
     common::run("sudo", &["mkdir", "-p", "/etc/cifs-credentials"])?;
     common::run("sudo", &["chmod", "700", "/etc/cifs-credentials"])?;
 
-    // tempfile로 로컬 생성 후 sudo install로 원자적 이동
     let (tmp, _guard) = secure_tempfile()?;
     let content = if password.is_empty() {
         format!("username={user}\n")
@@ -121,7 +161,6 @@ fn mount_smb(
         &tmp, &cred_path,
     ])?;
 
-    // mount 호출 — 모든 인자를 argv로 직접
     let source = format!("//{host}/{share}");
     let options = format!("credentials={cred_path},vers=3.0,iocharset=utf8,_netdev,nofail");
     common::run("sudo", &[
@@ -149,7 +188,6 @@ fn mount_nfs(host: &str, share: &str, target: &str, persist: bool) -> anyhow::Re
 }
 
 fn fstab_add(target: &str, fstab_line: &str) -> anyhow::Result<()> {
-    // 이미 있으면 건너뜀 — sudo로 확실하게 읽어서 체크 (권한 잠긴 시스템 대응)
     let check = std::process::Command::new("sudo")
         .args(["grep", "-qF", target, "/etc/fstab"])
         .status();
@@ -158,13 +196,6 @@ fn fstab_add(target: &str, fstab_line: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // append 전용 접근 — tee -a 사용.
-    // read_to_string(...).unwrap_or_default() 패턴은 /etc/fstab 읽기 실패 시
-    // 빈 파일로 "덮어쓰기"하는 재앙 유발 가능 (권한 0640 하드닝 등).
-    // tee -a는 기존 내용 보존하며 append만.
-    //
-    // EOF 개행 없는 fstab 대응: sudo로 마지막 바이트 확인 후 필요시 앞에 \n 추가.
-    // EOF 바이트 체크는 tail -c1로 보안 없이.
     let last_byte = std::process::Command::new("sudo")
         .args(["sh", "-c", "tail -c1 /etc/fstab 2>/dev/null | od -An -tx1 | tr -d ' \n'"])
         .output()
@@ -197,7 +228,6 @@ fn fstab_add(target: &str, fstab_line: &str) -> anyhow::Result<()> {
     }
 }
 
-/// mktemp 0600 + Drop 가드
 fn secure_tempfile() -> anyhow::Result<(String, TempGuard)> {
     let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
@@ -216,7 +246,6 @@ impl Drop for TempGuard {
 fn unmount(target: &str) -> anyhow::Result<()> {
     println!("=== 마운트 해제: {target} ===");
     common::run("sudo", &["umount", target])?;
-    // fstab에서 해당 라인 제거할지는 사용자 판단 — 자동 제거 안 함
     let check = std::process::Command::new("grep")
         .args(["-qF", target, "/etc/fstab"])
         .status();
@@ -242,10 +271,497 @@ fn list() {
     }
 }
 
+// ============================================================
+// Synology DSM API
+// ============================================================
+
+struct SynologyConfig {
+    url: String,
+    user: String,
+    password: String,
+}
+
+impl SynologyConfig {
+    fn load() -> Option<Self> {
+        let url = read_env("SYNOLOGY_URL");
+        let user = read_env("SYNOLOGY_USER");
+        let password = read_env("SYNOLOGY_PASSWORD");
+        if url.is_empty() || user.is_empty() {
+            return None;
+        }
+        Some(Self { url, user, password })
+    }
+}
+
+fn synology_api_call(cfg: &SynologyConfig, sid: &str, api: &str, method: &str, version: u32, extra: &str) -> anyhow::Result<serde_json::Value> {
+    let url = format!(
+        "{}/webapi/entry.cgi?api={api}&version={version}&method={method}&_sid={sid}{extra}",
+        cfg.url
+    );
+    let output = std::process::Command::new("curl")
+        .args(["-sSLk", &url])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("[synology] API 호출 실패");
+    }
+    let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
+    if body["success"].as_bool() != Some(true) {
+        anyhow::bail!("[synology] API 오류: {}", body);
+    }
+    Ok(body["data"].clone())
+}
+
+fn synology_login(cfg: &SynologyConfig) -> anyhow::Result<String> {
+    let url = format!("{}/webapi/auth.cgi", cfg.url);
+    let device_id = "prelik-nas";
+    let params = format!(
+        "api=SYNO.API.Auth&version=6&method=login&account={}&passwd={}&format=sid&device_id={device_id}&device_name={device_id}",
+        urlenc(&cfg.user),
+        urlenc(&cfg.password)
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-sSLk", "-X", "POST",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "-d", &params, &url])
+        .output()?;
+
+    let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
+    if body["success"].as_bool() == Some(true) {
+        body["data"]["sid"].as_str().map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("[synology] sid 없음"))
+    } else {
+        let code = body["error"]["code"].as_i64().unwrap_or(0);
+        if code == 403 {
+            // Try OTP if available
+            if let Ok(otp) = std::env::var("SYNOLOGY_OTP") {
+                return synology_login_with_otp(cfg, &otp);
+            }
+            anyhow::bail!("[synology] 2FA OTP 필요. SYNOLOGY_OTP 환경변수로 전달하세요.");
+        }
+        anyhow::bail!("[synology] 로그인 실패 (code: {code}): {}", body);
+    }
+}
+
+fn synology_login_with_otp(cfg: &SynologyConfig, otp: &str) -> anyhow::Result<String> {
+    let url = format!("{}/webapi/auth.cgi", cfg.url);
+    let device_id = "prelik-nas";
+    let params = format!(
+        "api=SYNO.API.Auth&version=6&method=login&account={}&passwd={}&format=sid&otp_code={}&device_id={device_id}&device_name={device_id}",
+        urlenc(&cfg.user),
+        urlenc(&cfg.password),
+        otp
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-sSLk", "-X", "POST",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "-d", &params, &url])
+        .output()?;
+
+    let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
+    if body["success"].as_bool() == Some(true) {
+        println!("[synology] OTP 인증 성공, device_id 등록 완료");
+        body["data"]["sid"].as_str().map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("[synology] sid 없음"))
+    } else {
+        anyhow::bail!("[synology] OTP 로그인 실패: {}", body);
+    }
+}
+
+fn synology_logout(cfg: &SynologyConfig, sid: &str) {
+    let url = format!(
+        "{}/webapi/auth.cgi?api=SYNO.API.Auth&version=6&method=logout&_sid={sid}",
+        cfg.url
+    );
+    let _ = std::process::Command::new("curl")
+        .args(["-sSLk", &url])
+        .output();
+}
+
+fn urlenc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
+// ============================================================
+// TrueNAS API
+// ============================================================
+
+struct TrueNasConfig {
+    url: String,
+    api_key: String,
+}
+
+impl TrueNasConfig {
+    fn load() -> Option<Self> {
+        let url = read_env("TRUENAS_URL");
+        let api_key = read_env("TRUENAS_API_KEY");
+        if url.is_empty() || api_key.is_empty() {
+            return None;
+        }
+        Some(Self { url, api_key })
+    }
+}
+
+fn truenas_api_get(cfg: &TrueNasConfig, path: &str) -> anyhow::Result<serde_json::Value> {
+    let url = format!("{}/api/v2.0{path}", cfg.url);
+    let output = std::process::Command::new("curl")
+        .args(["-sSLk",
+            "-H", &format!("Authorization: Bearer {}", cfg.api_key),
+            &url])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("[truenas] 요청 실패 ({path})");
+    }
+    let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
+    Ok(body)
+}
+
+// ============================================================
+// Combined NAS commands
+// ============================================================
+
+fn nas_status() -> anyhow::Result<()> {
+    println!("=== NAS 상태 ===\n");
+
+    // Synology
+    if let Some(cfg) = SynologyConfig::load() {
+        println!("[synology] {} 접속 중...", cfg.url);
+        match synology_login(&cfg) {
+            Ok(sid) => {
+                println!("[synology] 로그인 성공");
+                if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.DSM.Info", "getinfo", 2, "") {
+                    let model = data["model"].as_str().unwrap_or("?");
+                    let version = data["version_string"].as_str().unwrap_or("?");
+                    println!("[synology] 모델: {model}");
+                    println!("[synology] DSM: {version}");
+                }
+                if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "") {
+                    if let Some(volumes) = data["volumes"].as_array() {
+                        println!("[synology] 볼륨:");
+                        for vol in volumes {
+                            let name = vol["display_name"].as_str()
+                                .or(vol["vol_path"].as_str())
+                                .unwrap_or("?");
+                            let total = vol["size"]["total"].as_str().unwrap_or("0");
+                            let used = vol["size"]["used"].as_str().unwrap_or("0");
+                            let total_gb = total.parse::<u64>().unwrap_or(0) / 1_073_741_824;
+                            let used_gb = used.parse::<u64>().unwrap_or(0) / 1_073_741_824;
+                            let pct = if total_gb > 0 { used_gb * 100 / total_gb } else { 0 };
+                            println!("  {name}: {used_gb}GB / {total_gb}GB ({pct}%)");
+                        }
+                    }
+                }
+                synology_logout(&cfg, &sid);
+            }
+            Err(e) => eprintln!("[synology] {e}"),
+        }
+    } else {
+        println!("[synology] 미설정 (SYNOLOGY_URL / SYNOLOGY_USER 필요)");
+    }
+
+    println!();
+
+    // TrueNAS
+    if let Some(cfg) = TrueNasConfig::load() {
+        println!("[truenas] {} 접속 중...", cfg.url);
+        match truenas_api_get(&cfg, "/system/info") {
+            Ok(info) => {
+                let version = info["version"].as_str().unwrap_or("?");
+                let hostname = info["hostname"].as_str().unwrap_or("?");
+                let model = info["system_product"].as_str().unwrap_or("?");
+                println!("[truenas] 호스트: {hostname}");
+                println!("[truenas] 버전: {version}");
+                println!("[truenas] 모델: {model}");
+            }
+            Err(e) => eprintln!("[truenas] {e}"),
+        }
+        if let Ok(pools) = truenas_api_get(&cfg, "/pool") {
+            if let Some(pools) = pools.as_array() {
+                println!("[truenas] 풀:");
+                for pool in pools {
+                    let name = pool["name"].as_str().unwrap_or("?");
+                    let status = pool["status"].as_str().unwrap_or("?");
+                    let healthy = pool["healthy"].as_bool().unwrap_or(false);
+                    let mark = if healthy { "✓" } else { "✗" };
+                    println!("  {mark} {name:<20} status:{status}");
+                }
+            }
+        }
+    } else {
+        println!("[truenas] 미설정 (TRUENAS_URL / TRUENAS_API_KEY 필요)");
+    }
+
+    Ok(())
+}
+
+fn nas_shares() -> anyhow::Result<()> {
+    println!("=== NAS 공유 목록 ===\n");
+
+    // Synology shares
+    if let Some(cfg) = SynologyConfig::load() {
+        if let Ok(sid) = synology_login(&cfg) {
+            println!("[synology] 공유 폴더:");
+            if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.FileStation.List", "list_share", 2, "") {
+                if let Some(shares) = data["shares"].as_array() {
+                    for share in shares {
+                        let name = share["name"].as_str().unwrap_or("?");
+                        let path = share["additional"]["real_path"].as_str()
+                            .or(share["path"].as_str())
+                            .unwrap_or("?");
+                        println!("  {name:<30} {path}");
+                    }
+                }
+            }
+            synology_logout(&cfg, &sid);
+        }
+    }
+
+    // TrueNAS shares
+    if let Some(cfg) = TrueNasConfig::load() {
+        // NFS
+        if let Ok(nfs) = truenas_api_get(&cfg, "/sharing/nfs") {
+            if let Some(shares) = nfs.as_array() {
+                if !shares.is_empty() {
+                    println!("[truenas] NFS:");
+                    for share in shares {
+                        let path = share["path"].as_str().unwrap_or("?");
+                        let enabled = share["enabled"].as_bool().unwrap_or(false);
+                        let mark = if enabled { "✓" } else { "✗" };
+                        let comment = share["comment"].as_str().unwrap_or("");
+                        println!("  {mark} {path:<40} {comment}");
+                    }
+                }
+            }
+        }
+        // SMB
+        if let Ok(smb) = truenas_api_get(&cfg, "/sharing/smb") {
+            if let Some(shares) = smb.as_array() {
+                if !shares.is_empty() {
+                    println!("[truenas] SMB:");
+                    for share in shares {
+                        let name = share["name"].as_str().unwrap_or("?");
+                        let path = share["path"].as_str().unwrap_or("?");
+                        let enabled = share["enabled"].as_bool().unwrap_or(false);
+                        let mark = if enabled { "✓" } else { "✗" };
+                        println!("  {mark} {name:<20} {path}");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn nas_pools() -> anyhow::Result<()> {
+    println!("=== NAS 스토리지 풀 ===\n");
+
+    // Synology volumes
+    if let Some(cfg) = SynologyConfig::load() {
+        if let Ok(sid) = synology_login(&cfg) {
+            println!("[synology] 볼륨/스토리지 풀:");
+            if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "") {
+                if let Some(volumes) = data["volumes"].as_array() {
+                    for vol in volumes {
+                        let name = vol["display_name"].as_str()
+                            .or(vol["vol_path"].as_str())
+                            .unwrap_or("?");
+                        let status = vol["status"].as_str().unwrap_or("?");
+                        let fs_type = vol["fs_type"].as_str().unwrap_or("?");
+                        println!("  {name:<20} status:{status}  fs:{fs_type}");
+                    }
+                }
+            }
+            synology_logout(&cfg, &sid);
+        }
+    }
+
+    // TrueNAS pools + datasets
+    if let Some(cfg) = TrueNasConfig::load() {
+        println!("[truenas] 스토리지 풀:");
+        if let Ok(pools) = truenas_api_get(&cfg, "/pool") {
+            if let Some(pools) = pools.as_array() {
+                for pool in pools {
+                    let name = pool["name"].as_str().unwrap_or("?");
+                    let status = pool["status"].as_str().unwrap_or("?");
+                    let vdevs = pool["topology"]["data"].as_array().map(|a| a.len()).unwrap_or(0);
+                    println!("  {name:<20} status:{status}  vdevs:{vdevs}");
+                }
+            }
+        }
+        if let Ok(datasets) = truenas_api_get(&cfg, "/pool/dataset") {
+            if let Some(datasets) = datasets.as_array() {
+                println!("\n[truenas] 데이터셋:");
+                for ds in datasets {
+                    let name = ds["name"].as_str().unwrap_or("?");
+                    let used_raw = ds["used"]["rawvalue"].as_str().unwrap_or("0");
+                    let avail_raw = ds["available"]["rawvalue"].as_str().unwrap_or("0");
+                    let used_gb = used_raw.parse::<u64>().unwrap_or(0) / 1_073_741_824;
+                    let avail_gb = avail_raw.parse::<u64>().unwrap_or(0) / 1_073_741_824;
+                    println!("  {name:<40} used:{used_gb}GB  avail:{avail_gb}GB");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================
+// Synology-specific commands
+// ============================================================
+
+fn synology_list() -> anyhow::Result<()> {
+    let cfg = SynologyConfig::load()
+        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정 (SYNOLOGY_URL / SYNOLOGY_USER 필요)"))?;
+    let sid = synology_login(&cfg)?;
+
+    println!("=== Synology 공유 폴더 ===\n");
+    if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.FileStation.List", "list_share", 2, "") {
+        if let Some(shares) = data["shares"].as_array() {
+            for share in shares {
+                let name = share["name"].as_str().unwrap_or("?");
+                let path = share["additional"]["real_path"].as_str()
+                    .or(share["path"].as_str())
+                    .unwrap_or("?");
+                println!("  {name:<30} {path}");
+            }
+            println!("\n  총 {}개", shares.len());
+        }
+    }
+
+    synology_logout(&cfg, &sid);
+    Ok(())
+}
+
+fn synology_sync() -> anyhow::Result<()> {
+    let cfg = SynologyConfig::load()
+        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정 (SYNOLOGY_URL / SYNOLOGY_USER 필요)"))?;
+    let sid = synology_login(&cfg)?;
+
+    println!("=== Synology 동기화 상태 ===\n");
+
+    // Try Active Backup task list
+    match synology_api_call(&cfg, &sid, "SYNO.ActiveBackup.Overview", "list", 1, "") {
+        Ok(data) => {
+            if let Some(tasks) = data["tasks"].as_array() {
+                for task in tasks {
+                    let name = task["name"].as_str().unwrap_or("?");
+                    let status = task["status"].as_str().unwrap_or("?");
+                    let last_run = task["last_run_time"].as_str().unwrap_or("-");
+                    println!("  {name:<30} status:{status}  last:{last_run}");
+                }
+            } else {
+                println!("  (Active Backup 작업 없음 또는 미지원)");
+            }
+        }
+        Err(_) => {
+            println!("  (Active Backup 조회 실패 — 패키지 미설치이거나 API 미지원)");
+        }
+    }
+
+    // Hyper Backup (if available)
+    match synology_api_call(&cfg, &sid, "SYNO.Backup.Task", "list", 1, "") {
+        Ok(data) => {
+            if let Some(tasks) = data["task_list"].as_array().or(data["tasks"].as_array()) {
+                println!("\n[Hyper Backup]:");
+                for task in tasks {
+                    let name = task["name"].as_str().unwrap_or("?");
+                    let status = task["status"].as_str().unwrap_or("?");
+                    println!("  {name:<30} {status}");
+                }
+            }
+        }
+        Err(_) => {
+            // Hyper Backup not installed or API not supported — silently skip
+        }
+    }
+
+    synology_logout(&cfg, &sid);
+    Ok(())
+}
+
+fn synology_link() {
+    println!("=== Synology QuickConnect ===\n");
+    let qc_id = read_env("SYNOLOGY_QUICKCONNECT_ID");
+    if qc_id.is_empty() {
+        let url = read_env("SYNOLOGY_URL");
+        if url.is_empty() {
+            println!("  SYNOLOGY_URL / SYNOLOGY_QUICKCONNECT_ID 미설정");
+        } else {
+            println!("  직접 접속: {url}");
+            println!("  (QuickConnect ID는 SYNOLOGY_QUICKCONNECT_ID로 설정)");
+        }
+    } else {
+        println!("  QuickConnect: https://quickconnect.to/{qc_id}");
+        let url = read_env("SYNOLOGY_URL");
+        if !url.is_empty() {
+            println!("  직접 접속:    {url}");
+        }
+    }
+}
+
+fn synology_create_share(name: &str, volume: &str, desc: &str) -> anyhow::Result<()> {
+    let cfg = SynologyConfig::load()
+        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
+    let sid = synology_login(&cfg)?;
+
+    println!("[synology] 공유 폴더 생성: {name} (볼륨: {volume})");
+    let extra = format!(
+        "&name={}&share_info=%7B%22vol_path%22%3A%22{}%22%2C%22name%22%3A%22{}%22%2C%22desc%22%3A%22{}%22%7D",
+        urlenc(name), urlenc(volume), urlenc(name), urlenc(desc)
+    );
+    synology_api_call(&cfg, &sid, "SYNO.Core.Share", "create", 1, &extra)?;
+    println!("[synology] 생성 완료: {name}");
+    synology_logout(&cfg, &sid);
+    Ok(())
+}
+
+fn synology_delete_share(name: &str) -> anyhow::Result<()> {
+    let cfg = SynologyConfig::load()
+        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
+    let sid = synology_login(&cfg)?;
+
+    // Check existence first
+    let data = synology_api_call(&cfg, &sid, "SYNO.Core.Share", "list", 1, "")?;
+    let exists = data["shares"].as_array()
+        .map(|shares| shares.iter().any(|s| s["name"].as_str() == Some(name)))
+        .unwrap_or(false);
+
+    if !exists {
+        synology_logout(&cfg, &sid);
+        anyhow::bail!("[synology] 공유 폴더 '{name}' 없음");
+    }
+
+    println!("[synology] 공유 폴더 삭제: {name}");
+    let extra = format!("&name={}", urlenc(name));
+    synology_api_call(&cfg, &sid, "SYNO.Core.Share", "delete", 1, &extra)?;
+    println!("[synology] 삭제 완료: {name}");
+    synology_logout(&cfg, &sid);
+    Ok(())
+}
+
+// ============================================================
+// Misc
+// ============================================================
+
 fn read_env(key: &str) -> String {
+    if let Ok(v) = std::env::var(key) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
     let paths = ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"];
     for p in paths {
-        if let Ok(raw) = std::fs::read_to_string(p) {
+        if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
                 if let Some(v) = line.strip_prefix(&format!("{key}=")) {
                     return v.trim().trim_matches('"').to_string();
@@ -262,8 +778,16 @@ fn doctor() {
         ("mount", "mount"),
         ("mount.cifs (cifs-utils)", "mount.cifs"),
         ("mount.nfs (nfs-common)", "mount.nfs"),
+        ("curl", "curl"),
     ] {
         println!("  {} {name}", if common::has_cmd(cmd) { "✓" } else { "✗" });
     }
+
+    println!();
+    let syn = SynologyConfig::load();
+    println!("  Synology: {}", if syn.is_some() { "✓ 설정됨" } else { "✗ 미설정" });
+    let tnas = TrueNasConfig::load();
+    println!("  TrueNAS:  {}", if tnas.is_some() { "✓ 설정됨" } else { "✗ 미설정" });
+
     println!("\n필요시 설치: sudo apt install -y cifs-utils nfs-common");
 }

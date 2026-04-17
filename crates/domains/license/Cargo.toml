@@ -1,10 +1,10 @@
 [package]
-name = "prelik-account"
+name = "prelik-license"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-account"
+name = "prelik-license"
 path = "src/main.rs"
 
 [dependencies]
@@ -13,4 +13,4 @@ prelik-core = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }
+ureq = { version = "2", features = ["json"] }

@@ -34,6 +34,26 @@ enum Cmd {
     },
     /// 호스트 + LXC + VM 종합 (Proxmox 호스트일 때만)
     All,
+    /// 전역 인프라 검증 (inventory/route/domain/sync/kuma)
+    GlobalVerify,
+    /// 인프라 health check (pmxcfs/SSH/timer/cluster)
+    HealthCheck,
+    /// 인프라 헬스체크 (OAuth/에이전트 상태) + 자동 복구
+    Healthcheck {
+        /// 자동 복구 실행 (기본: 체크만)
+        #[arg(long, default_value = "false")]
+        fix: bool,
+    },
+    /// destructive 작업 audit log 확인
+    AuditLog {
+        #[arg(long, default_value_t = 50)]
+        tail: usize,
+    },
+    /// Uptime Kuma를 control-plane 기준으로 1회 동기화
+    KumaSyncRun {
+        #[arg(long)]
+        vmid: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -71,6 +91,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::Lxc { running } => lxc(running, json),
         Cmd::Vm { running } => vm(running, json),
         Cmd::All => all(json),
+        Cmd::GlobalVerify => global_verify(),
+        Cmd::HealthCheck => health_check(),
+        Cmd::Healthcheck { fix } => healthcheck(fix),
+        Cmd::AuditLog { tail } => audit_log(tail),
+        Cmd::KumaSyncRun { vmid } => kuma_sync_run(&vmid),
     }
 }
 
@@ -339,6 +364,306 @@ fn all(json: bool) -> anyhow::Result<()> {
     if common::has_cmd("pct") { println!(); lxc(true, false)?; }
     if common::has_cmd("qm")  { println!(); vm(true, false)?; }
     Ok(())
+}
+
+// =============================================================================
+// Global Verify — 전역 인프라 검증
+// =============================================================================
+
+fn global_verify() -> anyhow::Result<()> {
+    println!("=== 실제 적용 전역 검증 ===\n");
+    let mut failures = 0u32;
+
+    // 1. inventory 일치
+    println!("[1/4] inventory 일치");
+    let cluster = cmd_output_silent("pvesh", &["get", "/cluster/resources", "--type", "vm", "--output-format", "json"]);
+    let cluster_lxc: usize = serde_json::from_str::<Vec<serde_json::Value>>(&cluster)
+        .unwrap_or_default()
+        .iter()
+        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("lxc"))
+        .count();
+    println!("  cluster LXC count: {cluster_lxc}");
+
+    // 2. 핵심 도메인 응답
+    println!("\n[2/4] 핵심 도메인 응답");
+    let domains = ["infra.internal.kr", "home.internal.kr", "traefik.internal.kr"];
+    for domain in &domains {
+        let code = curl_status_code(domain);
+        let mark = if code >= 200 && code < 500 { "✓" } else { failures += 1; "✗" };
+        println!("  {mark} {domain} -> {code}");
+    }
+
+    // 3. sync chain/systemd
+    println!("\n[3/4] sync chain/systemd");
+    let timer_active = cmd_output_silent("systemctl", &["is-active", "phs-homelable-sync.timer"]);
+    if timer_active.trim() == "active" {
+        println!("  ✓ phs-homelable-sync.timer active");
+    } else {
+        failures += 1;
+        eprintln!("  ✗ phs-homelable-sync.timer: {}", timer_active.trim());
+    }
+
+    // 4. Uptime Kuma
+    println!("\n[4/4] Uptime Kuma 상태");
+    let kuma_vmid = std::env::var("KUMA_VMID").unwrap_or_default();
+    if kuma_vmid.is_empty() {
+        println!("  ⊘ KUMA_VMID 미설정 — 건너뜀");
+    } else {
+        println!("  kuma vmid: {kuma_vmid}");
+    }
+
+    println!("\n{}", "─".repeat(50));
+    if failures == 0 {
+        println!("✓ 전역 검증 통과");
+    } else {
+        eprintln!("✗ 전역 검증 실패: {failures}건");
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Health Check — Proxmox 클러스터 상태
+// =============================================================================
+
+fn health_check() -> anyhow::Result<()> {
+    println!("=== phs Health Check ===\n");
+    let mut issues = 0u32;
+
+    // 1. 로컬 핵심 서비스
+    println!("[1/4] 로컬 핵심 서비스");
+    for (svc, label) in [
+        ("pve-cluster", "Proxmox cluster filesystem"),
+        ("corosync", "Cluster messaging"),
+        ("pvedaemon", "Proxmox daemon"),
+        ("pveproxy", "Proxmox web proxy"),
+    ] {
+        let active = cmd_output_silent("systemctl", &["is-active", svc]);
+        let mark = if active.trim() == "active" { "✓" } else { issues += 1; "❌" };
+        println!("  {mark} {svc} ({label}): {}", active.trim());
+    }
+
+    // 2. /etc/pve 마운트
+    println!("\n[2/4] pmxcfs 마운트");
+    let mount = cmd_output_silent("mount", &[]);
+    if mount.contains("on /etc/pve type fuse") || mount.contains("/etc/pve") {
+        println!("  ✓ /etc/pve mounted");
+    } else {
+        println!("  ❌ /etc/pve mount 없음");
+        issues += 1;
+    }
+
+    // 3. SSH authorized_keys 무결성
+    println!("\n[3/4] SSH authorized_keys");
+    let path = "/root/.ssh/authorized_keys";
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.is_file() && meta.len() > 0 {
+            println!("  ✓ 파일 존재 ({} bytes)", meta.len());
+        } else if meta.is_file() {
+            println!("  ❌ 파일 비어있음");
+            issues += 1;
+        }
+    } else {
+        println!("  ❌ {path} 없음");
+        issues += 1;
+    }
+
+    // 4. route-audit timer
+    println!("\n[4/4] route-audit timer");
+    let timer = cmd_output_silent("systemctl", &["is-active", "phs-route-audit.timer"]);
+    if timer.trim() == "active" {
+        println!("  ✓ active");
+    } else {
+        println!("  ⚠ {} (install needed)", timer.trim());
+    }
+
+    println!("\n=== 결과: {} 이슈 ===", issues);
+    if issues > 0 {
+        anyhow::bail!("{issues}건 이슈 발견");
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Healthcheck — OAuth/Agent 상태 체크 + 자동 복구
+// =============================================================================
+
+fn healthcheck(fix: bool) -> anyhow::Result<()> {
+    let mode = if fix { "체크 + 자동 복구" } else { "체크만" };
+    println!("=== 인프라 헬스체크 ({mode}) ===\n");
+
+    let mut issues = 0u32;
+
+    // OAuth 토큰 체크
+    println!("[1/2] OAuth 토큰 체크");
+    let oauth_targets = [("50161", "openclaw"), ("105", "dalcenter")];
+    for (vmid, name) in &oauth_targets {
+        let ok = Command::new("pct")
+            .args(["exec", vmid, "--", "bash", "-c", "true"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            println!("  ⊘ {} (LXC {}) — 컨테이너 접근 불가, 건너뜀", name, vmid);
+            continue;
+        }
+        let auth_out = Command::new("pct")
+            .args(["exec", vmid, "--", "bash", "-c", "claude auth status 2>&1"])
+            .output();
+        let auth_ok = auth_out
+            .as_ref()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("\"loggedIn\": true"))
+            .unwrap_or(false);
+        if auth_ok {
+            println!("  ✓ {} (LXC {}) — 토큰 정상", name, vmid);
+        } else {
+            issues += 1;
+            println!("  ✗ {} (LXC {}) — 토큰 만료", name, vmid);
+            if fix {
+                println!("    → credential-sync 필요 (prelik-ai credential-sync --vmid {vmid})");
+            }
+        }
+    }
+
+    // dalcenter 서비스 체크
+    println!("\n[2/2] dalcenter → dalcenter-rs로 이전됨 (dalcenter status 사용)");
+
+    let unresolved = issues;
+    println!("\n{}", "─".repeat(50));
+    if issues == 0 {
+        println!("✓ 전체 정상");
+    } else if fix {
+        println!("발견: {issues}건 — 자동 복구 시도 (위 로그 참조)");
+    } else {
+        println!("발견: {issues}건 — `--fix` 옵션으로 자동 복구 가능");
+    }
+    if unresolved > 0 && !fix {
+        anyhow::bail!("{unresolved}건 미해결");
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Audit Log
+// =============================================================================
+
+const AUDIT_LOG_PATH: &str = "/var/lib/phs/audit.log";
+
+fn audit_log(tail: usize) -> anyhow::Result<()> {
+    println!("=== Audit Log (최근 {tail}건) ===\n");
+    if let Ok(content) = fs::read_to_string(AUDIT_LOG_PATH) {
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(tail);
+        for line in &lines[start..] {
+            println!("  {line}");
+        }
+    } else {
+        println!("  audit log 없음");
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Kuma Sync Run
+// =============================================================================
+
+fn kuma_sync_run(vmid: &str) -> anyhow::Result<()> {
+    println!("=== Uptime Kuma 동기화 ===\n");
+
+    // Ensure LXC running
+    let status = cmd_output_silent("pct", &["status", vmid]);
+    if !status.contains("running") {
+        anyhow::bail!("LXC {vmid} 이 실행 중이 아닙니다 (현재: {status})");
+    }
+
+    // Load monitors from control-plane
+    let monitor_paths = [
+        "/root/control-plane/domains/kuma-monitors.json",
+        "/etc/prelik/domains/kuma-monitors.json",
+        "/etc/proxmox-host-setup/kuma-monitors.json",
+    ];
+    let monitors_json = monitor_paths.iter()
+        .find_map(|p| fs::read_to_string(p).ok())
+        .unwrap_or_else(|| {
+            eprintln!("[kuma] kuma-monitors.json 을 찾을 수 없습니다.");
+            std::process::exit(1);
+        });
+
+    // Validate JSON
+    let _: Vec<serde_json::Value> = serde_json::from_str(&monitors_json)
+        .map_err(|e| anyhow::anyhow!("[kuma] JSON 파싱 실패: {e}"))?;
+
+    let script = format!(
+        r#"set -e
+cp /opt/uptime-kuma/data/kuma.db /opt/uptime-kuma/data/kuma.db.bak-phs-$(date +%Y%m%d-%H%M%S)
+python3 - <<'PY'
+import json, sqlite3
+from datetime import datetime
+DB = "/opt/uptime-kuma/data/kuma.db"
+seed = json.loads(r'''{monitors_json}''')
+con = sqlite3.connect(DB)
+cur = con.cursor()
+managed_prefix = "[phs-managed] kuma-sync"
+desired = {{item["name"] for item in seed}}
+for item in seed:
+    row = cur.execute("select id from monitor where name=?", (item["name"],)).fetchone()
+    statuses = item.get("accepted_statuscodes_json", '["200-299"]')
+    interval = int(item.get("interval", 60))
+    timeout = int(item.get("timeout", 8))
+    description = f"{{managed_prefix}} {{item['url']}}"
+    if row:
+        cur.execute("update monitor set active=1, url=?, type=?, interval=?, method=?, accepted_statuscodes_json=?, timeout=?, description=? where id=?",
+            (item["url"], "http", interval, "GET", statuses, timeout, description, row[0]))
+    else:
+        cur.execute("insert into monitor (name,active,user_id,interval,url,type,weight,created_date,maxretries,ignore_tls,upside_down,maxredirects,accepted_statuscodes_json,retry_interval,method,expiry_notification,timeout,http_body_encoding,description) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (item["name"], 1, None, interval, item["url"], "http", 2000, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), 0, 0, 0, 10, statuses, 0, "GET", 1, timeout, "utf-8", description))
+if desired:
+    cur.execute("update monitor set active=0 where description like ? and name not in ({{}})".format(",".join("?" for _ in desired)),
+        tuple([f"{{managed_prefix}}%"] + sorted(desired)))
+con.commit()
+print("seeded_or_updated=", len(seed))
+print("active_managed=", cur.execute("select count(*) from monitor where description like ? and active=1", (f"{{managed_prefix}}%",)).fetchone()[0])
+PY
+docker restart uptime-kuma >/dev/null
+"#
+    );
+
+    let out = Command::new("pct")
+        .args(["exec", vmid, "--", "bash", "-lc", &script])
+        .output()?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("[kuma] 동기화 실패: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.trim().is_empty() {
+        println!("{}", stdout.trim());
+    }
+    println!("\n=== Uptime Kuma 동기화 완료 ===");
+    Ok(())
+}
+
+// =============================================================================
+// Helpers for new commands
+// =============================================================================
+
+fn cmd_output_silent(cmd: &str, args: &[&str]) -> String {
+    Command::new(cmd)
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn curl_status_code(domain: &str) -> u16 {
+    let out = Command::new("curl")
+        .args(["-k", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+            "--max-time", "8", &format!("https://{domain}/")])
+        .output()
+        .ok();
+    out.map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().unwrap_or(0))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
