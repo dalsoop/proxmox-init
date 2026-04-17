@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use prelik_core::{common, github, os, paths};
 use std::path::PathBuf;
 
@@ -57,6 +57,12 @@ enum Cmd {
         #[arg(long)]
         purge: bool,
     },
+    /// 셸 자동완성 스크립트 생성 (bash/zsh/fish)
+    Completions {
+        /// 셸 종류
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// 상태 점검
     Doctor,
 }
@@ -76,6 +82,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::Upgrade => upgrade_all(),
         Cmd::Run { domain, args } => run_domain(&domain, &args),
         Cmd::Uninstall { confirm, purge } => uninstall(confirm, purge),
+        Cmd::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "prelik", &mut std::io::stdout());
+            Ok(())
+        }
         Cmd::Doctor => {
             doctor();
             Ok(())

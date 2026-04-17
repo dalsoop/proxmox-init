@@ -13,3 +13,4 @@ prelik-core = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 dialoguer = { workspace = true }
+clap_complete = { workspace = true }
