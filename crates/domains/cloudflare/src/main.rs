@@ -245,7 +245,18 @@ fn cf_api(email: &str, key: &str, method: &str, path: &str, body: Option<&str>) 
     }
     args.push(url);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let out = common::run("curl", &args_ref)?;
+    // common::run은 실패 시 args 전체를 에러에 포함 → X-Auth-Key 평문 노출.
+    // stdout 캡처가 필요해서 run_secret(status만)은 쓸 수 없음. 직접 Command::output.
+    let output = std::process::Command::new("curl").args(&args_ref).output()
+        .map_err(|e| anyhow::anyhow!("curl 실행 실패: {e}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "CF API 호출 실패 (exit {}). API 키/네트워크를 확인하세요. \
+             (자격증명 보호를 위해 curl 인자는 메시지에 포함하지 않음)",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+    let out = String::from_utf8_lossy(&output.stdout).to_string();
     let v: Value = serde_json::from_str(&out)?;
     if !v["success"].as_bool().unwrap_or(false) {
         anyhow::bail!("CF API 실패: {}", v["errors"]);

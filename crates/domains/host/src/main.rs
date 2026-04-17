@@ -105,6 +105,13 @@ fn monitor() {
 }
 
 fn ssh_keygen(label: &str, email: Option<&str>) -> anyhow::Result<()> {
+    // label이 파일명에 들어감 (id_ed25519_{label}). path traversal 차단.
+    if label.is_empty() || label.len() > 64 {
+        anyhow::bail!("label 길이 1~64자 필요");
+    }
+    if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        anyhow::bail!("label은 [A-Za-z0-9._-]만 허용 (path traversal 차단): {label:?}");
+    }
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("HOME 미설정"))?;
     let ssh_dir = home.join(".ssh");
