@@ -14,6 +14,40 @@ curl -fsSL https://install.prelik.com | bash
 prelik init
 ```
 
+## Demo
+
+```
+$ prelik run monitor host
+=== 호스트 리소스 ===
+
+[CPU] (64 cores)
+  load avg: 11.13 11.36 10.34 (1/5/15min)
+
+[메모리]
+  RAM:  134GB / 503GB (26%)
+  Swap: 4GB / 7GB (61%)
+
+[디스크]
+  /                        79G / 94G (89%) /dev/mapper/pve-root
+
+[uptime] up 3 weeks, 1 day
+
+$ prelik run node --json list
+[
+  {"node": "pve",           "status": "online", "cpus": 64, "mem_total_gb": 503, "uptime_days": 22},
+  {"node": "ranode-3960x",  "status": "online", "cpus": 48, "mem_total_gb": 62,  "uptime_days": 31}
+]
+
+$ prelik run deploy service nginx --vmid 200 --hostname myapp --ip 10.0.50.200
+[1/3] LXC 생성 → prelik-lxc create
+[2/3] 패키지 설치: nginx, curl
+[3/3] 커스텀 스크립트 (3 단계)
+✓ nginx 배포 완료 (VMID 200, IP 10.0.50.200)
+
+$ curl http://10.0.50.200/
+<h1>Deployed via prelik-deploy</h1>
+```
+
 ---
 
 ## 왜?
