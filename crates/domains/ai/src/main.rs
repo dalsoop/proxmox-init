@@ -454,6 +454,48 @@ enum Cmd {
         #[arg(long)]
         action: String,
     },
+    /// 실행 중인 모든 LXC에 claude-octopus 일괄 설치 (AI CLI 감지된 LXC만)
+    OctopusInstallAll {
+        #[arg(long)]
+        force: bool,
+    },
+    /// 실행 중인 모든 LXC에 superpowers 일괄 설치
+    SuperpowersInstallAll {
+        #[arg(long)]
+        force: bool,
+    },
+    /// 호스트 openclaw 명령을 OpenClaw LXC로 자동 포워딩하는 wrapper 설치
+    OpenclawWrap {
+        /// OpenClaw LXC VMID (생략 시 hostname=openclaw인 LXC 자동 탐색)
+        #[arg(long)]
+        vmid: Option<String>,
+    },
+    /// OpenClaw LLM 프리셋 전환 (local-gemma4, cloud-codex, cloud-claude)
+    OpenclawLlmSwitch {
+        #[arg(long)]
+        vmid: Option<String>,
+        /// 프리셋 이름
+        #[arg(long, default_value = "")]
+        preset: String,
+        /// 사용 가능한 프리셋 목록 표시
+        #[arg(long)]
+        list: bool,
+    },
+    /// OpenClaw 기본 모델 정책 적용
+    OpenclawModelDefaults {
+        #[arg(long)]
+        vmid: Option<String>,
+        #[arg(long, default_value = "openai-codex/gpt-5.4")]
+        model: String,
+        #[arg(long, default_value = "high")]
+        thinking: String,
+        #[arg(long, default_value = "on")]
+        reasoning: String,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        fast_mode: bool,
+        #[arg(long)]
+        fallback: Option<String>,
+    },
 
     // ── Cluster files ──
 
@@ -626,6 +668,40 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::OpenclawGateway { vmid, action } => {
             openclaw_gateway(&vmid, &action);
+            Ok(())
+        }
+        Cmd::OctopusInstallAll { force } => {
+            octopus_install_all(force);
+            Ok(())
+        }
+        Cmd::SuperpowersInstallAll { force } => {
+            superpowers_install_all(force);
+            Ok(())
+        }
+        Cmd::OpenclawWrap { vmid } => {
+            openclaw_wrap(vmid.as_deref());
+            Ok(())
+        }
+        Cmd::OpenclawLlmSwitch { vmid, preset, list } => {
+            openclaw_llm_switch(vmid.as_deref(), &preset, list);
+            Ok(())
+        }
+        Cmd::OpenclawModelDefaults {
+            vmid,
+            model,
+            thinking,
+            reasoning,
+            fast_mode,
+            fallback,
+        } => {
+            openclaw_model_defaults(
+                vmid.as_deref(),
+                &model,
+                fallback.as_deref(),
+                &thinking,
+                &reasoning,
+                fast_mode,
+            );
             Ok(())
         }
         // Cluster
@@ -3144,5 +3220,390 @@ fn patch_claude_json_for_npm(path: &str) {
 
     if let Ok(patched) = serde_json::to_string_pretty(&json) {
         let _ = fs::write(path, patched);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// New: octopus-install-all / superpowers-install-all / openclaw-wrap /
+//      openclaw-llm-switch / openclaw-model-defaults
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn octopus_install_all(force: bool) {
+    println!("=== claude-octopus 전체 LXC 일괄 설치 ===\n");
+
+    let vmids = running_lxc_list();
+    if vmids.is_empty() {
+        eprintln!("[octopus] 실행 중인 LXC 없음");
+        return;
+    }
+    println!("[octopus] 대상 LXC: {}개", vmids.len());
+
+    let mut succeeded = 0;
+    let mut skipped = 0;
+
+    for (vmid, hostname) in &vmids {
+        let has_claude = has_on(Some(vmid), "claude");
+        let has_codex = has_on(Some(vmid), "codex");
+        if !has_claude && !has_codex {
+            println!("  - {vmid} ({hostname}): AI CLI 없음 -- 건너뜀");
+            skipped += 1;
+            continue;
+        }
+        let mut clis = Vec::new();
+        if has_claude { clis.push("claude"); }
+        if has_codex { clis.push("codex"); }
+        println!("\n--- LXC {vmid} ({hostname}) [{}] ---", clis.join(","));
+
+        if has_claude {
+            let script = format!(
+                "claude plugin marketplace add https://github.com/nyldn/claude-octopus.git 2>&1 | tail -1; \
+                 claude plugin install octo@nyldn-plugins 2>&1 | tail -1"
+            );
+            match run_on(Some(vmid), &script) {
+                Ok(_) => { println!("  ✓ claude"); succeeded += 1; }
+                Err(e) => println!("  ✗ claude: {e}"),
+            }
+        }
+
+        if has_codex {
+            let rm = if force { "rm -rf ~/.codex/claude-octopus;" } else { "" };
+            let script = format!(
+                "{rm} if [ -d ~/.codex/claude-octopus ]; then \
+                   cd ~/.codex/claude-octopus && git pull --ff-only 2>&1 | tail -1; \
+                 else \
+                   git clone --depth 1 https://github.com/nyldn/claude-octopus.git ~/.codex/claude-octopus 2>&1 | tail -1; \
+                 fi && \
+                 mkdir -p ~/.agents/skills && \
+                 ln -sf ~/.codex/claude-octopus/skills ~/.agents/skills/claude-octopus"
+            );
+            match run_on(Some(vmid), &script) {
+                Ok(_) => { println!("  ✓ codex"); succeeded += 1; }
+                Err(e) => println!("  ✗ codex: {e}"),
+            }
+        }
+    }
+
+    println!("\n=== 결과: 설치 {succeeded}, 건너뜀 {skipped} ===");
+}
+
+fn superpowers_install_all(force: bool) {
+    println!("=== superpowers 전체 LXC 일괄 설치 ===\n");
+
+    let vmids = running_lxc_list();
+    if vmids.is_empty() {
+        eprintln!("[superpowers] 실행 중인 LXC 없음");
+        return;
+    }
+    println!("[superpowers] 대상 LXC: {}개", vmids.len());
+
+    let mut succeeded = 0;
+    let mut skipped = 0;
+
+    for (vmid, hostname) in &vmids {
+        let has_claude = has_on(Some(vmid), "claude");
+        let has_gemini = has_on(Some(vmid), "gemini");
+        if !has_claude && !has_gemini {
+            println!("  - {vmid} ({hostname}): 지원 CLI 없음 -- 건너뜀");
+            skipped += 1;
+            continue;
+        }
+        let mut clis = Vec::new();
+        if has_claude { clis.push("claude"); }
+        if has_gemini { clis.push("gemini"); }
+        println!("\n--- LXC {vmid} ({hostname}) [{}] ---", clis.join(","));
+
+        if has_claude {
+            let _force_flag = force; // reserved for future use
+            let script = "claude plugin install superpowers@claude-plugins-official 2>&1 | tail -1 || ( \
+                            claude plugin marketplace add obra/superpowers-marketplace 2>&1 | tail -1 && \
+                            claude plugin install superpowers@superpowers-marketplace 2>&1 | tail -1 \
+                          )";
+            match run_on(Some(vmid), script) {
+                Ok(_) => { println!("  ✓ claude"); succeeded += 1; }
+                Err(e) => println!("  ✗ claude: {e}"),
+            }
+        }
+
+        if has_gemini {
+            let script = "gemini extensions install https://github.com/obra/superpowers 2>&1 | tail -1";
+            match run_on(Some(vmid), script) {
+                Ok(_) => { println!("  ✓ gemini"); succeeded += 1; }
+                Err(e) => println!("  ✗ gemini: {e}"),
+            }
+        }
+    }
+
+    println!("\n=== 결과: 설치 {succeeded}, 건너뜀 {skipped} ===");
+}
+
+fn openclaw_wrap(vmid_arg: Option<&str>) {
+    let vmid = match vmid_arg {
+        Some(v) => v.to_string(),
+        None => {
+            let list_out = cmd_output("pct", &["list"]);
+            let mut found = String::new();
+            for line in list_out.lines() {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() >= 3 && cols[2] == "openclaw" {
+                    found = cols[0].to_string();
+                    break;
+                }
+            }
+            if found.is_empty() {
+                eprintln!(
+                    "[openclaw-wrap] hostname=openclaw 인 LXC를 찾을 수 없습니다. --vmid 옵션을 지정하세요."
+                );
+                std::process::exit(1);
+            }
+            found
+        }
+    };
+
+    ensure_lxc_running(&vmid);
+
+    let wrapper = format!(
+        r#"#!/bin/bash
+# Auto-generated by: prelik-ai openclaw-wrap
+# 호스트에서 openclaw 명령 실행 시 LXC {vmid}로 자동 포워딩
+VMID={vmid}
+
+STATUS=$(pct status "$VMID" 2>/dev/null | awk '{{print $2}}')
+if [ "$STATUS" != "running" ]; then
+    echo "[openclaw] LXC $VMID 이 실행 중이 아닙니다 (현재: $STATUS)" >&2
+    exit 1
+fi
+
+ARGS=""
+for arg in "$@"; do
+    ARGS="$ARGS $(printf '%q' "$arg")"
+done
+
+exec pct exec "$VMID" -- bash -c "export PATH=/usr/local/bin:\$PATH && openclaw $ARGS"
+"#
+    );
+
+    let path = "/usr/local/bin/openclaw";
+
+    if Path::new(path).exists() {
+        let is_script = fs::read_to_string(path)
+            .map(|c| c.starts_with("#!"))
+            .unwrap_or(false);
+        if !is_script {
+            let backup = "/usr/local/bin/openclaw.real";
+            if !Path::new(backup).exists() {
+                fs::copy(path, backup).ok();
+                println!("[openclaw-wrap] 기존 바이너리 백업: {backup}");
+            }
+        }
+    }
+
+    fs::write(path, &wrapper).ok();
+    set_permissions(path, 0o755);
+    println!("[openclaw-wrap] wrapper 설치 완료: {path} -> LXC {vmid}");
+    println!("[openclaw-wrap] 이제 호스트에서 openclaw 명령이 자동으로 LXC {vmid} 안에서 실행됩니다.");
+}
+
+// ── LLM 프리셋 ──
+
+struct LlmPreset {
+    name: &'static str,
+    description: &'static str,
+    model_id: &'static str,
+    thinking: &'static str,
+    reasoning: &'static str,
+    fast_mode: bool,
+    fallback: Option<&'static str>,
+}
+
+const LLM_PRESETS: &[LlmPreset] = &[
+    LlmPreset {
+        name: "cloud-codex",
+        description: "OpenAI Codex (GPT-5.4, 클라우드)",
+        model_id: "openai-codex/gpt-5.4",
+        thinking: "high",
+        reasoning: "on",
+        fast_mode: true,
+        fallback: Some("anthropic/claude-opus-4-6"),
+    },
+    LlmPreset {
+        name: "cloud-claude",
+        description: "Anthropic Claude Opus 4.6 (클라우드)",
+        model_id: "anthropic/claude-opus-4-6",
+        thinking: "high",
+        reasoning: "on",
+        fast_mode: true,
+        fallback: Some("openai-codex/gpt-5.4"),
+    },
+    LlmPreset {
+        name: "local-gemma4",
+        description: "Gemma 4 26B-A4B Q8_0 (ranode-3960x 로컬)",
+        model_id: "local-llama/gemma-4-26B-A4B-it-Q8_0.gguf",
+        thinking: "off",
+        reasoning: "off",
+        fast_mode: true,
+        fallback: Some("openai-codex/gpt-5.4"),
+    },
+];
+
+fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
+    if list {
+        println!("[openclaw] 사용 가능한 LLM 프리셋:\n");
+        for p in LLM_PRESETS {
+            println!("  {:<16} {} [{}]", p.name, p.description, p.model_id);
+        }
+        return;
+    }
+
+    if preset_name.is_empty() {
+        eprintln!("[openclaw] --preset 필요. 사용 가능: {}", LLM_PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
+        eprintln!("  목록 보기: prelik run ai openclaw-llm-switch --list");
+        std::process::exit(1);
+    }
+
+    let preset = match LLM_PRESETS.iter().find(|p| p.name == preset_name) {
+        Some(p) => p,
+        None => {
+            eprintln!("[openclaw] 알 수 없는 프리셋: {preset_name}");
+            eprintln!("사용 가능: {}", LLM_PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
+            std::process::exit(1);
+        }
+    };
+
+    println!("[openclaw] LLM 프리셋 전환: {}", preset.name);
+    println!("  설명: {}", preset.description);
+    println!("  model: {}", preset.model_id);
+    println!("  thinking: {}, reasoning: {}, fast: {}", preset.thinking, preset.reasoning, preset.fast_mode);
+    if let Some(fb) = preset.fallback {
+        println!("  fallback: {fb}");
+    }
+    println!();
+
+    // Apply model defaults to host openclaw.json
+    let config_path = format!("{SOURCE_HOME}/.openclaw/openclaw.json");
+    match apply_model_defaults_to_file(
+        &config_path, preset.model_id, preset.fallback, preset.thinking, preset.reasoning, preset.fast_mode,
+    ) {
+        Ok(()) => println!("[openclaw] 호스트 프리셋 적용 완료"),
+        Err(e) => {
+            eprintln!("[openclaw] 호스트 프리셋 적용 실패: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    if let Some(vmid) = vmid {
+        // Apply in LXC via pct exec
+        println!("\n[openclaw] LXC {vmid} 프리셋 적용 중...");
+        apply_model_defaults_in_lxc(
+            vmid, preset.model_id, preset.fallback, preset.thinking, preset.reasoning, preset.fast_mode,
+        );
+        // Restart gateway
+        println!("[openclaw] gateway 재시작...");
+        openclaw_gateway(vmid, "start");
+    }
+}
+
+fn openclaw_model_defaults(
+    vmid: Option<&str>,
+    model: &str,
+    fallback: Option<&str>,
+    thinking: &str,
+    reasoning: &str,
+    fast_mode: bool,
+) {
+    if let Some(vmid) = vmid {
+        apply_model_defaults_in_lxc(vmid, model, fallback, thinking, reasoning, fast_mode);
+        println!("[openclaw] LXC {vmid} 기본 정책 적용 완료");
+        println!("  model: {model}");
+        println!("  fallback: {}", fallback.unwrap_or("(none)"));
+        println!("  thinking: {thinking}, reasoning: {reasoning}, fast: {fast_mode}");
+    } else {
+        let config_path = format!("{SOURCE_HOME}/.openclaw/openclaw.json");
+        match apply_model_defaults_to_file(
+            &config_path, model, fallback, thinking, reasoning, fast_mode,
+        ) {
+            Ok(()) => {
+                println!("[openclaw] 기본 정책 적용 완료");
+                println!("  config: {config_path}");
+                println!("  model: {model}");
+                println!("  fallback: {}", fallback.unwrap_or("(none)"));
+                println!("  thinking: {thinking}, reasoning: {reasoning}, fast: {fast_mode}");
+            }
+            Err(e) => {
+                eprintln!("[openclaw] 기본 정책 적용 실패: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// Apply model defaults to a local openclaw.json file
+fn apply_model_defaults_to_file(
+    config_path: &str,
+    model: &str,
+    fallback: Option<&str>,
+    thinking: &str,
+    reasoning: &str,
+    fast_mode: bool,
+) -> anyhow::Result<()> {
+    if let Some(parent) = Path::new(config_path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut cfg: serde_json::Value = fs::read_to_string(config_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let obj = cfg.as_object_mut().ok_or_else(|| anyhow::anyhow!("config 루트가 object가 아님"))?;
+    obj.insert("defaultModel".into(), serde_json::json!(model));
+    obj.insert("defaultThinking".into(), serde_json::json!(thinking));
+    obj.insert("defaultReasoning".into(), serde_json::json!(reasoning));
+    obj.insert("defaultFastMode".into(), serde_json::json!(fast_mode));
+    if let Some(fb) = fallback {
+        obj.insert("defaultFallback".into(), serde_json::json!(fb));
+    } else {
+        obj.remove("defaultFallback");
+    }
+
+    let pretty = serde_json::to_string_pretty(&cfg)?;
+    fs::write(config_path, format!("{pretty}\n"))?;
+    Ok(())
+}
+
+/// Apply model defaults inside an LXC via pct exec + node one-liner
+fn apply_model_defaults_in_lxc(
+    vmid: &str,
+    model: &str,
+    fallback: Option<&str>,
+    thinking: &str,
+    reasoning: &str,
+    fast_mode: bool,
+) {
+    ensure_lxc_running(vmid);
+
+    let fb_json = match fallback {
+        Some(fb) => format!("\"{}\"", fb),
+        None => "null".to_string(),
+    };
+    let script = format!(
+        r#"
+const fs = require("fs");
+const p = "/root/.openclaw/openclaw.json";
+let cfg = {{}};
+try {{ cfg = JSON.parse(fs.readFileSync(p, "utf8")); }} catch {{}}
+cfg.defaultModel = "{model}";
+cfg.defaultThinking = "{thinking}";
+cfg.defaultReasoning = "{reasoning}";
+cfg.defaultFastMode = {fast_mode};
+const fb = {fb_json};
+if (fb) cfg.defaultFallback = fb; else delete cfg.defaultFallback;
+fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n");
+console.log("ok");
+"#
+    );
+
+    let (ok, out) = lxc_exec(vmid, &["node", "-e", &script]);
+    if !ok {
+        eprintln!("[openclaw] LXC {vmid} 모델 기본값 적용 실패: {out}");
     }
 }

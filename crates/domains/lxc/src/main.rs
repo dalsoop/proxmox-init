@@ -72,6 +72,8 @@ enum Cmd {
     Stop { vmid: String },
     /// LXC 재시작
     Restart { vmid: String },
+    /// LXC 재부팅 (restart 별칭)
+    Reboot { vmid: String },
     /// LXC 삭제
     Delete {
         vmid: String,
@@ -196,6 +198,23 @@ enum Cmd {
         #[arg(long, default_value = "status")]
         action: String,
     },
+    /// 관리 LXC 생성 (SSH 키 + API 토큰 + 도구 자동 설치)
+    MgmtSetup {
+        #[arg(long)]
+        vmid: String,
+        #[arg(long)]
+        hostname: String,
+        #[arg(long, default_value = "local-lvm")]
+        storage: String,
+        #[arg(long, default_value = "8")]
+        disk: String,
+        #[arg(long, default_value = "2")]
+        cores: String,
+        #[arg(long, default_value = "2048")]
+        memory: String,
+        #[arg(long, default_value = "false")]
+        bootstrap: bool,
+    },
     /// 상태 점검 (pct 존재, PVE 노드 확인)
     Doctor,
 }
@@ -224,6 +243,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Start { vmid } => start(&vmid),
         Cmd::Stop { vmid } => stop(&vmid),
         Cmd::Restart { vmid } => restart(&vmid),
+        Cmd::Reboot { vmid } => restart(&vmid),
         Cmd::Delete { vmid, force } => delete(&vmid, force),
         Cmd::Enter { vmid } => enter(&vmid),
         Cmd::Backup { vmid, storage, mode } => backup(&vmid, &storage, &mode),
@@ -252,6 +272,9 @@ fn main() -> anyhow::Result<()> {
         Cmd::RouteAuditWatch { action } => {
             route_audit_watch(&action);
             Ok(())
+        }
+        Cmd::MgmtSetup { vmid, hostname, storage, disk, cores, memory, bootstrap } => {
+            mgmt_setup(&vmid, &hostname, &storage, &disk, &cores, &memory, bootstrap)
         }
         Cmd::Doctor => {
             doctor();
@@ -1694,6 +1717,123 @@ fn doctor() {
     println!("  pveam:     {}", if common::has_cmd("pveam") { "ok" } else { "missing" });
     println!("  pvesh:     {}", if common::has_cmd("pvesh") { "ok" } else { "missing" });
     println!("  proxmox:   {}", if os::is_proxmox() { "ok" } else { "no" });
+}
+
+// =============================================================================
+// Management LXC setup
+// =============================================================================
+
+fn mgmt_setup(
+    vmid: &str, hostname: &str, storage: &str, disk: &str,
+    cores: &str, _memory: &str, bootstrap: bool,
+) -> anyhow::Result<()> {
+    println!("=== 관리 LXC 생성: {vmid} ({hostname}) ===\n");
+
+    let ip = vmid_to_ip(vmid);
+
+    // 1. Create LXC
+    println!("[mgmt] 1/5 LXC 생성...");
+    create(vmid, hostname, &ip, "debian-13", storage, disk, cores, "2048", None, "vmbr1")?;
+
+    if bootstrap {
+        println!("\n{}\n", "─".repeat(50));
+        self::bootstrap(vmid)?;
+        println!("\n{}\n", "─".repeat(50));
+    }
+
+    // 2. Remove root password
+    println!("[mgmt] 2/5 root 비밀번호 제거...");
+    lxc_exec(vmid, &["passwd", "-d", "root"]);
+
+    // 3. Install management packages
+    println!("\n[mgmt] 3/5 관리 패키지 설치...");
+    lxc_exec(vmid, &["bash", "-c",
+        "DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get install -y -qq openssh-client jq"
+    ]);
+
+    // 4. SSH key setup (LXC -> host)
+    println!("\n[mgmt] 4/5 SSH 키 설정...");
+    let host_ip = cmd_output("bash", &["-c", "hostname -I | awk '{print $1}'"]);
+    let host_ip = if host_ip.is_empty() { "127.0.0.1".to_string() } else { host_ip };
+
+    let (has_key, _) = lxc_exec(vmid, &["test", "-f", "/root/.ssh/id_ed25519"]);
+    if !has_key {
+        lxc_exec(vmid, &["mkdir", "-p", "/root/.ssh"]);
+        lxc_exec(vmid, &[
+            "ssh-keygen", "-t", "ed25519", "-f", "/root/.ssh/id_ed25519",
+            "-N", "", "-C", &format!("mgmt-lxc-{vmid}"),
+        ]);
+    }
+
+    // Read pubkey and add to host authorized_keys
+    let (pub_ok, pubkey) = lxc_exec(vmid, &["cat", "/root/.ssh/id_ed25519.pub"]);
+    if pub_ok && !pubkey.is_empty() {
+        let auth_keys_path = "/root/.ssh/authorized_keys";
+        let existing = fs::read_to_string(auth_keys_path).unwrap_or_default();
+        if !existing.contains(pubkey.trim()) {
+            fs::create_dir_all("/root/.ssh").ok();
+            let mut content = existing;
+            if !content.ends_with('\n') && !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(pubkey.trim());
+            content.push('\n');
+            fs::write(auth_keys_path, &content)?;
+            println!("[mgmt] 호스트 authorized_keys에 등록 완료");
+        }
+    }
+
+    let ssh_config = format!(
+        "Host host\n  HostName {host_ip}\n  User root\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n"
+    );
+    lxc_exec(vmid, &["bash", "-c",
+        &format!("cat > /root/.ssh/config << 'SSHEOF'\n{ssh_config}SSHEOF")
+    ]);
+    lxc_exec(vmid, &["chmod", "600", "/root/.ssh/config"]);
+
+    // 5. Proxmox API token
+    println!("\n[mgmt] 5/5 Proxmox API 토큰 발급...");
+    let token_id = format!("mgmt-{hostname}");
+    // Remove existing token if present
+    let _ = Command::new("pveum")
+        .args(["user", "token", "remove", "root@pam", &token_id])
+        .output();
+
+    let token_out = Command::new("pveum")
+        .args(["user", "token", "add", "root@pam", &token_id,
+            "--privsep", "0", "--output-format", "json"])
+        .output()?;
+
+    if token_out.status.success() {
+        let stdout = String::from_utf8_lossy(&token_out.stdout);
+        if let Some(val) = stdout.lines()
+            .find(|l| l.contains("value"))
+            .and_then(|l| l.split('"').nth(3))
+        {
+            let api_env = format!(
+                "PVE_API_URL=https://{host_ip}:8006/api2/json\nPVE_API_TOKEN=root@pam!{token_id}={val}\n"
+            );
+            lxc_exec(vmid, &["bash", "-c",
+                &format!("cat > /etc/proxmox-api.env << 'ENVEOF'\n{api_env}ENVEOF")
+            ]);
+            lxc_exec(vmid, &["chmod", "600", "/etc/proxmox-api.env"]);
+            println!("[mgmt] API 토큰 발급 완료");
+        }
+    }
+
+    println!("\n=== 관리 LXC {vmid} ({hostname}) 설정 완료 ===");
+    println!("  접속: prelik-lxc enter {vmid}");
+    println!("  SSH:  ssh root@{ip}");
+    Ok(())
+}
+
+/// VMID에서 IP를 유추 (10.0.50.{vmid 뒤 숫자}/16)
+fn vmid_to_ip(vmid: &str) -> String {
+    let last3: String = vmid.chars().rev().take(3).collect::<String>().chars().rev().collect();
+    let num: u32 = last3.parse().unwrap_or(0);
+    let third = num / 256;
+    let fourth = num % 256;
+    format!("10.0.{third}.{fourth}/16")
 }
 
 // =============================================================================

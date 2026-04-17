@@ -31,6 +31,19 @@ enum Cmd {
     /// 메일 스택 상태 점검
     Status,
     Doctor,
+    /// 메일 서버 초기 세팅 (Maddy LXC 설치 + DNS + NAT)
+    Setup {
+        #[arg(long)]
+        vmid: String,
+        #[arg(long)]
+        ip: String,
+        #[arg(long)]
+        domain: String,
+        #[arg(long)]
+        email: String,
+        #[arg(long)]
+        password: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -39,6 +52,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::PostfixRelay { maddy_ip, port } => postfix_relay(&maddy_ip, &port),
         Cmd::Status => { status(); Ok(()) }
         Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Setup { vmid, ip, domain, email, password } => mail_setup(&vmid, &ip, &domain, &email, &password),
     }
 }
 
@@ -277,6 +291,159 @@ fn doctor() {
     println!("  pct:       {}", if common::has_cmd("pct") { "✓" } else { "✗" });
     println!("  postfix:   {}", if common::has_cmd("postfix") { "✓" } else { "✗" });
     println!("  systemctl: {}", if common::has_cmd("systemctl") { "✓" } else { "✗" });
+}
+
+// ---------- mail-setup (Maddy) ----------
+
+fn lxc_sh(vmid: &str, cmd: &str) -> String {
+    let output = std::process::Command::new("pct")
+        .args(["exec", vmid, "--", "bash", "-c", cmd])
+        .output();
+    match output {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -> anyhow::Result<()> {
+    if !common::has_cmd("pct") { anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작"); }
+
+    let hostname = format!("mail.{domain}");
+    println!("=== 메일 서버 전체 세팅 (Maddy) ===\n");
+
+    // 1. LXC 확인/시작
+    println!("[1/5] LXC 확인...");
+    let status_out = common::run("pct", &["status", vmid]).unwrap_or_default();
+    if status_out.contains("running") {
+        println!("  LXC {vmid} 이미 실행 중");
+    } else if !status_out.is_empty() {
+        println!("  LXC {vmid} 존재 — 시작");
+        let _ = std::process::Command::new("pct").args(["start", vmid]).status();
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    } else {
+        anyhow::bail!("LXC {vmid} 없음 — 먼저 생성하세요 (prelik-lxc create)");
+    }
+
+    // 2. Maddy 설치
+    println!("[2/5] Maddy 설치...");
+    let has_maddy = lxc_sh(vmid, "ls /usr/local/bin/maddy 2>/dev/null");
+    if has_maddy.contains("maddy") {
+        let ver = lxc_sh(vmid, "/usr/local/bin/maddy version 2>&1 | head -1");
+        println!("  Maddy 이미 설치됨 ({ver})");
+    } else {
+        lxc_sh(vmid, "systemctl stop postfix 2>/dev/null; apt-get purge -y postfix 2>/dev/null");
+        lxc_sh(vmid, "DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get install -y -qq zstd curl ca-certificates");
+
+        let maddy_url = "https://github.com/foxcpp/maddy/releases/latest/download/maddy-x86_64-linux-musl.tar.zst";
+        lxc_sh(vmid, &format!("curl -sL {maddy_url} -o /tmp/maddy.tar.zst && cd /tmp && tar --zstd -xf maddy.tar.zst"));
+        lxc_sh(vmid, "find /tmp -name 'maddy' -type f -executable | head -1 | xargs -I{{}} cp {{}} /usr/local/bin/maddy && chmod +x /usr/local/bin/maddy");
+        lxc_sh(vmid, "useradd -r -s /usr/sbin/nologin -d /var/lib/maddy maddy 2>/dev/null; mkdir -p /etc/maddy /var/lib/maddy /run/maddy; chown maddy:maddy /var/lib/maddy /run/maddy");
+
+        let ver = lxc_sh(vmid, "/usr/local/bin/maddy version 2>&1 | head -1");
+        println!("  Maddy {ver} 설치 완료");
+    }
+
+    // 3. Maddy 설정
+    println!("[3/5] Maddy 설정...");
+    let maddy_conf = format!(r#"$(hostname) = {hostname}
+$(primary_domain) = {domain}
+$(local_domains) = $(primary_domain)
+tls off
+
+auth.pass_table local_authdb {{
+    table sql_table {{
+        driver sqlite3
+        dsn credentials.db
+        table_name passwords
+    }}
+}}
+storage.imapsql local_mailboxes {{
+    driver sqlite3
+    dsn imapsql.db
+}}
+hostname $(hostname)
+
+smtp tcp://0.0.0.0:25 {{
+    limits {{ all rate 20 1s; all concurrency 10 }}
+    dmarc yes
+    check {{ require_mx_record; dkim; spf }}
+    source $(local_domains) {{ reject 501 5.1.8 "Use Submission" }}
+    default_source {{
+        destination postmaster $(local_domains) {{ deliver_to &local_mailboxes }}
+        default_destination {{ reject 550 5.1.1 "User doesn't exist" }}
+    }}
+}}
+submission tcp://0.0.0.0:587 {{
+    limits {{ all rate 50 1s }}
+    auth &local_authdb
+    source $(local_domains) {{
+        destination postmaster $(local_domains) {{ deliver_to &local_mailboxes }}
+        default_destination {{
+            modify {{ dkim $(primary_domain) $(local_domains) default }}
+            deliver_to &remote_queue
+        }}
+    }}
+    default_source {{ reject 501 5.1.8 "Non-local sender domain" }}
+}}
+imap tcp://0.0.0.0:143 {{
+    auth &local_authdb
+    storage &local_mailboxes
+}}
+target.remote outbound_delivery {{
+    limits {{ destination rate 20 1s; destination concurrency 10 }}
+}}
+target.queue remote_queue {{
+    target &outbound_delivery
+    autogenerated_msg_domain $(primary_domain)
+}}
+"#);
+
+    write_to_lxc(vmid, "/etc/maddy/maddy.conf", &maddy_conf)?;
+    lxc_sh(vmid, "touch /etc/maddy/aliases");
+    println!("  설정 완료 (domain: {domain}, hostname: {hostname})");
+
+    // 4. 계정 생성
+    println!("[4/5] 메일 계정 생성...");
+    lxc_sh(vmid, "systemctl daemon-reload && systemctl enable maddy && systemctl start maddy 2>/dev/null");
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let existing = lxc_sh(vmid, "/usr/local/bin/maddy creds list 2>/dev/null");
+    if existing.contains(email) {
+        println!("  {email} 계정 이미 존재");
+    } else {
+        lxc_sh(vmid, &format!("echo -e '{password}\\n{password}' | /usr/local/bin/maddy creds create {email} 2>/dev/null"));
+        lxc_sh(vmid, &format!("/usr/local/bin/maddy imap-acct create {email} 2>/dev/null"));
+        println!("  {email} 계정 생성 완료");
+    }
+
+    lxc_sh(vmid, "systemctl daemon-reload && systemctl restart maddy");
+
+    // 5. NAT 포트포워딩
+    println!("[5/5] NAT 포트포워딩...");
+    for (port, label) in [(25, "SMTP"), (587, "Submission"), (143, "IMAP")] {
+        let port_s = port.to_string();
+        let check = std::process::Command::new("iptables")
+            .args(["-t", "nat", "-C", "PREROUTING", "-p", "tcp", "--dport", &port_s,
+                "-j", "DNAT", "--to-destination", &format!("{ip}:{port}")])
+            .output().map(|o| o.status.success()).unwrap_or(false);
+        if check {
+            println!("  {label} (:{port}) -> {ip} 이미 존재");
+        } else {
+            let _ = std::process::Command::new("iptables")
+                .args(["-t", "nat", "-A", "PREROUTING", "-p", "tcp", "--dport", &port_s,
+                    "-j", "DNAT", "--to-destination", &format!("{ip}:{port}"),
+                    "-m", "comment", "--comment", &format!("mail-{label}")])
+                .output();
+            println!("  {label}: :{port} -> {ip}:{port}");
+        }
+    }
+
+    println!("\n=== Maddy 세팅 완료 ===");
+    println!("  LXC: {vmid}, IP: {ip}");
+    println!("  도메인: {hostname}, 계정: {email}");
+    println!("  SMTP: {ip}:25 (수신), {ip}:587 (발신), IMAP: {ip}:143");
+    println!("\n  DNS 설정 필요 (A, MX, SPF, DKIM, DMARC)");
+    Ok(())
 }
 
 fn read_host_env(key: &str) -> String {
