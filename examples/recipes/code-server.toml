@@ -1,0 +1,97 @@
+[service]
+name = "code-server"
+description = "VS Code 웹 에디터 — 기존 LXC에 얹기 (code-server + systemd + git auto-sync)"
+
+[lxc]
+cores = "2"
+memory = "2048"
+disk = "20"
+
+[install]
+packages = ["curl", "git"]
+
+[[install.steps]]
+name = "code-server 설치"
+run = """
+set -euo pipefail
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone 2>&1 | tail -3
+echo "ok"
+"""
+
+[[install.steps]]
+name = "설정 (auth: none, 포트 8443)"
+run = """
+set -euo pipefail
+mkdir -p ~/.config/code-server
+cat > ~/.config/code-server/config.yaml << CFGEOF
+bind-addr: 0.0.0.0:8443
+auth: none
+cert: false
+CFGEOF
+"""
+
+[[install.steps]]
+name = "systemd 서비스"
+run = """
+set -euo pipefail
+CS_BIN=$(find /root/.local/lib -name "code-server" -path "*/bin/*" -type f -executable 2>/dev/null | head -1)
+[ -z "$CS_BIN" ] && CS_BIN=$(command -v code-server)
+
+FOLDER="${CODE_SERVER_FOLDER:-/root}"
+
+cat > /etc/systemd/system/code-server.service << SVCEOF
+[Unit]
+Description=code-server (VS Code Web)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${CS_BIN} --config /root/.config/code-server/config.yaml ${FOLDER}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable --now code-server
+"""
+
+[[install.steps]]
+name = "git auto-sync (5분마다 pull+push)"
+run = """
+set -euo pipefail
+FOLDER="${CODE_SERVER_FOLDER:-/root}"
+
+# git repo가 있으면 sync 스크립트 설치
+if [ -d "${FOLDER}/.git" ]; then
+  cat > /usr/local/bin/git-auto-sync.sh << 'GSEOF'
+#!/bin/bash
+cd "${1:-.}" || exit 1
+git fetch origin 2>/dev/null
+LOCAL=$(git rev-parse HEAD 2>/dev/null)
+REMOTE=$(git rev-parse origin/$(git branch --show-current) 2>/dev/null)
+if [ "$LOCAL" != "$REMOTE" ] && [ -n "$REMOTE" ]; then
+    git pull --rebase --autostash 2>&1 || git pull --strategy=ours 2>&1
+fi
+git add -A
+CHANGES=$(git diff --cached --stat)
+if [ -n "$CHANGES" ]; then
+    git commit -m "auto: $(date +%Y-%m-%d\ %H:%M) sync"
+    git push 2>&1
+fi
+GSEOF
+  chmod +x /usr/local/bin/git-auto-sync.sh
+  (crontab -l 2>/dev/null | grep -v git-auto-sync; echo "*/5 * * * * /usr/local/bin/git-auto-sync.sh ${FOLDER} >> /var/log/git-sync.log 2>&1") | crontab -
+  echo "ok git sync cron"
+else
+  echo "skip git sync (no .git)"
+fi
+"""
+
+[[install.steps]]
+name = "검증"
+run = """
+systemctl is-active code-server && echo "ok code-server running on :8443" || { echo "fail"; exit 1; }
+"""

@@ -1,0 +1,65 @@
+[service]
+name = "wordpress"
+description = "WordPress — Apache + PHP + MariaDB + WP-CLI + 한국어 기본"
+
+[lxc]
+cores = "2"
+memory = "2048"
+disk = "16"
+
+[install]
+packages = ["apache2", "mariadb-server", "php", "php-mysql", "php-curl", "php-gd", "php-mbstring", "php-xml", "php-zip", "libapache2-mod-php", "curl", "wget", "unzip"]
+
+[[install.steps]]
+name = "MariaDB 설정"
+run = """
+set -euo pipefail
+systemctl enable --now mariadb
+DB_PASS="${WORDPRESS_DB_PASSWORD:-$(openssl rand -hex 16)}"
+mysql -e "CREATE DATABASE IF NOT EXISTS wordpress;"
+mysql -e "CREATE USER IF NOT EXISTS 'wp_user'@'localhost' IDENTIFIED BY '${DB_PASS}';"
+mysql -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wp_user'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
+echo "DB_PASS=${DB_PASS}" > /etc/prelik/.wp-db-pass
+chmod 600 /etc/prelik/.wp-db-pass
+"""
+
+[[install.steps]]
+name = "WordPress 다운로드 + wp-config"
+run = """
+set -euo pipefail
+cd /var/www/html
+rm -f index.html
+if [ ! -f wp-config.php ]; then
+  curl -fsSL https://wordpress.org/latest.tar.gz -o /tmp/wordpress.tar.gz
+  tar xzf /tmp/wordpress.tar.gz --strip-components=1 -C /var/www/html
+  rm -f /tmp/wordpress.tar.gz
+  cp wp-config-sample.php wp-config.php
+  DB_PASS=$(cat /etc/prelik/.wp-db-pass 2>/dev/null | grep DB_PASS | cut -d= -f2-)
+  sed -i "s/database_name_here/wordpress/" wp-config.php
+  sed -i "s/username_here/wp_user/" wp-config.php
+  sed -i "s/password_here/${DB_PASS}/" wp-config.php
+  SALT=$(curl -fsSL https://api.wordpress.org/secret-key/1.1/salt/)
+  sed -i "/put your unique phrase here/d" wp-config.php
+  printf "%s\n" "$SALT" >> wp-config.php
+fi
+chown -R www-data:www-data /var/www/html
+chmod -R 755 /var/www/html
+"""
+
+[[install.steps]]
+name = "Apache + WP-CLI"
+run = """
+set -euo pipefail
+a2enmod rewrite
+systemctl enable --now apache2
+systemctl restart apache2
+curl -fsSL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
+chmod +x /usr/local/bin/wp
+"""
+
+[[install.steps]]
+name = "검증"
+run = """
+systemctl is-active apache2 && curl -fsS http://localhost/ -o /dev/null && echo "ok wordpress running" || { echo "fail"; exit 1; }
+"""
