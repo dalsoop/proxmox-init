@@ -65,6 +65,14 @@ enum Cmd {
     },
     /// 상태 점검
     Doctor,
+    /// 프로젝트 이름 변경 (Cargo.toml, 소스, 바이너리, 시스템 경로 일괄)
+    Rebrand {
+        /// 새 이름 (예: pxi → mytools)
+        new_name: String,
+        /// 실제 적용 (생략하면 dry-run)
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 const REPO: &str = "dalsoop/pxi-init";
@@ -91,6 +99,7 @@ fn main() -> anyhow::Result<()> {
             doctor();
             Ok(())
         }
+        Cmd::Rebrand { new_name, apply } => rebrand(&new_name, apply),
     }
 }
 
@@ -661,5 +670,97 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
         anyhow::bail!("{failed}개 항목 제거 실패. 권한(sudo) 또는 잠금 상태 확인.");
     }
     println!("\n✓ 완료. 외부 시스템(LXC/postfix/CF 등) 정리는 docs/uninstall.md 참조.");
+    Ok(())
+}
+
+fn rebrand(new_name: &str, apply: bool) -> anyhow::Result<()> {
+    use pxi_core::brand;
+    let old = brand::SHORT;
+
+    if new_name == old {
+        println!("현재 이름과 동일: {old}");
+        return Ok(());
+    }
+
+    // Validate
+    if new_name.is_empty() || new_name.len() > 20 {
+        anyhow::bail!("이름은 1~20자: '{new_name}'");
+    }
+    if !new_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("영문/숫자/하이픈/언더스코어만: '{new_name}'");
+    }
+
+    println!("=== Rebrand: {} → {} ===\n", old, new_name);
+
+    // 1. Scan what would change
+    let bin_dir = paths::bin_dir()?;
+    let old_bins: Vec<_> = std::fs::read_dir(&bin_dir)?
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with(&format!("{old}-")) || n == old
+        })
+        .collect();
+
+    let config_old = format!("/etc/{old}");
+    let config_new = format!("/etc/{new_name}");
+    let data_old = format!("/var/lib/{old}");
+    let data_new = format!("/var/lib/{new_name}");
+
+    println!("[바이너리] {} → {}", old, new_name);
+    for b in &old_bins {
+        let old_n = b.file_name().to_string_lossy().to_string();
+        let new_n = old_n.replacen(old, new_name, 1);
+        println!("  {} → {}", old_n, new_n);
+    }
+    println!("\n[경로]");
+    if std::path::Path::new(&config_old).exists() {
+        println!("  {} → {}", config_old, config_new);
+    }
+    if std::path::Path::new(&data_old).exists() {
+        println!("  {} → {}", data_old, data_new);
+    }
+
+    if !apply {
+        println!("\n⚠ dry-run. 실제 적용: pxi rebrand {} --apply", new_name);
+        return Ok(());
+    }
+
+    // Apply
+    println!("\n적용 중...");
+
+    // Binaries
+    for b in &old_bins {
+        let old_n = b.file_name().to_string_lossy().to_string();
+        let new_n = old_n.replacen(old, new_name, 1);
+        let old_p = bin_dir.join(&old_n);
+        let new_p = bin_dir.join(&new_n);
+        if old_p.is_symlink() {
+            let target = std::fs::read_link(&old_p)?;
+            let new_target_name = target.file_name()
+                .map(|f| f.to_string_lossy().replacen(old, new_name, 1))
+                .unwrap_or_default();
+            let new_target = target.parent().unwrap_or(std::path::Path::new(".")).join(&new_target_name);
+            std::fs::remove_file(&old_p)?;
+            std::os::unix::fs::symlink(&new_target, &new_p)?;
+        } else {
+            std::fs::rename(&old_p, &new_p)?;
+        }
+        println!("  ✓ {} → {}", old_n, new_n);
+    }
+
+    // Paths
+    if std::path::Path::new(&config_old).exists() && !std::path::Path::new(&config_new).exists() {
+        std::fs::rename(&config_old, &config_new)?;
+        std::os::unix::fs::symlink(&config_new, &config_old)?;
+        println!("  ✓ {} → {} (symlink 유지)", config_old, config_new);
+    }
+    if std::path::Path::new(&data_old).exists() && !std::path::Path::new(&data_new).exists() {
+        std::fs::rename(&data_old, &data_new)?;
+        std::os::unix::fs::symlink(&data_new, &data_old)?;
+        println!("  ✓ {} → {} (symlink 유지)", data_old, data_new);
+    }
+
+    println!("\n✓ 완료. 소스 코드는 scripts/rebrand.sh 또는 brand.rs 수정 후 재빌드.");
     Ok(())
 }
