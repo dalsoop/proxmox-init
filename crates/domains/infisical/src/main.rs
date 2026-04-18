@@ -30,6 +30,8 @@ enum Cmd {
     Logs { #[arg(long)] follow: bool, #[arg(long)] tail: Option<String> },
     /// 업데이트
     Update,
+    /// 환경 진단
+    Doctor,
     /// SMTP 설정 주입
     Smtp {
         #[arg(long, default_value = "10.0.50.122")] host: String,
@@ -58,6 +60,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Install { port } => infisical_install(port),
         Cmd::Uninstall { force } => infisical_uninstall(force),
         Cmd::Update => infisical_update(),
+        Cmd::Doctor => { doctor(); }
         Cmd::Smtp { host, port, user, password, from, from_name, secure } => {
             infisical_smtp(&host, port, user.as_deref(), password.as_deref(), from.as_deref(), &from_name, secure);
         }
@@ -381,4 +384,45 @@ fn infisical_smtp(
         std::process::exit(1);
     }
     println!("\n  확인: curl -sS http://127.0.0.1:{}/api/status | grep emailConfigured", saved_port());
+}
+
+// ---------------------------------------------------------------------------
+// doctor
+// ---------------------------------------------------------------------------
+
+fn doctor() {
+    println!("=== pxi-infisical doctor ===\n");
+
+    // Docker installed
+    let docker_ok = Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} docker", if docker_ok { "✓" } else { "✗" });
+
+    // docker-compose.yml exists
+    let compose_ok = Path::new(COMPOSE_FILE).exists();
+    println!("  {} {}", if compose_ok { "✓" } else { "✗" }, COMPOSE_FILE);
+
+    // Container running
+    if compose_ok && docker_ok {
+        let ps_ok = Command::new("docker")
+            .args(["compose", "-f", COMPOSE_FILE, "ps", "--status", "running", "-q"])
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false);
+        println!("  {} 컨테이너 실행 중", if ps_ok { "✓" } else { "✗" });
+    } else {
+        println!("  ✗ 컨테이너 확인 불가 (docker/compose 없음)");
+    }
+
+    // Port reachable
+    let port = saved_port();
+    let port_ok = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("http://localhost:{}", port)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} localhost:{} 응답", if port_ok { "✓" } else { "✗" }, port);
 }

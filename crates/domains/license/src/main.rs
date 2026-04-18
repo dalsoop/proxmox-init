@@ -63,6 +63,8 @@ enum Cmd {
     Deactivate,
     /// 서버에 heartbeat 전송
     CheckIn,
+    /// 라이선스 환경 진단
+    Doctor,
     /// 바이너리 셀프 업데이트 (SHA-512 검증)
     SelfUpdate {
         /// 릴리스 채널 (stable, beta, ...)
@@ -78,6 +80,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Status => cmd_status(),
         Cmd::Deactivate => cmd_deactivate(),
         Cmd::CheckIn => cmd_check_in(),
+        Cmd::Doctor => { doctor(); Ok(()) }
         Cmd::SelfUpdate { channel } => cmd_self_update(&channel),
     }
 }
@@ -589,6 +592,46 @@ fn base64_encode(bytes: &[u8]) -> String {
         out.push('=');
     }
     out
+}
+
+// ---- Doctor ----------------------------------------------------------------
+
+fn doctor() {
+    println!("=== pxi-license doctor ===\n");
+
+    // License file exists
+    let lic_exists = Path::new(LICENSE_FILE).exists();
+    println!("  {} {} 존재", if lic_exists { "✓" } else { "✗" }, LICENSE_FILE);
+
+    // Keygen API reachable
+    let api = api_url();
+    let api_ok = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("{}/v1/ping", api)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} Keygen API ({})", if api_ok { "✓" } else { "✗" }, api);
+
+    // If license exists, validate online
+    if lic_exists {
+        if let Some(stored) = load_stored() {
+            let fp = machine_fingerprint();
+            match validate_key(&stored.key, Some(&fp)) {
+                Ok(v) => {
+                    let valid = v["meta"]["valid"].as_bool().unwrap_or(false);
+                    let code = v["meta"]["code"].as_str().unwrap_or("?");
+                    if valid {
+                        println!("  ✓ 라이선스 온라인 검증 통과");
+                    } else {
+                        println!("  ✗ 라이선스 검증 실패 ({})", code);
+                    }
+                }
+                Err(e) => println!("  ✗ 라이선스 검증 요청 실패: {}", e),
+            }
+        } else {
+            println!("  ✗ 라이선스 파일 파싱 실패");
+        }
+    }
 }
 
 // ---- Enforcement -----------------------------------------------------------

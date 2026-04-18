@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use pxi_core::common;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const SERVICES_DIR: &str = "/opt/services";
 
@@ -59,6 +60,8 @@ enum Cmd {
         /// 서비스 이름
         name: String,
     },
+    /// 환경 진단
+    Doctor,
     /// 서비스 도메인 이동
     Move {
         /// 서비스 이름
@@ -194,6 +197,7 @@ cert_resolver = "cloudflare"
                 println!("✗ {} 서비스를 찾을 수 없음", name);
             }
         }
+        Cmd::Doctor => { doctor(); }
         Cmd::Move { name, to } => {
             if let Some(old_path) = find_service(&name) {
                 let new_dir = format!("{}/{}", SERVICES_DIR, to);
@@ -208,4 +212,47 @@ cert_resolver = "cloudflare"
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// doctor
+// ---------------------------------------------------------------------------
+
+fn doctor() {
+    println!("=== pxi-service doctor ===\n");
+
+    // /opt/services/ directory exists
+    let dir_ok = Path::new(SERVICES_DIR).is_dir();
+    println!("  {} {} 디렉토리", if dir_ok { "✓" } else { "✗" }, SERVICES_DIR);
+
+    // Count service.toml files
+    if dir_ok {
+        let mut count = 0usize;
+        if let Ok(domains) = fs::read_dir(SERVICES_DIR) {
+            for domain in domains.flatten() {
+                if domain.path().is_dir() {
+                    if let Ok(services) = fs::read_dir(domain.path()) {
+                        for svc in services.flatten() {
+                            if svc.path().join("service.toml").exists() {
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("  ✓ service.toml 파일: {}개", count);
+    }
+
+    // service-sync binary exists in PATH
+    let sync_ok = common::command_exists("service-sync");
+    println!("  {} service-sync 바이너리", if sync_ok { "✓" } else { "✗" });
+
+    // Traefik LXC reachable (50100 is the standard Traefik LXC)
+    let traefik_ok = Command::new("pct")
+        .args(["status", "50100"])
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("running"))
+        .unwrap_or(false);
+    println!("  {} Traefik LXC (50100)", if traefik_ok { "✓" } else { "✗" });
 }

@@ -105,37 +105,38 @@ fn main() -> Result<()> {
 
 fn cmd_doctor() -> Result<()> {
     println!("=== pxi-wordpress doctor ===\n");
-    let mut ok = true;
+    println!("  WordPress는 여러 LXC를 관리하므로 개별 점검에는 --vmid가 필요합니다.");
+    println!("  전체 점검 체크리스트:\n");
 
     // pct
-    if common::command_exists("pct") {
-        println!("[pct]  OK");
-    } else {
-        println!("[pct]  MISSING — Proxmox VE 호스트에서 실행하세요");
-        ok = false;
-    }
+    println!("  {} pct (Proxmox LXC 관리)", if common::command_exists("pct") { "✓" } else { "✗" });
 
-    // wp (호스트에는 없어도 됨 — LXC 안에 설치)
     // pxi-traefik
-    if common::command_exists("pxi-traefik") {
-        println!("[pxi-traefik]  OK");
-    } else {
-        println!("[pxi-traefik]  MISSING — Traefik 라우트 관리 불가 (설치 시 자동 호출)");
-    }
+    println!("  {} pxi-traefik (라우트 관리)", if common::command_exists("pxi-traefik") { "✓" } else { "✗" });
 
     // pveam
-    if common::command_exists("pveam") {
-        println!("[pveam]  OK");
+    println!("  {} pveam (LXC 템플릿)", if common::command_exists("pveam") { "✓" } else { "✗" });
+
+    // List known WP LXCs (pct list, filter wp-* hostnames)
+    println!();
+    if let Ok(output) = common::run_capture("pct", &["list"]) {
+        let wp_lxcs: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("wp-") || l.contains("wordpress"))
+            .collect();
+        if wp_lxcs.is_empty() {
+            println!("  (WordPress LXC를 찾을 수 없음)");
+        } else {
+            println!("  알려진 WordPress LXC:");
+            for line in &wp_lxcs {
+                println!("    {}", line.trim());
+            }
+        }
     } else {
-        println!("[pveam]  MISSING — LXC 템플릿 관리 불가");
-        ok = false;
+        println!("  ✗ pct list 실행 실패");
     }
 
-    if ok {
-        println!("\n모든 필수 의존성 확인 완료");
-    } else {
-        println!("\n일부 의존성 누락 — 위 항목 확인");
-    }
+    println!("\n  개별 LXC 점검: pxi-wordpress cli --vmid <VMID> -- core version");
     Ok(())
 }
 

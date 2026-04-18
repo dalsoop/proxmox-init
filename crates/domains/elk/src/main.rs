@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use pxi_core::common;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "pxi-elk", about = "ELK 스택 관리 (ES + Kibana + Logstash)")]
@@ -56,6 +57,8 @@ enum Cmd {
         #[arg(long, default_value = "50190")]
         vmid: String,
     },
+    /// ELK 스택 진단
+    Doctor,
 }
 
 fn es_url() -> String {
@@ -137,6 +140,52 @@ fn main() -> anyhow::Result<()> {
             println!("  cat /root/control-plane/services/elk.toml");
             println!("  대상 LXC: {}", vmid);
         }
+        Cmd::Doctor => { doctor(); }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// doctor
+// ---------------------------------------------------------------------------
+
+fn doctor() {
+    println!("=== pxi-elk doctor ===\n");
+
+    // Elasticsearch reachable
+    let es_ok = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("http://{}:9200", ELK_IP)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} Elasticsearch ({}:9200)", if es_ok { "✓" } else { "✗" }, ELK_IP);
+
+    // Kibana reachable
+    let kibana_ok = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("http://{}:5601/api/status", ELK_IP)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} Kibana ({}:5601)", if kibana_ok { "✓" } else { "✗" }, ELK_IP);
+
+    // Logstash running
+    let logstash_ok = Command::new("pct")
+        .args(["exec", ELK_VMID, "--", "systemctl", "is-active", "logstash"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} Logstash (systemctl)", if logstash_ok { "✓" } else { "✗" });
+
+    // syslog-* index count
+    let idx_output = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("http://{}:9200/_cat/indices/syslog-*?h=index", ELK_IP)])
+        .output();
+    match idx_output {
+        Ok(o) if o.status.success() => {
+            let body = String::from_utf8_lossy(&o.stdout);
+            let count = body.lines().filter(|l| !l.trim().is_empty()).count();
+            println!("  ✓ syslog-* 인덱스: {}개", count);
+        }
+        _ => println!("  ✗ syslog-* 인덱스 조회 실패"),
+    }
 }

@@ -16,6 +16,8 @@ enum Cmd {
     Start, Stop, Restart, Status, Reset,
     Logs { #[arg(long)] follow: bool, #[arg(long)] tail: Option<String> },
     Update,
+    /// 환경 진단
+    Doctor,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -36,6 +38,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Uninstall { force } => ministack_uninstall(force),
         Cmd::Reset => ministack_reset(),
         Cmd::Update => ministack_update(),
+        Cmd::Doctor => doctor(),
     }
     Ok(())
 }
@@ -268,4 +271,53 @@ fn ministack_update() {
     if common::run("docker", &["compose", "-f", COMPOSE_FILE, "up", "-d", "--force-recreate"]).is_ok() {
         println!("\n  업데이트 완료");
     }
+}
+
+// ---------------------------------------------------------------------------
+// doctor
+// ---------------------------------------------------------------------------
+
+fn doctor() {
+    println!("=== pxi-ministack doctor ===\n");
+
+    // Docker installed
+    let docker_ok = Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} docker", if docker_ok { "✓" } else { "✗" });
+
+    // docker-compose.yml exists
+    let compose_ok = Path::new(COMPOSE_FILE).exists();
+    println!("  {} {}", if compose_ok { "✓" } else { "✗" }, COMPOSE_FILE);
+
+    // Container running
+    if compose_ok && docker_ok {
+        let ps_ok = Command::new("docker")
+            .args(["compose", "-f", COMPOSE_FILE, "ps", "--status", "running", "-q"])
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false);
+        println!("  {} 컨테이너 실행 중", if ps_ok { "✓" } else { "✗" });
+    } else {
+        println!("  ✗ 컨테이너 확인 불가 (docker/compose 없음)");
+    }
+
+    // Health endpoint
+    let port = saved_port();
+    let health_ok = Command::new("curl")
+        .args(["-sf", "--max-time", "5", &format!("http://localhost:{}/_ministack/health", port)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} health endpoint (localhost:{}/_ministack/health)", if health_ok { "✓" } else { "✗" }, port);
+
+    // AWS CLI installed
+    let aws_ok = Command::new("aws")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    println!("  {} aws CLI", if aws_ok { "✓" } else { "✗" });
 }
