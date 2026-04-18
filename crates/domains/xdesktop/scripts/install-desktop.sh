@@ -128,12 +128,12 @@ curl -fL --progress-bar -o "$HELIUM_DEB" "$HELIUM_URL"
 apt-get install -y "$HELIUM_DEB" || { dpkg -i "$HELIUM_DEB" || true; apt-get install -f -y; }
 rm -f "$HELIUM_DEB"
 
-# LXC unprivileged 샌드박스 우회 wrapper
+# LXC unprivileged 샌드박스 우회 wrapper.
+# /usr/local/bin/helium 이 /usr/bin/helium 을 PATH로 shadow → 절대 경로(/opt/helium/helium) 호출로 재귀 회피.
+# helium-bin .deb 은 /opt/helium/helium 실바이너리 + /usr/bin/helium 심볼릭링크 + /usr/share/applications/helium.desktop 설치.
 cat > /usr/local/bin/helium <<'WRAP'
 #!/bin/sh
-HELIUM_BIN="$(command -v helium-browser || ls /opt/helium-bin/helium 2>/dev/null | head -1)"
-[ -z "$HELIUM_BIN" ] && { echo "helium 바이너리를 찾을 수 없음"; exit 1; }
-exec "$HELIUM_BIN" --no-sandbox --disable-dev-shm-usage "$@"
+exec /opt/helium/helium --no-sandbox --disable-dev-shm-usage "$@"
 WRAP
 chmod +x /usr/local/bin/helium
 
