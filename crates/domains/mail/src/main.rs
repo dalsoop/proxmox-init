@@ -176,7 +176,7 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
         anyhow::bail!("SMTP_PASSWORD에 개행/제어문자 포함");
     }
 
-    if !fs::metadata("/etc/postfix/main.cf").is_ok() {
+    if fs::metadata("/etc/postfix/main.cf").is_err() {
         anyhow::bail!("Postfix 미설치. apt install postfix 먼저");
     }
 
@@ -590,7 +590,7 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
 
     if status_only {
         println!("=== LXC postfix relayhost 현황 (기대값: {relay}) ===");
-        println!("  {:<8}  {:<22}  {}", "VMID", "HOST", "RELAYHOST");
+        println!("  {:<8}  {:<22}  RELAYHOST", "VMID", "HOST");
         for vmid in &vmids {
             let hostname = pct_hostname(vmid);
             let current = common::run_capture("pct", &["exec", vmid, "--", "postconf", "-h", "relayhost"])
