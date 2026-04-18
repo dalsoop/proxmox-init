@@ -1,0 +1,13 @@
+[package]
+name = "pxi-xdesktop"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "pxi-xdesktop"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+pxi-core = { workspace = true }
+anyhow = { workspace = true }

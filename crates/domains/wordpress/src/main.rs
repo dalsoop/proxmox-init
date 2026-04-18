@@ -82,6 +82,41 @@ enum Commands {
     },
     /// 의존성 상태 확인 (pct, wp 존재 여부)
     Doctor,
+    /// wp-admin/wp-login/xmlrpc 를 *.internal.kr 도메인에서만 허용하도록 전체 LXC 에 중앙 lockdown 배포
+    LockdownApply {
+        /// 특정 VMID 만 (생략 시 자동 탐지된 전체 WP LXC)
+        #[arg(long)]
+        vmid: Option<String>,
+        /// 자동 탐지 대신 명시적 LXC 목록 (쉼표 구분, 예: 50200,50201)
+        #[arg(long)]
+        vmids: Option<String>,
+    },
+    /// 현재 lockdown 적용 상태 (활성/비활성/싱크)
+    LockdownStatus {
+        #[arg(long)]
+        vmid: Option<String>,
+        #[arg(long)]
+        vmids: Option<String>,
+    },
+    /// lockdown 제거 (a2disconf)
+    LockdownRemove {
+        #[arg(long)]
+        vmid: Option<String>,
+        #[arg(long)]
+        vmids: Option<String>,
+    },
+    /// lockdown 동작 테스트 (internal 통과 + 외부 차단 + admin-ajax 예외)
+    LockdownTest {
+        /// 테스트할 LXC VMID (기본 : 탐지된 첫번째)
+        #[arg(long)]
+        vmid: Option<String>,
+        /// 커스텀 Host 헤더 (미지정 시 자동 조합 테스트)
+        #[arg(long)]
+        host: Option<String>,
+        /// 커스텀 경로 (기본 /wp-admin/)
+        #[arg(long, default_value = "/wp-admin/")]
+        path: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -96,6 +131,21 @@ fn main() -> Result<()> {
         Commands::Cli { vmid, args } => cmd_cli(&vmid, &args),
         Commands::Delete { vmid, force } => cmd_delete(&vmid, force),
         Commands::Doctor => cmd_doctor(),
+        Commands::LockdownApply { vmid, vmids } => {
+            cmd_lockdown_apply(&resolve_targets(vmid.as_deref(), vmids.as_deref())?)
+        }
+        Commands::LockdownStatus { vmid, vmids } => {
+            cmd_lockdown_status(&resolve_targets(vmid.as_deref(), vmids.as_deref())?)
+        }
+        Commands::LockdownRemove { vmid, vmids } => {
+            cmd_lockdown_remove(&resolve_targets(vmid.as_deref(), vmids.as_deref())?)
+        }
+        Commands::LockdownTest { vmid, host, path } => {
+            let targets = resolve_targets(vmid.as_deref(), None)?;
+            let test_vmid = targets.first()
+                .ok_or_else(|| anyhow::anyhow!("lockdown test 대상 LXC 없음"))?;
+            cmd_lockdown_test(test_vmid, host.as_deref(), &path)
+        }
     }
 }
 
@@ -373,6 +423,211 @@ fn cmd_cli(vmid: &str, args: &[String]) -> Result<()> {
         "export PATH=/usr/local/bin:$PATH; cd /var/www/html && wp {wp_args} --allow-root"
     );
     common::pct_exec_passthrough(vmid, &["bash", "-c", &script])?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// lockdown — *.internal.kr 외부 요청에 대해 wp-admin/wp-login/xmlrpc 차단
+// ---------------------------------------------------------------------------
+
+/// Apache conf (크레이트 assets 에서 compile-time 임베딩)
+const LOCKDOWN_CONF: &str = include_str!("../assets/wp-admin-lockdown.conf");
+const LOCKDOWN_CONF_NAME: &str = "wp-admin-lockdown";
+const LOCKDOWN_REMOTE_PATH: &str = "/etc/apache2/conf-available/wp-admin-lockdown.conf";
+const LOCKDOWN_ENABLED_PATH: &str = "/etc/apache2/conf-enabled/wp-admin-lockdown.conf";
+
+/// 대상 LXC 결정 : --vmid > --vmids > 자동 탐지
+fn resolve_targets(single: Option<&str>, csv: Option<&str>) -> Result<Vec<String>> {
+    if let Some(v) = single {
+        return Ok(vec![v.to_string()]);
+    }
+    if let Some(list) = csv {
+        return Ok(list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+    }
+    // 자동 탐지 : Apache 설치 + WP 파일 존재한 LXC
+    let listing = common::run_capture("pct", &["list"]).unwrap_or_default();
+    let mut candidates = Vec::new();
+    for line in listing.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 { continue; }
+        let vmid = parts[0];
+        let status = parts[1];
+        if status != "running" { continue; }
+        // Apache + WordPress 감지
+        let check = common::pct_exec(vmid, &["bash", "-c",
+            "test -d /etc/apache2/conf-available && \
+             (test -f /var/www/html/wp-config.php || ls /var/www/*/wp-config.php >/dev/null 2>&1) \
+             && echo yes"]);
+        if let Ok(out) = check {
+            if out.trim() == "yes" {
+                candidates.push(vmid.to_string());
+            }
+        }
+    }
+    if candidates.is_empty() {
+        bail!("Apache + WordPress LXC 를 자동 탐지하지 못함. --vmid 또는 --vmids 로 지정");
+    }
+    Ok(candidates)
+}
+
+fn lxc_has_apache(vmid: &str) -> bool {
+    matches!(
+        common::pct_exec(vmid, &["test", "-d", "/etc/apache2/conf-available/"]),
+        Ok(_)
+    )
+}
+
+fn cmd_lockdown_apply(targets: &[String]) -> Result<()> {
+    if targets.is_empty() { bail!("적용 대상 없음"); }
+    println!("=== wp-admin lockdown 적용: {} 개 LXC ===\n", targets.len());
+    let mut failed = Vec::new();
+    for vmid in targets {
+        if !lxc_has_apache(vmid) {
+            println!("[{vmid}] Apache 없음 — 건너뜀");
+            continue;
+        }
+        // 임시 파일로 push (pct push 는 파일 경로만 받음)
+        let tmp = format!("/tmp/wp-admin-lockdown-{vmid}.conf");
+        std::fs::write(&tmp, LOCKDOWN_CONF)?;
+        if let Err(e) = common::run("pct", &["push", vmid, &tmp, LOCKDOWN_REMOTE_PATH]) {
+            eprintln!("[{vmid}] ✗ push 실패: {e}");
+            failed.push(vmid.clone());
+            continue;
+        }
+        let _ = std::fs::remove_file(&tmp);
+        // a2enconf
+        if let Err(e) = common::pct_exec(vmid, &["a2enconf", LOCKDOWN_CONF_NAME]) {
+            eprintln!("[{vmid}] ✗ a2enconf 실패: {e}");
+            failed.push(vmid.clone());
+            continue;
+        }
+        // configtest
+        let test_out = common::pct_exec(vmid, &["apachectl", "configtest"]).unwrap_or_default();
+        if !test_out.contains("Syntax OK") && !common::pct_exec(vmid, &["bash", "-c", "apachectl configtest 2>&1 | grep -q 'Syntax OK' && echo ok"]).map(|s| s.trim() == "ok").unwrap_or(false) {
+            eprintln!("[{vmid}] ✗ configtest 실패 — 롤백");
+            let _ = common::pct_exec(vmid, &["a2disconf", LOCKDOWN_CONF_NAME]);
+            failed.push(vmid.clone());
+            continue;
+        }
+        // reload
+        if let Err(e) = common::pct_exec(vmid, &["systemctl", "reload", "apache2"]) {
+            eprintln!("[{vmid}] ✗ reload 실패: {e}");
+            failed.push(vmid.clone());
+            continue;
+        }
+        println!("[{vmid}] ✓ 적용 완료");
+    }
+    println!();
+    if failed.is_empty() {
+        println!("전체 {} 개 LXC 에 lockdown 적용 성공", targets.len());
+        Ok(())
+    } else {
+        bail!("적용 실패 LXC: {}", failed.join(", "));
+    }
+}
+
+fn cmd_lockdown_status(targets: &[String]) -> Result<()> {
+    println!("=== wp-admin lockdown 상태 ===\n");
+    for vmid in targets {
+        if !lxc_has_apache(vmid) {
+            println!("[{vmid}] Apache 없음");
+            continue;
+        }
+        let enabled = common::pct_exec(vmid, &["test", "-L", LOCKDOWN_ENABLED_PATH]).is_ok();
+        if !enabled {
+            println!("[{vmid}] ✗ 비활성화");
+            continue;
+        }
+        // content 직접 비교
+        let remote = common::pct_exec(vmid, &["cat", LOCKDOWN_REMOTE_PATH]).unwrap_or_default();
+        if remote.trim_end() == LOCKDOWN_CONF.trim_end() {
+            println!("[{vmid}] ✓ 활성화 (싱크 OK)");
+        } else {
+            println!("[{vmid}] ⚠ 활성화 (싱크 안맞음 — apply 재실행 필요)");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_lockdown_remove(targets: &[String]) -> Result<()> {
+    println!("=== wp-admin lockdown 제거 ===\n");
+    for vmid in targets {
+        if !lxc_has_apache(vmid) {
+            println!("[{vmid}] Apache 없음 — 건너뜀");
+            continue;
+        }
+        let enabled = common::pct_exec(vmid, &["test", "-L", LOCKDOWN_ENABLED_PATH]).is_ok();
+        if !enabled {
+            println!("[{vmid}] 이미 비활성화");
+            continue;
+        }
+        common::pct_exec(vmid, &["a2disconf", LOCKDOWN_CONF_NAME])?;
+        common::pct_exec(vmid, &["systemctl", "reload", "apache2"])?;
+        println!("[{vmid}] ✓ 비활성화 완료");
+    }
+    Ok(())
+}
+
+fn cmd_lockdown_test(vmid: &str, custom_host: Option<&str>, path: &str) -> Result<()> {
+    // LXC IP
+    let ip = common::pct_exec(vmid, &["bash", "-c", "hostname -I | awk '{print $1}'"])?;
+    let ip = ip.trim();
+    if ip.is_empty() { bail!("LXC {vmid} IP 조회 실패"); }
+    println!("=== lockdown 테스트: LXC {vmid} ({ip}) ===\n");
+
+    let run_curl = |host: &str, p: &str| -> Result<u16> {
+        let out = common::run_capture("curl", &[
+            "-sk", "-o", "/dev/null", "-w", "%{http_code}",
+            "-H", &format!("Host: {host}"),
+            &format!("http://{ip}{p}"),
+        ])?;
+        out.trim().parse::<u16>().map_err(|e| anyhow::anyhow!("status parse: {e}"))
+    };
+
+    // 커스텀 호스트 지정 시 한 번만
+    if let Some(host) = custom_host {
+        let code = run_curl(host, path)?;
+        println!("  [{code}] {host}{path}");
+        return Ok(());
+    }
+
+    // 자동 : internal vhost 하나 뽑기
+    let internal_host = common::pct_exec(vmid, &["bash", "-c",
+        "grep -h ServerName /etc/apache2/sites-enabled/*.conf 2>/dev/null | \
+         awk '{print $2}' | grep internal.kr | head -1"])
+        .unwrap_or_default().trim().to_string();
+
+    let mut failed = false;
+    let expect = |desc: &str, host: &str, p: &str, want_block: bool| -> Result<bool> {
+        let code = run_curl(host, p)?;
+        let blocked = code == 403;
+        let ok = blocked == want_block;
+        let mark = if ok { "✓" } else { "✗" };
+        println!("  {mark} [{code}] {desc:30} {host}{p}");
+        Ok(ok)
+    };
+
+    if !internal_host.is_empty() {
+        if !expect("internal → wp-admin (통과)", &internal_host, "/wp-admin/", false)? { failed = true; }
+        if !expect("internal → admin-ajax (통과)", &internal_host, "/wp-admin/admin-ajax.php", false)? { failed = true; }
+    } else {
+        println!("  (internal.kr vhost 없음 — internal 테스트 스킵)");
+    }
+
+    if !expect("외부 → wp-admin (차단)", "evil.example.com", "/wp-admin/", true)? { failed = true; }
+    if !expect("외부 → wp-login (차단)", "evil.example.com", "/wp-login.php", true)? { failed = true; }
+    if !expect("외부 → xmlrpc (차단)", "evil.example.com", "/xmlrpc.php", true)? { failed = true; }
+    if !expect("외부 → admin-ajax (통과)", "evil.example.com", "/wp-admin/admin-ajax.php", false)? { failed = true; }
+
+    println!();
+    if failed {
+        bail!("일부 테스트 실패");
+    }
+    println!("모든 테스트 통과");
     Ok(())
 }
 
