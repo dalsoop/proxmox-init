@@ -60,6 +60,8 @@ enum Cmd {
         #[arg(long, default_value = "/opt/cf-mail-proxy/target/release/cf-mail-proxy")]
         binary: String,
     },
+    /// CF Email Sending 이번달 발송 쿼터 조회 (무료 3,000/월)
+    CfProxyQuota,
     /// 모든 running LXC의 postfix relayhost를 cf-mail-proxy(2525)로 일괄 동기화
     CfProxySync {
         /// cf-mail-proxy 호스트 IP (기본 10.0.50.122)
@@ -88,6 +90,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Doctor => { doctor(); Ok(()) }
         Cmd::Setup { vmid, ip, domain, email, password } => mail_setup(&vmid, &ip, &domain, &email, &password),
         Cmd::CfProxyInstall { vmid, binary } => cf_proxy_install(&vmid, &binary),
+        Cmd::CfProxyQuota => cf_proxy_quota(),
         Cmd::CfProxySync { host, port, dry_run, status, vmid } => cf_proxy_sync(&host, &port, dry_run, status, vmid.as_deref()),
     }
 }
@@ -634,6 +637,64 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
         let _ = common::run("pct", &["exec", vmid, "--", "bash", "-lc", &script]);
     }
     println!("완료.");
+    Ok(())
+}
+
+// ---------- cf-proxy-quota ----------
+
+fn cf_proxy_quota() -> anyhow::Result<()> {
+    // CF Email Sending public beta는 아직 metrics/stats API를 공개하지 않음 (2026-04 기준).
+    // 대안: cf-mail-proxy systemd 저널에서 `delivered=` 라인을 카운트. LXC 50122에서 실행.
+    let vmid = std::env::var("CF_MAIL_PROXY_VMID").unwrap_or_else(|_| "50122".into());
+
+    // 이번달 시작시각 (UTC)
+    let since = common::run_capture("date", &["-u", "-d", "-30 days", "+%Y-%m-%d"])
+        .unwrap_or_default();
+    let since = since.trim();
+
+    println!("=== CF Email Sending 이번달 발송 카운트 (LXC {vmid}, since {since}) ===");
+
+    // 프록시 로그에서 delivered 파싱
+    let logs = common::run_capture(
+        "pct",
+        &[
+            "exec", &vmid, "--", "bash", "-lc",
+            &format!("journalctl -u cf-mail-proxy --since '{since}' --no-pager 2>/dev/null | grep -c 'delivered=\\[' || echo 0"),
+        ],
+    )
+    .unwrap_or_default();
+
+    let delivered: u64 = logs.trim().parse().unwrap_or(0);
+    let pct_used = (delivered as f64 / 3000.0 * 100.0) as u64;
+
+    println!("  발송 완료: {delivered} / 3,000 ({pct_used}%)");
+
+    // 소스별 분해 (호스트, 주요 LXC)
+    let by_source = common::run_capture(
+        "pct",
+        &[
+            "exec", &vmid, "--", "bash", "-lc",
+            &format!(
+                "journalctl -u cf-mail-proxy --since '{since}' --no-pager 2>/dev/null | \
+                 grep -oE 'session start.*peer=\\S+' | awk '{{print $NF}}' | sort | uniq -c | sort -rn | head -10"
+            ),
+        ],
+    )
+    .unwrap_or_default();
+    if !by_source.trim().is_empty() {
+        println!("\n피어별 세션 수 (Top 10):");
+        for line in by_source.lines() {
+            println!("  {line}");
+        }
+    }
+
+    if delivered > 2700 {
+        eprintln!("\n⚠ 90% 초과 — 이번달 CF 쿼터 소진 임박. 초과 시 $0.35/1k 과금.");
+    } else if delivered > 2400 {
+        eprintln!("\n주의: 80% 도달.");
+    }
+
+    println!("\n참고: CF Email Sending beta는 공식 stats API 미제공 — 프록시 저널 기반 근사치.");
     Ok(())
 }
 
