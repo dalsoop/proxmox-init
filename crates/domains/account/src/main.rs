@@ -1,17 +1,17 @@
-//! prelik-account — 범용 리눅스 계정 관리.
+//! pxi-account — 범용 리눅스 계정 관리.
 //! create / remove / list / status / ssh-key-add / teardown / roles-init / roles-apply /
 //! roles-status / proxmox-silo.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
-use prelik_core::helpers;
+use pxi_core::common;
+use pxi_core::helpers;
 
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "prelik-account", about = "리눅스 계정 관리")]
+#[command(name = "pxi-account", about = "리눅스 계정 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -148,7 +148,7 @@ fn create(name: &str, sudo: bool, ssh_key: Option<&str>, shell: &str) -> anyhow:
 }
 
 fn setup_sudoers_for(name: &str) -> anyhow::Result<()> {
-    let sudoers_file = format!("/etc/sudoers.d/prelik-{name}");
+    let sudoers_file = format!("/etc/sudoers.d/pxi-{name}");
     let content = format!("{name} ALL=(ALL) NOPASSWD:ALL\n");
 
     let (tmp, _guard) = helpers::secure_tempfile()?;
@@ -175,7 +175,7 @@ fn remove(name: &str, purge: bool) -> anyhow::Result<()> {
     }
 
     // sudoers 제거
-    let sudoers_file = format!("/etc/sudoers.d/prelik-{name}");
+    let sudoers_file = format!("/etc/sudoers.d/pxi-{name}");
     if Path::new(&sudoers_file).exists() {
         common::run("rm", &["-f", &sudoers_file])?;
         println!("  + sudoers.d 제거");
@@ -210,7 +210,7 @@ fn teardown(names_csv: &str) -> anyhow::Result<()> {
             Err(e) => eprintln!("[계정] {name} 삭제 실패: {e}"),
         }
         // sudoers cleanup
-        let sudoers_file = format!("/etc/sudoers.d/prelik-{name}");
+        let sudoers_file = format!("/etc/sudoers.d/pxi-{name}");
         if Path::new(&sudoers_file).exists() {
             let _ = fs::remove_file(&sudoers_file);
         }
@@ -266,7 +266,7 @@ fn status(name: &str) {
             println!("  home:  {} (exists: {})", h, Path::new(h).exists());
         }
     }
-    let sudoers = format!("/etc/sudoers.d/prelik-{name}");
+    let sudoers = format!("/etc/sudoers.d/pxi-{name}");
     println!("  sudo:  {}", if Path::new(&sudoers).exists() { "+" } else { "-" });
 
     if let Ok(home) = common::run_bash(&format!("getent passwd {name} | cut -d: -f6")) {
@@ -338,7 +338,7 @@ fn ssh_key_add(name: &str, key: &str) -> anyhow::Result<()> {
 // roles-init (포트 from phs rbac)
 // ---------------------------------------------------------------------------
 
-const ROLES_TOML_TEMPLATE: &str = r#"# prelik account roles configuration
+const ROLES_TOML_TEMPLATE: &str = r#"# pxi account roles configuration
 # 사용자별 역할 정의. roles-apply로 sudoers + Proxmox ACL에 반영.
 #
 # [username]
@@ -351,7 +351,7 @@ const ROLES_TOML_TEMPLATE: &str = r#"# prelik account roles configuration
 "#;
 
 fn roles_init() -> anyhow::Result<()> {
-    let config_dir = prelik_core::paths::config_dir()?;
+    let config_dir = pxi_core::paths::config_dir()?;
     fs::create_dir_all(&config_dir)?;
     let roles_path = config_dir.join("roles.toml");
 
@@ -375,7 +375,7 @@ fn roles_apply() -> anyhow::Result<()> {
 
     let roles = load_roles()?;
     if roles.is_empty() {
-        anyhow::bail!("roles.toml 없음 또는 비어있음. 먼저: prelik run account roles-init");
+        anyhow::bail!("roles.toml 없음 또는 비어있음. 먼저: pxi run account roles-init");
     }
 
     // sudoers 생성
@@ -395,8 +395,8 @@ fn roles_apply() -> anyhow::Result<()> {
 
 fn apply_sudoers(roles: &std::collections::HashMap<String, RoleConfig>) -> anyhow::Result<()> {
     println!("[sudoers] 역할 기반 sudoers 생성...");
-    let sudoers_file = "/etc/sudoers.d/prelik-roles";
-    let mut content = String::from("# prelik-account RBAC sudoers (자동 생성)\n# 수동 편집 금지 -- roles-apply로 재생성\n\n");
+    let sudoers_file = "/etc/sudoers.d/pxi-roles";
+    let mut content = String::from("# pxi-account RBAC sudoers (자동 생성)\n# 수동 편집 금지 -- roles-apply로 재생성\n\n");
 
     for (account, role) in roles {
         if role.domains.contains(&"*".to_string()) {
@@ -727,11 +727,11 @@ struct RoleConfig {
 }
 
 fn load_roles() -> anyhow::Result<std::collections::HashMap<String, RoleConfig>> {
-    let config_dir = prelik_core::paths::config_dir()?;
+    let config_dir = pxi_core::paths::config_dir()?;
     let roles_path = config_dir.join("roles.toml");
 
     // Fallback paths
-    let paths = [roles_path.clone(), std::path::PathBuf::from("/etc/prelik/roles.toml"), std::path::PathBuf::from("/etc/proxmox-host-setup/roles.toml")];
+    let paths = [roles_path.clone(), std::path::PathBuf::from("/etc/pxi/roles.toml"), std::path::PathBuf::from("/etc/proxmox-host-setup/roles.toml")];
     for p in &paths {
         if p.exists() {
             let content = fs::read_to_string(p)?;
@@ -772,7 +772,7 @@ fn find_visudo() -> String {
 }
 
 fn doctor() {
-    println!("=== prelik-account doctor ===");
+    println!("=== pxi-account doctor ===");
     for (name, cmd) in &[
         ("useradd", "useradd"),
         ("userdel", "userdel"),

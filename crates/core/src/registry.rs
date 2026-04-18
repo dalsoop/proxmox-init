@@ -46,7 +46,7 @@ impl Registry {
             match Self::load_via_nickel() {
                 Ok(reg) => return Ok(reg),
                 Err(e) => {
-                    eprintln!("[prelik] ⚠ Nickel export 실패 — 내장 폴백 사용: {e}");
+                    eprintln!("[pxi] ⚠ Nickel export 실패 — 내장 폴백 사용: {e}");
                     eprintln!("  (ncl/domains.ncl 편집 문제일 수 있음, nickel eval ncl/domains.ncl로 확인)");
                 }
             }
@@ -56,7 +56,7 @@ impl Registry {
     }
 
     fn load_via_nickel() -> anyhow::Result<Self> {
-        let tmp = std::env::temp_dir().join("prelik-domains.ncl");
+        let tmp = std::env::temp_dir().join("pxi-domains.ncl");
         std::fs::write(&tmp, DOMAINS_NCL)?;
         let json = crate::common::run(
             "nickel",
@@ -68,7 +68,7 @@ impl Registry {
     }
 
     fn fallback() -> Self {
-        // nickel CLI 없어도 prelik available이 동작하도록 최소 세트
+        // nickel CLI 없어도 pxi available이 동작하도록 최소 세트
         let mut domains = BTreeMap::new();
         for (name, desc, enabled) in [
             ("bootstrap", "apt/rust/gh/dotenvx 의존성 설치", true),

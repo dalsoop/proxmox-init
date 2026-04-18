@@ -1,6 +1,6 @@
 # PostgreSQL + Redis 한 줄 배포
 
-`prelik-deploy` 레시피로 데이터베이스 LXC 두 개를 띄운다.
+`pxi-deploy` 레시피로 데이터베이스 LXC 두 개를 띄운다.
 
 ## 사전 조건
 

@@ -1,11 +1,11 @@
-//! prelik-backup — Proxmox vzdump 관리.
+//! pxi-backup — Proxmox vzdump 관리.
 //! 즉시 백업 + cron 스케줄 + 목록 + 복원.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 
 #[derive(Parser)]
-#[command(name = "prelik-backup", about = "LXC/VM 백업 (vzdump)")]
+#[command(name = "pxi-backup", about = "LXC/VM 백업 (vzdump)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -189,7 +189,7 @@ fn restore(file: &str, vmid: &str, storage: &str) -> anyhow::Result<()> {
 }
 
 fn doctor() {
-    println!("=== prelik-backup doctor ===");
+    println!("=== pxi-backup doctor ===");
     for (name, cmd) in &[
         ("vzdump", "vzdump"),
         ("pct (LXC 복원)", "pct"),

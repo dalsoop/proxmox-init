@@ -23,14 +23,14 @@ Semantic Versioning (https://semver.org/)
 - 비영숫자 `_` 치환 규칙 명시 + dot/IP 두 예시
 
 ### v1.9.1 — uninstall purge dedup
-- `BTreeSet` + `canonicalize`로 `/etc/prelik` 중복 제거 (codex 60차 P1)
+- `BTreeSet` + `canonicalize`로 `/etc/pxi` 중복 제거 (codex 60차 P1)
 - cifs 무차별 삭제 권장 → 선별 삭제 가이드
 
 ### v1.9.0 — `prelik uninstall` + `docs/uninstall.md`
 - `prelik uninstall [--confirm] [--purge]` — dry-run 기본
   - `/usr/local/bin` + `~/.local/bin` 양쪽 스캔
-  - `prelik-*` 도메인 바이너리 + `.prelik.version` 마커 수집
-  - `--purge`: `~/.config/prelik`, `/etc/prelik`, `/var/lib/prelik`까지
+  - `pxi-*` 도메인 바이너리 + `.prelik.version` 마커 수집
+  - `--purge`: `~/.config/prelik`, `/etc/pxi`, `/var/lib/pxi`까지
   - LXC/VM/fstab/postfix/CF는 의도적으로 안 건드림 (데이터 유실 방지)
 - `docs/uninstall.md` — 10 섹션 가이드:
   1. uninstall이 실제 하는 일 + 안 건드리는 항목
@@ -57,7 +57,7 @@ Semantic Versioning (https://semver.org/)
 - `--timezone` 실제 zoneinfo 파일 존재 검증 (P1)
 - `dpkg-query`로 누락 패키지만 설치 (idempotent, P1)
 
-### v1.8.14 — `prelik-lxc init` 서브커맨드 [phs batch 6]
+### v1.8.14 — `pxi-lxc init` 서브커맨드 [phs batch 6]
 - phs/infra/lxc_init.rs (96줄) → lxc 도메인 흡수
 - `--locale` (기본 ko_KR.UTF-8), `--timezone` (기본 Asia/Seoul), `--packages`
 - 모든 입력 검증: shell injection / path traversal / apt injection 차단
@@ -74,17 +74,17 @@ Semantic Versioning (https://semver.org/)
 ### v1.8.6~v1.8.8 — recovery 도메인 [phs batch 4]
 - v1.8.8: validate_node `..`/`/` 차단, `O_CREAT|O_EXCL` atomic ID, 부분 실패 fail-fast (codex 50차 3 P1)
 - v1.8.7: validate_id, validate_config_filename, 빈 스냅샷 거부 (codex 49차 3 P1)
-- v1.8.6: `prelik-recovery` 신규 (snapshot/restore/audit) + `prelik-host gh-auth`
+- v1.8.6: `pxi-recovery` 신규 (snapshot/restore/audit) + `pxi-host gh-auth`
 
 ### v1.8.4~v1.8.5 — host self-update + 3 deploy 레시피 [phs batch 3]
 - v1.8.5: formbricks compose URL 정확화, self-update `set -eo pipefail`, 검증 timeout exit 1 (codex 47차 3 P1)
-- v1.8.4: prelik-host self-update, uptime-kuma/formbricks/matterbridge 레시피
+- v1.8.4: pxi-host self-update, uptime-kuma/formbricks/matterbridge 레시피
 
 ### v1.8.0~v1.8.3 — net + node 도메인 [phs batch 1-2]
 - v1.8.3: node exec를 cluster canonical IP 직접 조회 + `-F /dev/null` + ProxyCommand=none (codex 45차 P1)
 - v1.8.2: node exec 클러스터 멤버십 검증 + StrictHostKey=yes (codex 44차 P1)
-- v1.8.1: `prelik-node` (list/info/exec) + 8 회귀 테스트
-- v1.8.0: `prelik-net` (interfaces/routes/bridges/dns/ping) + 6 회귀 테스트
+- v1.8.1: `pxi-node` (list/info/exec) + 8 회귀 테스트
+- v1.8.0: `pxi-net` (interfaces/routes/bridges/dns/ping) + 6 회귀 테스트
 
 ---
 
@@ -146,7 +146,7 @@ Semantic Versioning (https://semver.org/)
 ### v1.5.1 — monitor/iso 외부 `which` 바이너리 의존 제거
 - workspace의 `which` crate (PATH 직접 탐색) 사용
 
-### v1.5.0 — `prelik-monitor` (호스트/LXC/VM read-only)
+### v1.5.0 — `pxi-monitor` (호스트/LXC/VM read-only)
 - 18번째 도메인. host (CPU/RAM/disk/온도/uptime), lxc (mem%/disk%), vm, all
 
 ---
@@ -156,7 +156,7 @@ Semantic Versioning (https://semver.org/)
 ### v1.4.1 — iso SMB 비밀번호 로그 노출 차단
 - `storage_add_cifs`를 직접 `Command::status()`로 호출 (실패 시 argv 비공개) — common::run_secret 도입의 모태
 
-### v1.4.0 — `prelik-iso` (Proxmox ISO 스토리지 + 파일)
+### v1.4.0 — `pxi-iso` (Proxmox ISO 스토리지 + 파일)
 - `list`, `storage-add-nfs/cifs`, `download`, `remove` (pvesm 래퍼)
 
 ---
@@ -164,9 +164,9 @@ Semantic Versioning (https://semver.org/)
 ## [1.3.x] — 2026-04-14 (deploy 도메인)
 
 ### v1.3.1 — deploy IP /16 강제 회귀 수정
-- bare IP를 prelik-lxc에 그대로 전달 (`config.network.subnet` 존중)
+- bare IP를 pxi-lxc에 그대로 전달 (`config.network.subnet` 존중)
 
-### v1.3.0 — `prelik-deploy` (TOML 레시피)
+### v1.3.0 — `pxi-deploy` (TOML 레시피)
 - 레시피 기반 LXC 자동 배포 (`service`, `list-recipes`)
 - examples/recipes/nginx.toml
 
@@ -177,7 +177,7 @@ Semantic Versioning (https://semver.org/)
 ### v1.2.0 — backup 도메인 + cloudflare pages-deploy
 (원본 항목 유지, 아래 §[1.2.0] 참조)
 
-### v1.1.0 — `prelik-vm` (Proxmox QEMU)
+### v1.1.0 — `pxi-vm` (Proxmox QEMU)
 - list/status/start/stop/reboot/delete/backup/resize/console
 
 ### v1.0.0 — Phase 2 안정화 + install.prelik.com
@@ -279,7 +279,7 @@ prelik init
 ## [0.13.2] - 2026-04-15
 
 ### Added (Phase 2 완료 — 3/3)
-- **prelik-comfyui**: ComfyUI LXC 설치 관리 (GPU 패스스루 + systemd)
+- **pxi-comfyui**: ComfyUI LXC 설치 관리 (GPU 패스스루 + systemd)
   - gpu-passthrough: /etc/pve/lxc/<vmid>.conf에 NVIDIA device 줄 추가 (멱등)
   - install: git clone + venv + requirements + systemd unit
   - status: systemctl + 포트 확인
@@ -311,7 +311,7 @@ telegram, traefik, workspace
 ## [0.12.0] - 2026-04-15
 
 ### Added (Phase 1 완료 — 3/3)
-- **prelik-workspace**: tmux 기본 설정 + shell alias (~/.bashrc.d/prelik.sh)
+- **pxi-workspace**: tmux 기본 설정 + shell alias (~/.bashrc.d/prelik.sh)
   - tmux-setup: 기본 .tmux.conf (vim 키바인딩, mouse, base-index 1)
   - shell-setup: 편의 alias (ll, g, gs, bat/eza 자동 대체)
   - ~/.bashrc에 `.bashrc.d/*.sh` source 자동 등록
@@ -362,14 +362,14 @@ telegram, traefik, workspace
 ### Fixed / Stability
 - **`manager` placeholder 완전 제거**: 실행해도 "TODO: 구현 예정"만 출력해서
   공유 시 혼란 유발. crate, domain.ncl, registry fallback, release.yml 전부 정리.
-- **install flock 배타 락**: `/var/lib/prelik/.install.lock` 기반 논블로킹
+- **install flock 배타 락**: `/var/lib/pxi/.install.lock` 기반 논블로킹
   flock(LOCK_EX|LOCK_NB). 같은 도메인을 병행 설치해서 바이너리가 덮어써지는
   race condition 차단.
 - **tar 실패 시 부분 설치 정리**: 압축 해제 도중 실패하면 domain 디렉토리
   전체 삭제. 잔재 없음.
 
 ### Removed
-- `prelik-manager` 바이너리 (공식 리스트에서 제거)
+- `pxi-manager` 바이너리 (공식 리스트에서 제거)
 
 ## [0.8.0] - 2026-04-15
 
@@ -418,7 +418,7 @@ telegram, traefik, workspace
 - **P1 install_many short-circuit 철회**: bootstrap 실패가 뒤 도메인의
   바이너리 다운로드를 막을 이유 없음. 각 도메인은 독립적으로 GitHub
   Release에서 내려받으므로 실패 누적만 하고 계속 진행.
-- **P2 ai hook legacy marker 인식**: v0.7.4에서 등록된 `prelik-adv-review-`
+- **P2 ai hook legacy marker 인식**: v0.7.4에서 등록된 `pxi-adv-review-`
   marker 훅이 업그레이드 후 사라지지 않던 문제. retain 필터가 현재 +
   legacy marker 둘 다 제거하도록 보강.
 
@@ -434,7 +434,7 @@ telegram, traefik, workspace
 ### Enhanced
 - **install_many 단락 평가**: `bootstrap` 첫 도메인이 실패하면 의존성 없는
   뒤 도메인은 의미 없으므로 중단하고 남은 목록을 에러 메시지에 표시.
-- **ai hook marker 강화**: `prelik-adv-review-` → `__PRELIK_AI_ADV_REVIEW_HOOK__`
+- **ai hook marker 강화**: `pxi-adv-review-` → `__PRELIK_AI_ADV_REVIEW_HOOK__`
   로 변경. 사용자 자체 훅 커맨드에 오판 가능성 차단.
 
 ## [0.7.4] - 2026-04-15
@@ -463,9 +463,9 @@ telegram, traefik, workspace
 ## [0.7.2] - 2026-04-15
 
 ### Security / Safety
-- `mail postfix-relay`: SASL 패스워드를 `/tmp/prelik-sasl_passwd` 평문으로
+- `mail postfix-relay`: SASL 패스워드를 `/tmp/pxi-sasl_passwd` 평문으로
   잠시 노출하던 경로 제거. mktemp + chmod 600 + `install -m 600 -o root` 패턴.
-- `mail postfix-relay`: 실행 전 `/etc/postfix/main.cf.prelik-<timestamp>`
+- `mail postfix-relay`: 실행 전 `/etc/postfix/main.cf.pxi-<timestamp>`
   자동 백업 (실수 복구용).
 - `cloudflare email-worker-attach-all --dry-run`: 실제 변경 없이 대상 목록 +
   현재 catch-all action 표시. 무심코 모든 도메인 포워딩 덮어쓰는 사고 방지.
@@ -510,21 +510,21 @@ telegram, traefik, workspace
 ## [0.4.0] - 2026-04-15
 
 ### Added
-- `prelik-ai` 도메인 (Claude/Codex + octopus/superpowers/codex-plugin)
+- `pxi-ai` 도메인 (Claude/Codex + octopus/superpowers/codex-plugin)
 - `install.prelik.com` Cloudflare Worker 리다이렉트
 - 공개 설치 URL: `curl install.prelik.com | bash`
 
 ## [0.3.0] - 2026-04-15
 
 ### Added
-- `prelik-traefik`, `prelik-mail`, `prelik-cloudflare`, `prelik-connect`
+- `pxi-traefik`, `pxi-mail`, `pxi-cloudflare`, `pxi-connect`
 - Nickel 스키마 전환 (ncl/domains.ncl)
 - build.rs로 도메인 자동 감지
 
 ## [0.2.0] - 2026-04-15
 
 ### Added
-- `prelik-lxc` 도메인 (Proxmox pct 래퍼)
+- `pxi-lxc` 도메인 (Proxmox pct 래퍼)
 - Nickel runtime export 통합
 - CI: Docker 바이너리 빌드 (x86_64 + aarch64)
 

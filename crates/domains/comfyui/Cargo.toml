@@ -1,13 +1,13 @@
 [package]
-name = "prelik-comfyui"
+name = "pxi-comfyui"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-comfyui"
+name = "pxi-comfyui"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

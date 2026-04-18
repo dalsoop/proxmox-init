@@ -1,14 +1,14 @@
 [package]
-name = "prelik-nas"
+name = "pxi-nas"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-nas"
+name = "pxi-nas"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }

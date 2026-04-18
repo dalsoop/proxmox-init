@@ -1,17 +1,17 @@
-//! prelik-service — 파일 기반 서비스 레지스트리.
+//! pxi-service — 파일 기반 서비스 레지스트리.
 //!
 //! /opt/services/{domain}/{name}/service.toml 유무로 서비스 관리.
 //! Traefik 라우트 자동 생성/삭제.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const SERVICES_DIR: &str = "/opt/services";
 
 #[derive(Parser)]
-#[command(name = "prelik-service", about = "서비스 레지스트리 (파일 기반)")]
+#[command(name = "pxi-service", about = "서비스 레지스트리 (파일 기반)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -25,13 +25,13 @@ enum Cmd {
     Sync,
     /// 서비스 추가 (service.toml 생성 + Traefik 동기화)
     Add {
-        /// 도메인 (예: prelik.com, 50.internal.kr)
+        /// 도메인 (예: pxi.com, 50.internal.kr)
         #[arg(long)]
         domain: String,
         /// 서비스 이름
         #[arg(long)]
         name: String,
-        /// 전체 호스트명 (예: blog.prelik.com)
+        /// 전체 호스트명 (예: blog.pxi.com)
         #[arg(long)]
         host: String,
         /// 백엔드 IP

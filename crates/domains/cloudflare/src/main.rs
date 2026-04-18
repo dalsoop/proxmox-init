@@ -1,16 +1,16 @@
-//! prelik-cloudflare — CF API 래퍼
+//! pxi-cloudflare — CF API 래퍼
 //! - DNS: add/update/upsert/list/delete (audience 기반 proxied 자동)
 //! - Email Routing: status, forward, forward-all, worker-attach
 //! - SSL: install (acme.sh), issue, renew, list, status
 //! - Pages: list, create, domain, delete, deploy
 
 use clap::{Parser, Subcommand, ValueEnum};
-use prelik_core::common;
+use pxi_core::common;
 use serde_json::Value;
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "prelik-cloudflare", about = "Cloudflare DNS + Email Routing + SSL + Pages")]
+#[command(name = "pxi-cloudflare", about = "Cloudflare DNS + Email Routing + SSL + Pages")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -270,7 +270,7 @@ fn creds() -> anyhow::Result<(String, String)> {
     let email = read_host_env("CLOUDFLARE_EMAIL");
     let key = read_host_env("CLOUDFLARE_API_KEY");
     if email.is_empty() || key.is_empty() {
-        anyhow::bail!("/etc/prelik/.env 에 CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요");
+        anyhow::bail!("/etc/pxi/.env 에 CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요");
     }
     Ok((email, key))
 }
@@ -798,7 +798,7 @@ fn ssl_install() -> anyhow::Result<()> {
 fn ssl_issue(cf_email: &str, cf_key: &str, domain: &str, wildcard: bool) -> anyhow::Result<()> {
     println!("=== SSL 발급: {domain} (wildcard: {wildcard}) ===");
     let acme = find_acme_sh().ok_or_else(|| anyhow::anyhow!(
-        "acme.sh 미설치. 설치: prelik-cloudflare ssl-install\n\
+        "acme.sh 미설치. 설치: pxi-cloudflare ssl-install\n\
          확인된 경로: PATH, ~/.acme.sh/, /root/.acme.sh/"
     ))?;
     println!("  acme.sh: {acme}");
@@ -841,7 +841,7 @@ fn ssl_issue(cf_email: &str, cf_key: &str, domain: &str, wildcard: bool) -> anyh
             }
         }
     } else if stderr.contains("already exists") || stdout.contains("Domains not changed") {
-        println!("[ssl] 이미 발급된 인증서 존재. 갱신: prelik-cloudflare ssl-renew --domain {domain}");
+        println!("[ssl] 이미 발급된 인증서 존재. 갱신: pxi-cloudflare ssl-renew --domain {domain}");
     } else {
         anyhow::bail!("acme.sh 발급 실패:\n{stdout}\n{stderr}");
     }
@@ -1035,7 +1035,7 @@ fn pages_deploy(project: &str, directory: &str) -> anyhow::Result<()> {
 // ============================================================
 
 fn doctor() {
-    println!("=== prelik-cloudflare doctor ===");
+    println!("=== pxi-cloudflare doctor ===");
     let email = read_host_env("CLOUDFLARE_EMAIL");
     let key = read_host_env("CLOUDFLARE_API_KEY");
     println!("  CF_EMAIL:   {}", if !email.is_empty() { "✓" } else { "✗" });
@@ -1052,7 +1052,7 @@ fn read_host_env(key: &str) -> String {
             return v;
         }
     }
-    for p in ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"] {
+    for p in ["/etc/pxi/.env", "/etc/proxmox-host-setup/.env"] {
         if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
                 if let Some(v) = line.strip_prefix(&format!("{key}=")) {

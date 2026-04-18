@@ -1,10 +1,10 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use prelik_core::{common, github, os, paths};
+use pxi_core::{common, github, os, paths};
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "prelik",
+    name = "pxi",
     version = env!("PRELIK_GIT_VERSION"),
     about = "Proxmox/LXC 도메인 기반 설치형 CLI",
 )]
@@ -47,12 +47,12 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// prelik 자체 제거 (반드시 docs/uninstall.md 먼저 읽을 것 — 많은 시스템 변경을 남김)
+    /// pxi 자체 제거 (반드시 docs/uninstall.md 먼저 읽을 것 — 많은 시스템 변경을 남김)
     Uninstall {
         /// 실제로 제거. 생략하면 dry-run만 실행.
         #[arg(long)]
         confirm: bool,
-        /// config/recovery/audit 디렉토리까지 삭제 (~/.config/prelik, /etc/prelik, /var/lib/prelik).
+        /// config/recovery/audit 디렉토리까지 삭제 (~/.config/pxi, /etc/pxi, /var/lib/pxi).
         /// .env.vault 같은 암호화된 시크릿 포함 — 복구 불가.
         #[arg(long)]
         purge: bool,
@@ -67,7 +67,7 @@ enum Cmd {
     Doctor,
 }
 
-const REPO: &str = "dalsoop/prelik-init";
+const REPO: &str = "dalsoop/pxi-init";
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -84,7 +84,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Uninstall { confirm, purge } => uninstall(confirm, purge),
         Cmd::Completions { shell } => {
             let mut cmd = Cli::command();
-            clap_complete::generate(shell, &mut cmd, "prelik", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut cmd, "pxi", &mut std::io::stdout());
             Ok(())
         }
         Cmd::Doctor => {
@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn setup() -> anyhow::Result<()> {
-    println!("=== prelik 초기 세팅 ===");
+    println!("=== pxi 초기 세팅 ===");
     let config = paths::config_dir()?;
     let data = paths::data_dir()?;
     let domains = paths::domains_dir()?;
@@ -108,7 +108,7 @@ fn setup() -> anyhow::Result<()> {
     println!("  data:    {}", data.display());
     println!("  domains: {}", domains.display());
     println!("  bin:     {}", bin.display());
-    println!("\n다음 단계: prelik install bootstrap  또는  prelik init (인터랙티브)");
+    println!("\n다음 단계: pxi install bootstrap  또는  pxi init (인터랙티브)");
     Ok(())
 }
 
@@ -116,19 +116,19 @@ fn init() -> anyhow::Result<()> {
     use dialoguer::{Confirm, Input, MultiSelect, Password};
 
     // TTY 선행 체크 — dialoguer는 비-TTY에서 'IO error: not a terminal'로 실패.
-    // prompt 전에 실패시켜야 setup()이 /etc/prelik 등을 만들어놓은 부분 적용 상태를 회피.
-    // 비-TTY면 명확한 안내 메시지로 조기 종료 (비인터랙티브는 'prelik setup' + 'prelik install' 권장).
+    // prompt 전에 실패시켜야 setup()이 /etc/pxi 등을 만들어놓은 부분 적용 상태를 회피.
+    // 비-TTY면 명확한 안내 메시지로 조기 종료 (비인터랙티브는 'pxi setup' + 'pxi install' 권장).
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!(
-            "prelik init은 인터랙티브 전용 (TTY 필요). \n\
+            "pxi init은 인터랙티브 전용 (TTY 필요). \n\
              비인터랙티브 환경에서는 다음을 사용하세요:\n\
-               prelik setup                        # 경로/디렉토리만 생성\n\
-               prelik install bootstrap lxc ...    # 도메인 개별 설치"
+               pxi setup                        # 경로/디렉토리만 생성\n\
+               pxi install bootstrap lxc ...    # 도메인 개별 설치"
         );
     }
 
-    println!("=== prelik 초기 세팅 ===\n");
+    println!("=== pxi 초기 세팅 ===\n");
     setup()?;
 
     let config = paths::config_dir()?;
@@ -189,8 +189,8 @@ fn init() -> anyhow::Result<()> {
         .interact_text()?;
 
     // ─── 4/4 설치할 도메인 선택 ───
-    let reg = prelik_core::registry::Registry::load()?;
-    let avail: Vec<&prelik_core::registry::Domain> = reg.available();
+    let reg = pxi_core::registry::Registry::load()?;
+    let avail: Vec<&pxi_core::registry::Domain> = reg.available();
     let labels: Vec<String> = avail.iter()
         .map(|d| format!("{:<14} {}", d.name, d.description))
         .collect();
@@ -226,7 +226,7 @@ fn init() -> anyhow::Result<()> {
         println!("\n✓ {} 저장 (0600)", env_path.display());
     }
 
-    let mut cfg = String::from("# prelik config — 자동 생성\n\n");
+    let mut cfg = String::from("# pxi config — 자동 생성\n\n");
     if !bridge.is_empty() || !gateway.is_empty() {
         cfg.push_str("[network]\n");
         cfg.push_str(&format!("bridge = \"{bridge}\"\n"));
@@ -243,17 +243,17 @@ fn init() -> anyhow::Result<()> {
         println!("\n설치 시작: {}", selected_names.join(", "));
         install_many(selected_names, None)?;
     } else {
-        println!("\n(도메인 선택 안 함 — 나중에 'prelik install <domain>' 으로 개별 설치)");
+        println!("\n(도메인 선택 안 함 — 나중에 'pxi install <domain>' 으로 개별 설치)");
     }
 
     println!("\n=== 완료 ===");
-    println!("  prelik doctor    # 상태 점검");
-    println!("  prelik available # 전체 도메인 목록");
+    println!("  pxi doctor    # 상태 점검");
+    println!("  pxi available # 전체 도메인 목록");
     Ok(())
 }
 
 fn list_available() -> anyhow::Result<()> {
-    let reg = prelik_core::registry::Registry::load()?;
+    let reg = pxi_core::registry::Registry::load()?;
     println!("사용 가능한 도메인:");
     for d in reg.available() {
         println!("  {:<12} {}", d.name, d.description);
@@ -303,7 +303,7 @@ fn upgrade_all() -> anyhow::Result<()> {
         return Ok(());
     }
     let tag = github::latest_tag(REPO)?;
-    println!("=== prelik upgrade — 설치된 도메인 {}개를 {}로 ===", domains.len(), tag);
+    println!("=== pxi upgrade — 설치된 도메인 {}개를 {}로 ===", domains.len(), tag);
     println!("  대상: {}\n", domains.join(", "));
     // install_many는 개별 실패도 누적해 리포트. upgrade도 동일 정책.
     install_many(domains, None)?;
@@ -337,7 +337,7 @@ fn install_many(mut domains: Vec<String>, preset: Option<&str>) -> anyhow::Resul
         domains = all;
     }
     if domains.is_empty() {
-        anyhow::bail!("설치할 도메인 없음. 예: prelik install bootstrap lxc --preset mail");
+        anyhow::bail!("설치할 도메인 없음. 예: pxi install bootstrap lxc --preset mail");
     }
 
     // 동시 install 차단 — flock으로 프로세스 간 배타.
@@ -391,7 +391,7 @@ fn install(domain: &str) -> anyhow::Result<()> {
     println!("=== {domain} 설치 ===");
     let arch = detect_target()?;
     let tag = github::latest_tag(REPO)?;
-    let asset = format!("prelik-{domain}-{arch}.tar.gz");
+    let asset = format!("pxi-{domain}-{arch}.tar.gz");
     let dest_tar = PathBuf::from("/tmp").join(&asset);
     println!("  버전: {tag}");
     println!("  에셋: {asset}");
@@ -418,7 +418,7 @@ fn install(domain: &str) -> anyhow::Result<()> {
     }
 
     // 기대 바이너리 검증
-    let bin_name = format!("prelik-{domain}");
+    let bin_name = format!("pxi-{domain}");
     let bin_src = dom_dir.join(&bin_name);
     if !bin_src.exists() {
         // 실패 시 받은 디렉토리 정리 (부분 설치 금지)
@@ -462,7 +462,7 @@ fn install(domain: &str) -> anyhow::Result<()> {
 
 fn remove(domain: &str) -> anyhow::Result<()> {
     let dom_dir = paths::domains_dir()?.join(domain);
-    let bin_dst = paths::bin_dir()?.join(format!("prelik-{domain}"));
+    let bin_dst = paths::bin_dir()?.join(format!("pxi-{domain}"));
 
     let mut removed_any = false;
     if dom_dir.exists() {
@@ -482,10 +482,10 @@ fn remove(domain: &str) -> anyhow::Result<()> {
 }
 
 fn run_domain(domain: &str, args: &[String]) -> anyhow::Result<()> {
-    let bin = paths::bin_dir()?.join(format!("prelik-{domain}"));
+    let bin = paths::bin_dir()?.join(format!("pxi-{domain}"));
     if !bin.exists() {
         anyhow::bail!(
-            "도메인 바이너리 없음: {} (prelik install {})",
+            "도메인 바이너리 없음: {} (pxi install {})",
             bin.display(),
             domain
         );
@@ -496,7 +496,7 @@ fn run_domain(domain: &str, args: &[String]) -> anyhow::Result<()> {
 }
 
 fn doctor() {
-    println!("=== prelik doctor ===");
+    println!("=== pxi doctor ===");
     println!("  OS: {:?}", os::Distro::detect());
     println!("  Proxmox: {}", os::is_proxmox());
     println!("  root: {}", paths::is_root());
@@ -516,8 +516,8 @@ fn doctor() {
     }
     println!(
         "  {} dotenvx {}",
-        if prelik_core::dotenvx::is_installed() { "✓" } else { "✗" },
-        if prelik_core::dotenvx::is_installed() { "" } else { "(prelik install bootstrap)" }
+        if pxi_core::dotenvx::is_installed() { "✓" } else { "✗" },
+        if pxi_core::dotenvx::is_installed() { "" } else { "(pxi install bootstrap)" }
     );
     println!(
         "  {} nickel (runtime registry export)",
@@ -535,21 +535,21 @@ fn doctor() {
         Err(_) => return,
     };
     if !domains_dir.exists() {
-        println!("  (prelik setup 필요)");
+        println!("  (pxi setup 필요)");
         return;
     }
     let mut any = false;
     if let Ok(entries) = std::fs::read_dir(&domains_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let bin = bin_dir.join(format!("prelik-{name}"));
+            let bin = bin_dir.join(format!("pxi-{name}"));
             let status = if bin.exists() { "✓" } else { "✗ (바이너리 누락)" };
             println!("  {status} {name}");
             any = true;
         }
     }
     if !any {
-        println!("  (설치된 도메인 없음 — prelik install <domain>)");
+        println!("  (설치된 도메인 없음 — pxi install <domain>)");
     }
 }
 
@@ -565,7 +565,7 @@ fn detect_target() -> anyhow::Result<String> {
 // ========== uninstall ==========
 
 fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
-    println!("=== prelik uninstall ===");
+    println!("=== pxi uninstall ===");
     if !confirm {
         println!("(dry-run — 실제 삭제하려면 --confirm)\n");
     }
@@ -577,16 +577,16 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     }
     let mut bin_targets: Vec<PathBuf> = Vec::new();
     for dir in &bin_dirs {
-        // prelik 본체 + .prelik.version 마커
-        let main_bin = dir.join("prelik");
+        // pxi 본체 + .pxi.version 마커
+        let main_bin = dir.join("pxi");
         if main_bin.exists() { bin_targets.push(main_bin); }
-        let marker = dir.join(".prelik.version");
+        let marker = dir.join(".pxi.version");
         if marker.exists() { bin_targets.push(marker); }
-        // prelik-* 도메인 바이너리
+        // pxi-* 도메인 바이너리
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
                 if let Some(name) = e.file_name().to_str() {
-                    if name.starts_with("prelik-") {
+                    if name.starts_with("pxi-") {
                         bin_targets.push(e.path());
                     }
                 }
@@ -599,12 +599,12 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     let mut purge_dirs: Vec<PathBuf> = Vec::new();
     if purge {
         // 도메인별 sub-binary cache + 사용자/시스템 config + recovery snapshots.
-        // root에선 paths::config_dir() == /etc/prelik이라 중복될 수 있어 canonical 후 dedup.
+        // root에선 paths::config_dir() == /etc/pxi이라 중복될 수 있어 canonical 후 dedup.
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Ok(d) = paths::domains_dir() { candidates.push(d); }
         if let Ok(d) = paths::config_dir()  { candidates.push(d); }
-        candidates.push(PathBuf::from("/etc/prelik"));
-        candidates.push(PathBuf::from("/var/lib/prelik"));
+        candidates.push(PathBuf::from("/etc/pxi"));
+        candidates.push(PathBuf::from("/var/lib/pxi"));
         let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         for p in candidates {
             if !p.exists() { continue; }
@@ -628,7 +628,7 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     println!("\n[건드리지 않는 것]");
     println!("  - LXC/VM 자체 (pct/qm 리소스 — 데이터 유실 방지)");
     println!("  - /etc/fstab의 nas 마운트 항목, /etc/cifs-credentials/*");
-    println!("  - postfix relay 백업 (/etc/postfix/prelik-backup-*/), sasl_passwd, sender_canonical");
+    println!("  - postfix relay 백업 (/etc/postfix/pxi-backup-*/), sasl_passwd, sender_canonical");
     println!("  - traefik 컨테이너 / 라우트 / TLS 인증서");
     println!("  - cloudflare DNS 레코드 / Worker / Pages");
     println!("  - dotenvx로 암호화된 .env.vault (purge에도 별도 위치면 보존)");
@@ -636,7 +636,7 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     println!("\n수동 정리 절차: docs/uninstall.md 참조.\n");
 
     if !confirm {
-        println!("실제 삭제하려면: prelik uninstall --confirm{}",
+        println!("실제 삭제하려면: pxi uninstall --confirm{}",
             if purge { " --purge" } else { "" });
         return Ok(());
     }

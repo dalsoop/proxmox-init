@@ -1,14 +1,14 @@
 [package]
-name = "prelik-telegram"
+name = "pxi-telegram"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-telegram"
+name = "pxi-telegram"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }

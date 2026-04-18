@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use prelik_core::{common, os};
+use pxi_core::{common, os};
 
 #[derive(Parser)]
-#[command(name = "prelik-bootstrap", about = "의존성 개별/일괄 설치·제거 (apt/rust/gh/dotenvx/nickel)")]
+#[command(name = "pxi-bootstrap", about = "의존성 개별/일괄 설치·제거 (apt/rust/gh/dotenvx/nickel)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -69,29 +69,29 @@ impl Tool {
             Self::Nickel => "nickel",
         }
     }
-    /// "prelik이 설치할 수 있는 항목" 카탈로그. 호스트 현재 상태가 아니라 **정적 안내**.
-    /// `prelik_remove_does` = `prelik run bootstrap remove --only X`가 실제 수행하는 것.
-    /// `manual_followup`    = prelik이 자동으로 안 지우는 잔여물 (사용자가 직접 결정).
+    /// "pxi이 설치할 수 있는 항목" 카탈로그. 호스트 현재 상태가 아니라 **정적 안내**.
+    /// `pxi_remove_does` = `pxi run bootstrap remove --only X`가 실제 수행하는 것.
+    /// `manual_followup`    = pxi이 자동으로 안 지우는 잔여물 (사용자가 직접 결정).
     /// `apt_packages`/`uninstall` 필드는 v1.9.7 호환 alias.
     fn manifest_entry(&self) -> serde_json::Value {
         let detected = common::has_cmd(self.check_cmd());
         // 각 도구의 raw 데이터
-        let (static_pkgs, binaries, files, warning, prelik_does, manual): (
+        let (static_pkgs, binaries, files, warning, pxi_does, manual): (
             &[&str], &[&str], &[&str], Option<&str>, &str, &str
         ) = match self {
             Self::Apt => (
                 &["curl", "ca-certificates", "build-essential", "git", "jq"],
                 &[],
                 &[],
-                Some("이 패키지들이 이미 시스템에 있었다면 prelik이 설치한 것이 아닙니다 (idempotent install)."),
+                Some("이 패키지들이 이미 시스템에 있었다면 pxi이 설치한 것이 아닙니다 (idempotent install)."),
                 "sudo apt-get remove -y build-essential",
-                "curl/ca-certificates/git/jq는 시스템 핵심이라 prelik이 자동 제거하지 않음.\n사용자가 명시적으로 prelik 때문에 깔렸다고 확신할 때만 수동 'apt remove'.",
+                "curl/ca-certificates/git/jq는 시스템 핵심이라 pxi이 자동 제거하지 않음.\n사용자가 명시적으로 pxi 때문에 깔렸다고 확신할 때만 수동 'apt remove'.",
             ),
             Self::Rust => (
                 &[],
                 &["~/.cargo/bin/cargo", "~/.cargo/bin/rustc", "~/.cargo/bin/rustup"],
                 &["~/.cargo/", "~/.rustup/"],
-                Some("Rust가 이미 있었다면 prelik이 설치한 게 아닐 수 있음. ~/.cargo/는 다른 cargo install 산출물도 포함."),
+                Some("Rust가 이미 있었다면 pxi이 설치한 게 아닐 수 있음. ~/.cargo/는 다른 cargo install 산출물도 포함."),
                 "rustup self uninstall   # 또는: rm -rf ~/.cargo ~/.rustup",
                 ".bashrc/.zshrc의 'source $HOME/.cargo/env' 라인 수동 제거 필요.",
             ),
@@ -102,13 +102,13 @@ impl Tool {
                 None,
                 // remove_gh()와 정확 일치 (apt-get remove, --purge 아님)
                 "sudo apt-get remove -y gh\nsudo rm -f /etc/apt/sources.list.d/github-cli.list /usr/share/keyrings/githubcli-archive-keyring.gpg",
-                "rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정 (prelik 자동 삭제 안 함)",
+                "rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정 (pxi 자동 삭제 안 함)",
             ),
             Self::Dotenvx => (
                 &["nodejs", "npm"],
-                &["npm -g @dotenvx/dotenvx (prelik 설치 경로)"],
+                &["npm -g @dotenvx/dotenvx (pxi 설치 경로)"],
                 &["~/.npm/", "/usr/lib/node_modules/@dotenvx/dotenvx/"],
-                Some("prelik install이 npm 없으면 nodejs+npm을 같이 깔고 'sudo npm install -g @dotenvx/dotenvx'로 설치."),
+                Some("pxi install이 npm 없으면 nodejs+npm을 같이 깔고 'sudo npm install -g @dotenvx/dotenvx'로 설치."),
                 // remove_dotenvx()와 정확 일치 (npm uninstall만)
                 "sudo npm uninstall -g @dotenvx/dotenvx",
                 "nodejs/npm은 다른 도구가 쓸 수 있어 자동 제거 안 함.\n수동 설치한 /usr/local/bin/dotenvx가 있다면 별도 'sudo rm -f /usr/local/bin/dotenvx'.\n.env.keys / .env.vault는 프로젝트별 별도 관리 (자동 삭제 금지).",
@@ -120,7 +120,7 @@ impl Tool {
                 Some("GitHub 다운로드 실패 시 'cargo install nickel-lang-cli'로 폴백됨. 두 경로 모두 확인 필요."),
                 // remove_nickel()와 정확 일치 (which 결과로 분기)
                 "# remove_nickel()는 'which nickel' 결과로 분기:\n#   /usr/local/bin/nickel  → sudo rm -f /usr/local/bin/nickel\n#   ~/.cargo/bin/nickel    → cargo uninstall nickel-lang-cli (실패 시 rm)\n#   기타                   → 수동 제거 안내",
-                "두 경로 모두에 nickel이 있을 수 있음 — 'prelik run bootstrap remove --only nickel'은\n현재 PATH가 가리키는 첫 nickel만 제거. 나머지 경로는 직접 확인.",
+                "두 경로 모두에 nickel이 있을 수 있음 — 'pxi run bootstrap remove --only nickel'은\n현재 PATH가 가리키는 첫 nickel만 제거. 나머지 경로는 직접 확인.",
             ),
         };
         serde_json::json!({
@@ -131,7 +131,7 @@ impl Tool {
             "files": files,
             "detected_on_host": detected,
             "warning": warning,
-            "prelik_remove_does": prelik_does,
+            "pxi_remove_does": pxi_does,
             "manual_followup": manual,
             // ⚠ v1.9.7 alias 제거 — 의미 변경(dotenvx의 apt_packages가 [] → ["nodejs","npm"])이라
             // 같은 키로 호환 보장 불가. v1.9.7 클라이언트는 v1.9.10+로 업그레이드 필요.
@@ -169,8 +169,8 @@ fn manifest(tools: &[Tool], json: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     println!("=== bootstrap manifest ===");
-    println!("⚠ 정적 카탈로그 — prelik이 깐 것인지 호스트의 다른 출처인지 구분하지 않음.");
-    println!("  detected=true는 'PATH에 명령이 있다'는 뜻일 뿐 prelik 출처 보장 아님.\n");
+    println!("⚠ 정적 카탈로그 — pxi이 깐 것인지 호스트의 다른 출처인지 구분하지 않음.");
+    println!("  detected=true는 'PATH에 명령이 있다'는 뜻일 뿐 pxi 출처 보장 아님.\n");
     for (t, e) in tools.iter().zip(&entries) {
         println!("[{}] (detected={})", t.name(), e["detected_on_host"].as_bool().unwrap_or(false));
         if let Some(arr) = e["static_install_packages"].as_array() {
@@ -194,12 +194,12 @@ fn manifest(tools: &[Tool], json: bool) -> anyhow::Result<()> {
         if let Some(w) = e["warning"].as_str() {
             println!("  ⚠ {w}");
         }
-        if let Some(s) = e["prelik_remove_does"].as_str() {
-            println!("  prelik remove --only {} 이 실제로 하는 것:", t.name());
+        if let Some(s) = e["pxi_remove_does"].as_str() {
+            println!("  pxi remove --only {} 이 실제로 하는 것:", t.name());
             for line in s.lines() { println!("    {line}"); }
         }
         if let Some(s) = e["manual_followup"].as_str() {
-            println!("  사용자 수동 후속 정리 (prelik이 자동 안 함):");
+            println!("  사용자 수동 후속 정리 (pxi이 자동 안 함):");
             for line in s.lines() { println!("    {line}"); }
         }
         println!();
@@ -208,7 +208,7 @@ fn manifest(tools: &[Tool], json: bool) -> anyhow::Result<()> {
 }
 
 fn install_tools(tools: &[Tool]) -> anyhow::Result<()> {
-    println!("=== prelik bootstrap install ===");
+    println!("=== pxi bootstrap install ===");
     println!("  distro: {:?}", os::Distro::detect());
     println!("  대상: {}", tools.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
 
@@ -234,7 +234,7 @@ fn install_tools(tools: &[Tool]) -> anyhow::Result<()> {
 }
 
 fn remove_tools(tools: &[Tool]) -> anyhow::Result<()> {
-    println!("=== prelik bootstrap remove ===");
+    println!("=== pxi bootstrap remove ===");
     println!("  대상: {}", tools.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
 
     for t in tools {
@@ -257,8 +257,8 @@ fn list() {
         let status = if common::has_cmd(t.check_cmd()) { "✓" } else { "✗" };
         println!("  {status} {}", t.name());
     }
-    println!("\n사용: prelik run bootstrap install --only rust,nickel");
-    println!("      prelik run bootstrap remove  --only nickel");
+    println!("\n사용: pxi run bootstrap install --only rust,nickel");
+    println!("      pxi run bootstrap remove  --only nickel");
 }
 
 // ============ install ============

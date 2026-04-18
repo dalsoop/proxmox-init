@@ -1,11 +1,11 @@
-//! prelik-iso — Proxmox ISO 스토리지 + ISO 파일 관리 (pvesm 래퍼).
+//! pxi-iso — Proxmox ISO 스토리지 + ISO 파일 관리 (pvesm 래퍼).
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::Serialize;
 
 #[derive(Parser)]
-#[command(name = "prelik-iso", about = "Proxmox ISO 스토리지 관리")]
+#[command(name = "pxi-iso", about = "Proxmox ISO 스토리지 관리")]
 struct Cli {
     /// list를 JSON으로 출력 (자동화/CI 친화)
     #[arg(long, global = true)]
@@ -123,11 +123,11 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn doctor() -> anyhow::Result<()> {
-    println!("=== prelik-iso doctor ===");
+    println!("=== pxi-iso doctor ===");
     let pvesm = which("pvesm");
     println!("  pvesm     : {}", if pvesm { "✓" } else { "✗ (Proxmox 호스트 필요)" });
     if !pvesm {
-        println!("\n참고: prelik-iso는 Proxmox VE 호스트에서만 동작합니다.");
+        println!("\n참고: pxi-iso는 Proxmox VE 호스트에서만 동작합니다.");
     }
     // 다른 도메인의 doctor와 일관성: 누락은 보고만 하고 정상 종료 (CI smoke 호환)
     Ok(())

@@ -1,13 +1,13 @@
 [package]
-name = "prelik-connect"
+name = "pxi-connect"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-connect"
+name = "pxi-connect"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

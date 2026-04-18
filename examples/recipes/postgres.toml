@@ -10,7 +10,7 @@ disk = "16"
 [install]
 packages = ["postgresql", "postgresql-contrib"]
 
-# 환경변수로 오버라이드 가능: prelik run deploy service ... --env DB_NAME=... --env DB_USER=...
+# 환경변수로 오버라이드 가능: pxi run deploy service ... --env DB_NAME=... --env DB_USER=...
 # 미설정 시 아래 기본값.
 
 [[install.steps]]

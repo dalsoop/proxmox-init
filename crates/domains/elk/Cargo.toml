@@ -1,13 +1,13 @@
 [package]
-name = "prelik-elk"
+name = "pxi-elk"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-elk"
+name = "pxi-elk"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

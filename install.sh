@@ -5,7 +5,7 @@
 #   PRELIK_VERSION  특정 버전 핀 (예: v1.5.5). 미지정 시 latest.
 #   PRELIK_FORCE    1 이면 같은 버전이어도 재설치.
 set -euo pipefail
-REPO="dalsoop/prelik-init"
+REPO="dalsoop/pxi-init"
 
 # ---------- BIN_DIR 결정 + 검증 ----------
 if [ -n "${PRELIK_BIN_DIR:-}" ]; then
@@ -83,7 +83,7 @@ if [ -x "$BIN_DIR/prelik" ] && [ -f "$MARKER" ] && [ -z "${PRELIK_FORCE:-}" ]; t
 fi
 
 # ---------- 다운로드 → atomic install ----------
-ASSET="prelik-${TARGET}.tar.gz"
+ASSET="pxi-${TARGET}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

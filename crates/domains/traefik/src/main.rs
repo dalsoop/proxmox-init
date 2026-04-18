@@ -1,16 +1,16 @@
-//! prelik-traefik -- Traefik v3 관리.
+//! pxi-traefik -- Traefik v3 관리.
 //! compose + env_file 기반 (phs의 recreate 패턴 이식).
 //! 클러스터 멀티노드 지원 (SSH 원격 실행).
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use std::collections::HashSet;
 use std::fs;
 use std::process::Command;
 use std::{thread, time::Duration};
 
 #[derive(Parser)]
-#[command(name = "prelik-traefik", about = "Traefik 리버스 프록시 관리")]
+#[command(name = "pxi-traefik", about = "Traefik 리버스 프록시 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -240,7 +240,7 @@ fn lxc_exec_sh_on(node: Option<&str>, vmid: &str, cmd: &str) -> String {
 }
 
 fn read_host_env(key: &str) -> String {
-    let paths = ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"];
+    let paths = ["/etc/pxi/.env", "/etc/proxmox-host-setup/.env"];
     for p in paths {
         if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
@@ -261,7 +261,7 @@ fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) ->
     let local = local_node_name();
     let is_local = node.is_none() || node == Some(&local);
 
-    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim();
     let tmp_path = std::path::PathBuf::from(tmp);
     struct Cleanup<'a>(&'a std::path::Path);
@@ -276,7 +276,7 @@ fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) ->
     } else {
         let n = node.unwrap();
         let node_ip = node_ip_from_name(n);
-        let remote_tmp = format!("/tmp/prelik-traefik-remote-{}", path.replace('/', "_"));
+        let remote_tmp = format!("/tmp/pxi-traefik-remote-{}", path.replace('/', "_"));
         let _ = Command::new("scp")
             .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", tmp, &format!("root@{node_ip}:{remote_tmp}")])
             .status();
@@ -309,13 +309,13 @@ fn routes_file_path(node: &str) -> std::path::PathBuf {
     } else {
         format!("traefik-routes-{node}.json")
     };
-    // Check /var/lib/prelik first, then /etc/prelik
-    for dir in ["/var/lib/prelik", "/etc/prelik"] {
+    // Check /var/lib/pxi first, then /etc/pxi
+    for dir in ["/var/lib/pxi", "/etc/pxi"] {
         let p = std::path::PathBuf::from(dir).join(&filename);
         if p.exists() { return p; }
     }
-    // Default to /var/lib/prelik
-    let dir = std::path::PathBuf::from("/var/lib/prelik");
+    // Default to /var/lib/pxi
+    let dir = std::path::PathBuf::from("/var/lib/pxi");
     let _ = fs::create_dir_all(&dir);
     dir.join(filename)
 }
@@ -339,7 +339,7 @@ fn save_routes_for_node(node: &str, routes: &[Route]) {
 
 fn list_route_nodes() -> Vec<String> {
     let mut nodes = vec![];
-    for dir in ["/var/lib/prelik", "/etc/prelik"] {
+    for dir in ["/var/lib/pxi", "/etc/pxi"] {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -490,11 +490,11 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
 
     // 3. DNS
     println!("[3/4] DNS 레코드...");
-    println!("  수동 등록: prelik-dns add --domain {domain} --type A --name <subdomain> --content {ip}");
+    println!("  수동 등록: pxi-dns add --domain {domain} --type A --name <subdomain> --content {ip}");
 
     // 4. SSL
     println!("[4/4] SSL 인증서...");
-    println!("  수동 발급: prelik-ssl issue --domain {domain}");
+    println!("  수동 발급: pxi-ssl issue --domain {domain}");
 
     println!("\n=== Traefik 세팅 완료 ===");
     println!("  LXC: {vmid}");
@@ -518,7 +518,7 @@ fn find_template(prefix: &str) -> String {
 
 fn install_traefik_binary_remote(node: &str, vmid: &str) {
     let traefik_url = "https://github.com/traefik/traefik/releases/download/v3.4.0/traefik_v3.4.0_linux_amd64.tar.gz";
-    let host_binary = "/tmp/prelik-traefik-binary";
+    let host_binary = "/tmp/pxi-traefik-binary";
     let node_ip = node_ip_from_name(node);
 
     if !std::path::Path::new(host_binary).exists() {
@@ -587,7 +587,7 @@ fn recreate(vmid: &str) -> anyhow::Result<()> {
     let cf_email = read_host_env("CLOUDFLARE_EMAIL");
     let cf_key = read_host_env("CLOUDFLARE_API_KEY");
     if cf_email.is_empty() || cf_key.is_empty() {
-        anyhow::bail!("/etc/prelik/.env 에 CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요");
+        anyhow::bail!("/etc/pxi/.env 에 CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요");
     }
 
     let env_content = format!(
@@ -802,7 +802,7 @@ fn drift_check(node: Option<&str>, fix: bool) {
     }
 
     if !fix {
-        println!("\n  자동 정리: prelik-traefik drift --fix");
+        println!("\n  자동 정리: pxi-traefik drift --fix");
         return;
     }
 
@@ -892,8 +892,8 @@ fn cert_recheck(domain: &str, retry_after_utc: &str, timeout_sec: u64) {
     println!("[traefik] 지정 시각 이후 재실행하세요:");
     let local_traefik = find_traefik_vmid_on(None);
     let hint = if local_traefik.is_empty() { "100".to_string() } else { local_traefik };
-    println!("  prelik-traefik cloudflare-sync --vmid {hint}");
-    println!("  prelik-traefik cert-verify --domain {domain} --timeout-sec {timeout_sec}");
+    println!("  pxi-traefik cloudflare-sync --vmid {hint}");
+    println!("  pxi-traefik cert-verify --domain {domain} --timeout-sec {timeout_sec}");
 }
 
 // =============================================================================
@@ -918,7 +918,7 @@ fn cloudflare_sync(vmid: &str) -> anyhow::Result<()> {
         .unwrap_or_else(|| read_host_env("CLOUDFLARE_EMAIL"));
 
     if cf_key.is_empty() || cf_email.is_empty() {
-        anyhow::bail!("CLOUDFLARE_API_KEY / CLOUDFLARE_EMAIL 미설정 (환경변수 또는 /etc/prelik/.env)");
+        anyhow::bail!("CLOUDFLARE_API_KEY / CLOUDFLARE_EMAIL 미설정 (환경변수 또는 /etc/pxi/.env)");
     }
 
     let env_content = format!(
@@ -963,11 +963,11 @@ fi"#
 // =============================================================================
 
 fn doctor() {
-    println!("=== prelik-traefik doctor ===");
+    println!("=== pxi-traefik doctor ===");
     println!("  pct:        {}", if common::has_cmd("pct") { "ok" } else { "missing" });
     let email = read_host_env("CLOUDFLARE_EMAIL");
     let key = read_host_env("CLOUDFLARE_API_KEY");
-    println!("  CF_EMAIL:   {}", if !email.is_empty() { "ok" } else { "missing (/etc/prelik/.env)" });
+    println!("  CF_EMAIL:   {}", if !email.is_empty() { "ok" } else { "missing (/etc/pxi/.env)" });
     println!("  CF_API_KEY: {}", if !key.is_empty() { "ok" } else { "missing" });
     let local_traefik = find_traefik_vmid_on(None);
     println!("  traefik:    {}", if !local_traefik.is_empty() { format!("ok (VMID {})", local_traefik) } else { "not found".to_string() });

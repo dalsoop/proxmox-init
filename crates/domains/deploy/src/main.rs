@@ -1,19 +1,19 @@
-//! prelik-deploy — 레시피 기반 LXC 자동 배포.
+//! pxi-deploy — 레시피 기반 LXC 자동 배포.
 //! 1. LXC 생성 (lxc 도메인 호출)
 //! 2. 패키지 설치
 //! 3. 커스텀 스크립트 순차 실행
 //!
-//! 레시피는 TOML. /etc/prelik/recipes/ 또는 --recipe <파일경로>.
+//! 레시피는 TOML. /etc/pxi/recipes/ 또는 --recipe <파일경로>.
 
 use clap::{Parser, Subcommand};
-use prelik_core::{common, helpers, paths};
+use pxi_core::{common, helpers, paths};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "prelik-deploy", about = "레시피 기반 LXC 자동 배포")]
+#[command(name = "pxi-deploy", about = "레시피 기반 LXC 자동 배포")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -307,10 +307,10 @@ fn recipe_path(name_or_path: &str) -> anyhow::Result<PathBuf> {
         }
         return Ok(p);
     }
-    // 이름만 주어졌으면 /etc/prelik/recipes/ 또는 ~/.config/prelik/recipes/
+    // 이름만 주어졌으면 /etc/pxi/recipes/ 또는 ~/.config/pxi/recipes/
     let search = [
         paths::config_dir()?.join("recipes").join(format!("{name_or_path}.toml")),
-        PathBuf::from("/etc/prelik/recipes").join(format!("{name_or_path}.toml")),
+        PathBuf::from("/etc/pxi/recipes").join(format!("{name_or_path}.toml")),
     ];
     for p in search.iter() {
         if p.exists() {
@@ -318,7 +318,7 @@ fn recipe_path(name_or_path: &str) -> anyhow::Result<PathBuf> {
         }
     }
     anyhow::bail!(
-        "레시피 '{name_or_path}' 못 찾음. 확인 경로:\n  {}\n  /etc/prelik/recipes/",
+        "레시피 '{name_or_path}' 못 찾음. 확인 경로:\n  {}\n  /etc/pxi/recipes/",
         paths::config_dir().map(|p| p.join("recipes").display().to_string()).unwrap_or_default()
     );
 }
@@ -340,10 +340,10 @@ fn service(
     let final_memory = memory.unwrap_or(&recipe.lxc.memory);
     let final_disk = disk.unwrap_or(&recipe.lxc.disk);
 
-    // [1/3] LXC 생성 — prelik-lxc 호출
+    // [1/3] LXC 생성 — pxi-lxc 호출
     // IP는 bare 또는 CIDR 그대로 전달. lxc 도메인이 config.network.subnet 참조하여
     // 최종 CIDR 결정 (deploy에서 /16 강제하면 다른 서브넷 환경 깨짐).
-    println!("\n[1/3] LXC 생성 → prelik-lxc create");
+    println!("\n[1/3] LXC 생성 → pxi-lxc create");
     let args: Vec<&str> = vec![
         "create",
         "--vmid", vmid,
@@ -353,7 +353,7 @@ fn service(
         "--memory", final_memory,
         "--disk", final_disk,
     ];
-    common::run("prelik-lxc", &args)?;
+    common::run("pxi-lxc", &args)?;
 
     // [2/3] 패키지 설치
     if !recipe.install.packages.is_empty() {
@@ -383,13 +383,13 @@ fn service(
 
 fn list_recipes() {
     println!("=== 사용 가능한 레시피 ===");
-    // root 실행 시 config_dir() == /etc/prelik이라 /etc/prelik/recipes가 중복.
+    // root 실행 시 config_dir() == /etc/pxi이라 /etc/pxi/recipes가 중복.
     // canonicalize 기반 dedup으로 중복 출력 차단.
     let mut candidates: Vec<PathBuf> = vec![];
     if let Ok(p) = paths::config_dir() {
         candidates.push(p.join("recipes"));
     }
-    candidates.push(PathBuf::from("/etc/prelik/recipes"));
+    candidates.push(PathBuf::from("/etc/pxi/recipes"));
     let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     let mut dirs: Vec<PathBuf> = Vec::new();
     for p in candidates {
@@ -421,14 +421,14 @@ fn list_recipes() {
         }
     }
     if count == 0 {
-        println!("\n(레시피 없음 — /etc/prelik/recipes/ 또는 ~/.config/prelik/recipes/ 에 .toml 파일)");
+        println!("\n(레시피 없음 — /etc/pxi/recipes/ 또는 ~/.config/pxi/recipes/ 에 .toml 파일)");
     }
 }
 
 fn doctor() {
-    println!("=== prelik-deploy doctor ===");
+    println!("=== pxi-deploy doctor ===");
     println!("  pct:        {}", if common::has_cmd("pct") { "✓" } else { "✗" });
-    println!("  prelik-lxc: {}", if common::has_cmd("prelik-lxc") { "✓" } else { "✗ (prelik install lxc)" });
+    println!("  pxi-lxc: {}", if common::has_cmd("pxi-lxc") { "✓" } else { "✗ (pxi install lxc)" });
     let config = paths::config_dir().ok();
     if let Some(c) = config {
         let recipes = c.join("recipes");
@@ -500,10 +500,10 @@ fn require_env(key: &str) -> String {
 fn preferred_control_plane_path(relative: &str, fallback: &str) -> PathBuf {
     let paths = [
         PathBuf::from("/root/control-plane").join(relative),
-        PathBuf::from("/etc/prelik").join(fallback),
+        PathBuf::from("/etc/pxi").join(fallback),
         PathBuf::from("/etc/proxmox-host-setup").join(fallback),
     ];
-    paths.into_iter().find(|p| p.exists()).unwrap_or_else(|| PathBuf::from("/etc/prelik").join(fallback))
+    paths.into_iter().find(|p| p.exists()).unwrap_or_else(|| PathBuf::from("/etc/pxi").join(fallback))
 }
 
 fn domain_targets_path() -> PathBuf {
@@ -541,7 +541,7 @@ fn ao_setup(vmid: &str, hostname: &str, storage: &str, disk: &str, cores: &str, 
 
     // 1. LXC 생성
     println!("[ao] LXC {vmid} 생성 중...");
-    common::run("prelik-lxc", &[
+    common::run("pxi-lxc", &[
         "create", "--vmid", vmid, "--hostname", hostname,
         "--ip", &format!("{ip}/16"), "--cores", cores, "--memory", memory,
         "--disk", disk, "--storage", storage,
@@ -583,7 +583,7 @@ fn ao_setup(vmid: &str, hostname: &str, storage: &str, disk: &str, cores: &str, 
     }
 
     println!("\n=== agent-orchestrator LXC {vmid} 설치 완료 ===");
-    println!("  접속: prelik-lxc enter {vmid}");
+    println!("  접속: pxi-lxc enter {vmid}");
     println!("  대시보드: http://{ip}:3000");
     Ok(())
 }
@@ -603,8 +603,8 @@ fn homelable_domain(vmid: Option<&str>, domain: &str) -> anyhow::Result<()> {
     println!("[homelable] vmid: {vmid}, domain: {domain}, backend: http://{backend_ip}:80");
 
     // Add traefik route
-    if common::has_cmd("prelik-lxc") {
-        let _ = common::run("prelik-lxc", &["route-audit", "--fix"]);
+    if common::has_cmd("pxi-lxc") {
+        let _ = common::run("pxi-lxc", &["route-audit", "--fix"]);
     }
 
     println!("\n=== Homelable 도메인 연결 완료 ===");
@@ -661,7 +661,7 @@ fn homelable_sync_enable(vmid: Option<&str>, interval_sec: u32) -> anyhow::Resul
     let vmid = vmid.map(String::from).unwrap_or_else(|| require_env("HOMELABLE_VMID"));
 
     let service_unit = format!(
-        "[Unit]\nDescription=phs homelable seed sync\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/bin/bash -lc 'prelik-deploy homelable-seed --vmid {vmid}'\n"
+        "[Unit]\nDescription=phs homelable seed sync\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/bin/bash -lc 'pxi-deploy homelable-seed --vmid {vmid}'\n"
     );
     let timer_unit = format!(
         "[Unit]\nDescription=Run homelable seed sync every {interval_sec}s\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec={interval_sec}s\nUnit=phs-homelable-sync.service\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
@@ -740,14 +740,14 @@ table{width:100%;border-collapse:collapse;margin:12px 0}
 th,td{border-bottom:1px solid #eee;padding:8px;text-align:left;font-size:14px}</style>
 </head><body>
 <h1>infra-control</h1>
-<p>Managed by prelik-deploy infra-control-page-refresh</p>
+<p>Managed by pxi-deploy infra-control-page-refresh</p>
 <script>
 fetch('/infra-dashboard.json').then(r=>r.json()).then(d=>{
   document.body.innerHTML += '<pre>' + JSON.stringify(d.summary||{},null,2) + '</pre>';
 }).catch(()=>{});
 </script></body></html>"#;
 
-    let temp = "/tmp/prelik-infra-control-index.html";
+    let temp = "/tmp/pxi-infra-control-index.html";
     std::fs::write(temp, html)?;
     let _ = Command::new("pct").args(["push", &vmid, temp, "/var/www/infra-control/index.html"]).output();
     let _ = std::fs::remove_file(temp);
@@ -856,7 +856,7 @@ fn omarchy_setup(
         if node != local {
             println!("[omarchy] 원격 노드 {node} 에서 실행합니다.");
             let remote_cmd = format!(
-                "prelik-deploy omarchy-setup --vmid {vmid} --ip {ip} --user {user} --password {password} \
+                "pxi-deploy omarchy-setup --vmid {vmid} --ip {ip} --user {user} --password {password} \
                  --hostname {hostname} --cores {cores} --memory {memory} --disk {disk} --storage {storage} --iso-storage {iso_storage}"
             );
             let status = Command::new("ssh")
@@ -974,7 +974,7 @@ fn mail_setup(vmid: &str, domain: &str, email: &str, password: &str) -> anyhow::
         std::thread::sleep(std::time::Duration::from_secs(3));
     } else {
         let ip = vmid_to_ip(vmid);
-        common::run("prelik-lxc", &[
+        common::run("pxi-lxc", &[
             "create", "--vmid", vmid, "--hostname", "maddy",
             "--ip", &format!("{ip}/16"), "--cores", "1", "--memory", "512", "--disk", "4",
         ])?;
@@ -1004,7 +1004,7 @@ fn mail_setup(vmid: &str, domain: &str, email: &str, password: &str) -> anyhow::
     let conf = format!(
         "$(hostname) = {hostname}\n$(primary_domain) = {domain}\n$(local_domains) = $(primary_domain)\ntls off\n"
     );
-    let temp = "/tmp/prelik-maddy.conf";
+    let temp = "/tmp/pxi-maddy.conf";
     std::fs::write(temp, &conf)?;
     let _ = Command::new("pct").args(["push", vmid, temp, "/etc/maddy/maddy.conf"]).output();
     let _ = std::fs::remove_file(temp);

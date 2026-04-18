@@ -1,4 +1,4 @@
-name = "prelik-install-redirect"
+name = "pxi-install-redirect"
 main = "install-redirect.js"
 compatibility_date = "2026-04-15"
 

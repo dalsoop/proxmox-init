@@ -1,13 +1,13 @@
 [package]
-name = "prelik-wordpress"
+name = "pxi-wordpress"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-wordpress"
+name = "pxi-wordpress"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

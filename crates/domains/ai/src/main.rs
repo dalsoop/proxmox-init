@@ -1,8 +1,8 @@
-//! prelik-ai — AI agent management for Proxmox (Claude/Codex/Gemini/OpenClaw).
+//! pxi-ai — AI agent management for Proxmox (Claude/Codex/Gemini/OpenClaw).
 //! Ported from proxmox-host-setup `ai` subcommands.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use prelik_core::common;
+use pxi_core::common;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -136,7 +136,7 @@ fn lxc_exec_on(node: Option<&str>, vmid: &str, args: &[&str]) -> (bool, String) 
 fn ensure_lxc_running(vmid: &str) {
     let out = cmd_output("pct", &["status", vmid]);
     if !out.contains("running") {
-        eprintln!("[prelik-ai] LXC {vmid} 실행 중 아님. 시작 중...");
+        eprintln!("[pxi-ai] LXC {vmid} 실행 중 아님. 시작 중...");
         let _ = Command::new("pct").args(["start", vmid]).status();
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
@@ -262,7 +262,7 @@ fn base64_encode(input: &str) -> String {
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "prelik-ai", about = "AI agent management for Proxmox")]
+#[command(name = "pxi-ai", about = "AI agent management for Proxmox")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -761,7 +761,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Existing commands (kept from original prelik-ai)
+// Existing commands (kept from original pxi-ai)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn run_on(vmid: Option<&str>, script: &str) -> anyhow::Result<String> {
@@ -790,7 +790,7 @@ fn has_on(vmid: Option<&str>, bin: &str) -> bool {
 fn install_cli(vmid: Option<&str>) -> anyhow::Result<()> {
     println!("=== AI CLI 설치 ===");
     if !has_on(vmid, "npm") {
-        anyhow::bail!("npm 없음 — prelik install bootstrap 먼저");
+        anyhow::bail!("npm 없음 — pxi install bootstrap 먼저");
     }
     let needs_sudo = vmid.is_none() && unsafe { libc_geteuid() } != 0;
     let sudo = if needs_sudo { "sudo " } else { "" };
@@ -876,7 +876,7 @@ fn codex_plugin_install(vmid: Option<&str>, fork: bool) -> anyhow::Result<()> {
         anyhow::bail!("claude CLI 없음");
     }
     if !has_on(vmid, "codex") {
-        anyhow::bail!("codex CLI 없음 — prelik-ai install 먼저");
+        anyhow::bail!("codex CLI 없음 — pxi-ai install 먼저");
     }
     let marketplace = if fork {
         "parthpm/codex-plugin-cc"
@@ -892,7 +892,7 @@ fn codex_plugin_install(vmid: Option<&str>, fork: bool) -> anyhow::Result<()> {
     println!("✓ codex-plugin 설치 완료");
     println!("  다음: claude 세션에서 /codex:setup (OpenAI 인증)");
     if fork {
-        println!("  훅 활성화: prelik run ai adversarial-review-hook");
+        println!("  훅 활성화: pxi run ai adversarial-review-hook");
     }
     Ok(())
 }
@@ -916,7 +916,7 @@ fn adversarial_review_hook(enable: bool) -> anyhow::Result<()> {
     let obj = v.as_object_mut().unwrap();
 
     const PRELIK_MARKER: &str = "__PRELIK_AI_ADV_REVIEW_HOOK__";
-    const LEGACY_MARKER: &str = "prelik-adv-review-";
+    const LEGACY_MARKER: &str = "pxi-adv-review-";
 
     let hook_cmd = format!(
         "F=/tmp/.{PRELIK_MARKER}$(echo $CLAUDE_SESSION_ID | md5sum | cut -c1-8); if [ -f $F ]; then exit 0; fi; touch $F; cat <<EOF\n{{\"decision\":\"block\",\"reason\":\"지금까지의 작업을 Codex로 어드버서리얼 리뷰하세요. 실행: /codex:adversarial-review\"}}\nEOF"
@@ -948,16 +948,16 @@ fn adversarial_review_hook(enable: bool) -> anyhow::Result<()> {
     });
 
     if enable {
-        let prelik_entry = serde_json::json!({
+        let pxi_entry = serde_json::json!({
             "hooks": [{
                 "type": "command",
                 "command": hook_cmd,
             }]
         });
-        stop_arr.push(prelik_entry);
+        stop_arr.push(pxi_entry);
         println!("  Stop 훅 등록 (기존 훅 {} 개 유지)", stop_arr.len() - 1);
     } else {
-        println!("  prelik Stop 훅만 제거 (기존 {} 개 유지)", stop_arr.len());
+        println!("  pxi Stop 훅만 제거 (기존 {} 개 유지)", stop_arr.len());
     }
 
     if stop_arr.is_empty() {
@@ -973,7 +973,7 @@ fn adversarial_review_hook(enable: bool) -> anyhow::Result<()> {
 }
 
 fn doctor() {
-    println!("=== prelik-ai doctor ===");
+    println!("=== pxi-ai doctor ===");
     println!(
         "  npm:    {}",
         if common::has_cmd("npm") { "✓" } else { "✗" }
@@ -1213,7 +1213,7 @@ fn mount_remote(node: &str, vmid: &str, agents: &[&AgentInfo]) {
         }
 
         let archive = format!(
-            "/tmp/prelik-aimount-{}-{}.tar.gz",
+            "/tmp/pxi-aimount-{}-{}.tar.gz",
             agent.dir.replace('.', ""),
             std::process::id()
         );
@@ -2256,10 +2256,10 @@ fn comfyui_sync_watch(node: &str, action: &str) {
     match action {
         "install" => {
             let svc = format!(
-                "[Unit]\nDescription=prelik ComfyUI sync ({node})\nAfter=pve-cluster.service\n\n\
+                "[Unit]\nDescription=pxi ComfyUI sync ({node})\nAfter=pve-cluster.service\n\n\
 [Service]\nType=oneshot\nExecStart=/usr/local/bin/proxmox-host-setup ai comfyui-setup --node {node}\n"
             );
-            let timer = "[Unit]\nDescription=prelik ComfyUI sync timer\n\n\
+            let timer = "[Unit]\nDescription=pxi ComfyUI sync timer\n\n\
 [Timer]\nOnBootSec=5min\nOnUnitActiveSec=1h\nUnit=phs-comfyui-sync.service\n\n\
 [Install]\nWantedBy=timers.target\n";
             fs::write(
@@ -2323,7 +2323,7 @@ fn comfyui_mcp_setup(node: &str, vmid: Option<&str>) {
         &["bash", "-c", "test -x /usr/local/bin/claude && echo OK"],
     );
     if !ok {
-        eprintln!("  Claude Code 미설치. 먼저: prelik-ai mount --vmid {target_vmid}");
+        eprintln!("  Claude Code 미설치. 먼저: pxi-ai mount --vmid {target_vmid}");
         std::process::exit(1);
     }
 
@@ -2496,7 +2496,7 @@ fn comfyui_cleanup(node: &str, vmid: Option<&str>, apply: bool) {
     println!("\n  {count}개 파일, {:.1} GB", total as f64 / 1e9);
 
     if !apply {
-        println!("\n  실제 삭제: prelik-ai comfyui-cleanup --node {node} --apply");
+        println!("\n  실제 삭제: pxi-ai comfyui-cleanup --node {node} --apply");
     }
 }
 
@@ -2523,7 +2523,7 @@ fn cluster_files_setup() {
     println!("  filebrowser 설치됨");
 
     // Sync timer
-    let sync_svc = "[Unit]\nDescription=prelik cluster-files sync\n\n\
+    let sync_svc = "[Unit]\nDescription=pxi cluster-files sync\n\n\
 [Service]\nType=oneshot\nExecStart=/usr/local/bin/proxmox-host-setup ai cluster-files-sync\n";
     let _ = fs::write(
         "/etc/systemd/system/cluster-files-sync.service",
@@ -2985,7 +2985,7 @@ fn vm_mount(vmid: &str, ip: &str, user: &str, filter: &AgentFilter) {
             let dst = format!("{remote_home}/{file}");
             if vm_scp(ip, user, &src, &dst) {
                 if *file == ".claude.json" {
-                    let tmp = format!("/tmp/.prelik-vm-{vmid}-claude.json");
+                    let tmp = format!("/tmp/.pxi-vm-{vmid}-claude.json");
                     let _ = fs::copy(&src, &tmp);
                     patch_claude_json_for_npm(&tmp);
                     let _ = vm_scp(ip, user, &tmp, &dst);
@@ -3363,7 +3363,7 @@ fn openclaw_wrap(vmid_arg: Option<&str>) {
 
     let wrapper = format!(
         r#"#!/bin/bash
-# Auto-generated by: prelik-ai openclaw-wrap
+# Auto-generated by: pxi-ai openclaw-wrap
 # 호스트에서 openclaw 명령 실행 시 LXC {vmid}로 자동 포워딩
 VMID={vmid}
 
@@ -3456,7 +3456,7 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
 
     if preset_name.is_empty() {
         eprintln!("[openclaw] --preset 필요. 사용 가능: {}", LLM_PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
-        eprintln!("  목록 보기: prelik run ai openclaw-llm-switch --list");
+        eprintln!("  목록 보기: pxi run ai openclaw-llm-switch --list");
         std::process::exit(1);
     }
 

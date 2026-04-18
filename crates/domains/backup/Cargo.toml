@@ -1,13 +1,13 @@
 [package]
-name = "prelik-backup"
+name = "pxi-backup"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-backup"
+name = "pxi-backup"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

@@ -1,14 +1,14 @@
-//! prelik-telegram — 텔레그램 봇 관리 + 메시지 발송 + 채널 운영.
+//! pxi-telegram — 텔레그램 봇 관리 + 메시지 발송 + 채널 운영.
 //!
-//! phs telegram 서브커맨드를 prelik-core::common::run() 기반으로 포팅.
+//! phs telegram 서브커맨드를 pxi-core::common::run() 기반으로 포팅.
 //! HTTP 호출은 curl을 통해 수행 (외부 HTTP 라이브러리 의존 없음).
 
 use clap::{Parser, Subcommand};
-use prelik_core::{common, paths};
+use pxi_core::{common, paths};
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "prelik-telegram", about = "Telegram 봇 관리")]
+#[command(name = "pxi-telegram", about = "Telegram 봇 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -208,7 +208,7 @@ fn get_token(bot: &str) -> anyhow::Result<String> {
     let bots = load_bots()?;
     bots["bots"][bot].as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| anyhow::anyhow!("등록된 봇 없음: {bot} (prelik run telegram register)"))
+        .ok_or_else(|| anyhow::anyhow!("등록된 봇 없음: {bot} (pxi run telegram register)"))
 }
 
 /// config에서 봇 토큰을 name 또는 suffix로 조회 (fuzzy)
@@ -665,7 +665,7 @@ fn generate(bot: &str, chat: &str, prompt: &str, model: Option<&str>) -> anyhow:
             },
             "7": {
                 "class_type": "SaveImage",
-                "inputs": {"images": ["6", 0], "filename_prefix": "prelik_gen"}
+                "inputs": {"images": ["6", 0], "filename_prefix": "pxi_gen"}
             }
         }
     });
@@ -728,7 +728,7 @@ fn generate(bot: &str, chat: &str, prompt: &str, model: Option<&str>) -> anyhow:
     println!("[comfyui] 생성 완료: {filename}");
 
     // 이미지 다운로드
-    let tmp_path = format!("/tmp/prelik_gen_{filename}");
+    let tmp_path = format!("/tmp/pxi_gen_{filename}");
     let img_url = format!("{comfyui_url}/view?filename={filename}&type=output");
     common::run("curl", &["-sSL", "-o", &tmp_path, &img_url])?;
 
@@ -906,7 +906,7 @@ fn assign(bot_name: &str, target: &str, channel: Option<&str>) {
 
             let env_path = format!("{ch_dir}/.env");
             let env_content = format!(
-                "TELEGRAM_BOT_TOKEN={token}\n# @{username} — assigned by: prelik-telegram assign\n"
+                "TELEGRAM_BOT_TOKEN={token}\n# @{username} — assigned by: pxi-telegram assign\n"
             );
             fs::write(&env_path, &env_content).ok();
             let _ = common::run("chmod", &["600", &env_path]);
@@ -1012,7 +1012,7 @@ fn bot_register(label: &str, token: &str) {
 
     let token_id = token.split(':').next().unwrap_or("?");
 
-    // prelik config telegram.json 에도 등록
+    // pxi config telegram.json 에도 등록
     let mut bots = load_bots().unwrap_or(serde_json::json!({"bots": {}}));
     let bot_label = if label.starts_with("openclaw-") { label.to_string() } else { format!("openclaw-{label}") };
     bots["bots"][&bot_label] = serde_json::json!(token);
@@ -1053,8 +1053,8 @@ fn bot_register(label: &str, token: &str) {
     println!("라벨     : {bot_label}");
     println!("봇       : @{username} (토큰 ID: {token_id})");
     println!("\n다음 단계:");
-    println!("  prelik run telegram setup-all                                               # 명령어/설명 설정");
-    println!("  prelik run telegram assign --bot {bot_label} --target claude --channel {label}  # Claude Code 할당");
+    println!("  pxi run telegram setup-all                                               # 명령어/설명 설정");
+    println!("  pxi run telegram assign --bot {bot_label} --target claude --channel {label}  # Claude Code 할당");
 }
 
 // ─── Bot Rename ─────────────────────────────────────────────────────────────
@@ -1085,7 +1085,7 @@ fn bot_rename(bot_name: &str, display_name: &str) {
 // ─── Doctor ─────────────────────────────────────────────────────────────────
 
 fn doctor() {
-    println!("=== prelik-telegram doctor ===");
+    println!("=== pxi-telegram doctor ===");
     println!("  curl:    {}", if common::has_cmd("curl") { "✓" } else { "✗" });
     match bots_path() {
         Ok(p) => println!("  config:  {} ({})", p.display(), if p.exists() { "존재" } else { "없음" }),

@@ -13,7 +13,7 @@ version = "1.11.1"
 edition = "2021"
 authors = ["dalsoop"]
 license = "MIT"
-repository = "https://github.com/dalsoop/prelik-init"
+repository = "https://github.com/dalsoop/pxi-init"
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -26,7 +26,7 @@ dirs = "5"
 which = "6"
 clap_complete = "4"
 dialoguer = "0.12"
-prelik-core = { path = "crates/core" }
+pxi-core = { path = "crates/core" }
 
 [profile.release]
 opt-level = 3

@@ -18,12 +18,12 @@ prelik은 단순한 CLI가 아니라 시스템 곳곳을 변경합니다. **`pre
 
 ## 1. `prelik uninstall`이 실제로 하는 일
 
-- `/usr/local/bin/prelik` + `prelik-*` 도메인 바이너리 19개 + `.prelik.version` 마커 삭제
+- `/usr/local/bin/prelik` + `pxi-*` 도메인 바이너리 19개 + `.prelik.version` 마커 삭제
 - `~/.local/bin` 도 같은 패턴으로 처리
 - **`--purge`** 추가 시:
   - `~/.config/prelik` (사용자 config)
-  - `/etc/prelik` (시스템 config)
-  - `~/.local/share/prelik` 또는 `/var/lib/prelik` (도메인 캐시 + recovery snapshots + audit log)
+  - `/etc/pxi` (시스템 config)
+  - `~/.local/share/prelik` 또는 `/var/lib/pxi` (도메인 캐시 + recovery snapshots + audit log)
 
 **기본적으로는 다음을 절대 건드리지 않습니다:**
 
@@ -90,7 +90,7 @@ printf '  %s\n' $CRED_PATHS
 # 4) 해당 라인의 mount point 추출 후 각각 umount
 sudo grep -E 'credentials=/etc/cifs-credentials/' /etc/fstab | awk '{print $2}'
 # 위 출력으로 나온 각 경로에 대해:
-sudo umount /mnt/<your-prelik-mount>
+sudo umount /mnt/<your-pxi-mount>
 
 # 5) fstab에서 prelik SMB 라인만 제거. sed -i.bak로 백업.
 sudo sed -i.bak '/credentials=\/etc\/cifs-credentials\//d' /etc/fstab
@@ -126,7 +126,7 @@ sudo awk '$3 == "nfs" && $4 == "_netdev,nofail" { print NR": "$0 }' /etc/fstab
 # 2) 각 라인의 mount point 확인 후 umount
 sudo awk '$3 == "nfs" && $4 == "_netdev,nofail" { print $2 }' /etc/fstab
 # 각 mount point에 대해:
-sudo umount /mnt/<your-prelik-nfs-mount>
+sudo umount /mnt/<your-pxi-nfs-mount>
 
 # 3) fstab에서 prelik NFS 라인만 제거 (awk 필터링 + root 소유 임시파일로 atomic replace)
 #    /tmp는 다른 사용자가 symlink로 선점 가능 → root 소유 /etc에 임시파일 생성.
@@ -155,14 +155,14 @@ sudo mount -a   # fstab 변경 후 잘못된 항목 없는지 확인
 
 ## 4. Postfix relay (메일 발송)
 
-`prelik run mail postfix-relay`가 `main.cf`를 수정하고 `prelik-backup-<ns-ts>/` 백업 디렉토리를 만들었습니다.
+`prelik run mail postfix-relay`가 `main.cf`를 수정하고 `pxi-backup-<ns-ts>/` 백업 디렉토리를 만들었습니다.
 
 ```bash
 # 1) 백업 디렉토리 확인
-sudo ls /etc/postfix/prelik-backup-*
+sudo ls /etc/postfix/pxi-backup-*
 
 # 2) 가장 최근(또는 prelik 이전) 백업으로 복원
-LATEST=$(ls -td /etc/postfix/prelik-backup-* | tail -1)
+LATEST=$(ls -td /etc/postfix/pxi-backup-* | tail -1)
 sudo cp "$LATEST/main.cf" /etc/postfix/main.cf
 sudo cp "$LATEST/sasl_passwd" /etc/postfix/sasl_passwd 2>/dev/null
 sudo cp "$LATEST/sender_canonical" /etc/postfix/sender_canonical 2>/dev/null
@@ -171,7 +171,7 @@ sudo postmap /etc/postfix/sender_canonical
 sudo systemctl reload postfix
 
 # 3) 백업 디렉토리들 정리
-sudo rm -rf /etc/postfix/prelik-backup-*
+sudo rm -rf /etc/postfix/pxi-backup-*
 ```
 
 **경고:** 백업 디렉토리가 여러 개면 가장 첫 백업을 써야 prelik 도입 이전 상태가 됩니다. timestamp 가장 작은 것.
@@ -225,7 +225,7 @@ prelik run cloudflare dns-delete --domain example.com --name myapp --type A
 
 ```bash
 # 보통 위치
-ls -la /etc/prelik/.env*       # 시스템
+ls -la /etc/pxi/.env*       # 시스템
 ls -la ~/.config/prelik/.env*  # 사용자
 ls -la <your-project>/.env*    # 각 프로젝트
 
@@ -285,7 +285,7 @@ prelik run bootstrap manifest --only gh   # 특정 도구만
     rm -rf ~/.config/gh    # 인증 토큰 포함 — 사용자 결정
 ```
 
-manifest의 **`prelik_remove_does`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치하며, **`manual_followup`** 은 prelik이 자동으로 안 지우는 잔여물입니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요. JSON 사용 시 `schema_version`으로 분기 (현재 = 2).
+manifest의 **`pxi_remove_does`** 절차는 `prelik run bootstrap remove --only X`가 실제 수행하는 동작과 정확히 일치하며, **`manual_followup`** 은 prelik이 자동으로 안 지우는 잔여물입니다. 가능하면 직접 명령 대신 `prelik run bootstrap remove --only <tool>`을 사용하세요. JSON 사용 시 `schema_version`으로 분기 (현재 = 2).
 
 추가 주의:
 - **apt**: prelik의 `remove --only apt`는 `build-essential`만 제거합니다 (curl/git/jq 등 시스템 핵심은 보존). manifest의 `static_install_packages`를 그대로 `apt remove --purge`하지 마세요.
@@ -299,10 +299,10 @@ manifest의 **`prelik_remove_does`** 절차는 `prelik run bootstrap remove --on
 
 ```bash
 # 바이너리 흔적
-which prelik prelik-lxc prelik-ai 2>&1 | grep -v "no.*in"
+which prelik pxi-lxc pxi-ai 2>&1 | grep -v "no.*in"
 
 # config/state 흔적
-ls -la ~/.config/prelik /etc/prelik /var/lib/prelik 2>&1 | grep -v "No such"
+ls -la ~/.config/prelik /etc/pxi /var/lib/pxi 2>&1 | grep -v "No such"
 
 # systemd 흔적
 sudo systemctl list-unit-files 2>/dev/null | grep prelik
@@ -310,7 +310,7 @@ sudo systemctl list-unit-files 2>/dev/null | grep prelik
 # fstab/cifs/postfix 흔적
 sudo grep prelik /etc/fstab
 ls /etc/cifs-credentials/ 2>/dev/null
-ls /etc/postfix/prelik-backup-* 2>/dev/null
+ls /etc/postfix/pxi-backup-* 2>/dev/null
 ```
 
 전부 비어 있으면 완전 제거 완료.
@@ -322,7 +322,7 @@ ls /etc/postfix/prelik-backup-* 2>/dev/null
 `--purge` 했어도 복구 가능:
 - LXC/VM은 vzdump 백업으로 복원 (`prelik run backup restore` 또는 `pct restore`)
 - recovery snapshot으로 LXC config만 복원: `prelik run recovery list/restore`
-- postfix는 `prelik-backup-*/` 디렉토리에서 main.cf 복원
+- postfix는 `pxi-backup-*/` 디렉토리에서 main.cf 복원
 
 `.env.vault` + `.env.keys` 둘 다 잃으면 복구 **불가능**. 시크릿 재발급밖에 없음.
 
@@ -330,6 +330,6 @@ ls /etc/postfix/prelik-backup-* 2>/dev/null
 
 ## 보안 주의
 
-- `--purge`는 audit log (`/var/lib/prelik/audit.log`)도 지웁니다. **컴플라이언스 환경**에선 먼저 외부에 백업하세요.
+- `--purge`는 audit log (`/var/lib/pxi/audit.log`)도 지웁니다. **컴플라이언스 환경**에선 먼저 외부에 백업하세요.
 - recovery snapshot은 LXC config(메모리/네트워크 설정)를 평문 저장. NAS/SMB 자격증명이 컨테이너 환경변수로 들어 있다면 snapshot에도 포함됩니다.
 - `cifs-credentials/*`는 0600 root:root지만 평문. 디스크 dispose 전에 반드시 `shred -u`.

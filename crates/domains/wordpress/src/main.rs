@@ -1,10 +1,10 @@
-//! prelik-wordpress — WordPress LXC 배포/관리.
+//! pxi-wordpress — WordPress LXC 배포/관리.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 
 #[derive(Parser)]
-#[command(name = "prelik-wordpress", about = "WordPress 관리 (LXC 기반)")]
+#[command(name = "pxi-wordpress", about = "WordPress 관리 (LXC 기반)")]
 struct Cli { #[command(subcommand)] cmd: Cmd }
 
 #[derive(Subcommand)]
@@ -105,7 +105,7 @@ chown -R www-data:www-data /var/www/html
 systemctl enable --now nginx php*-fpm mariadb
 "#;
             common::run("pct", &["exec", &vmid, "--", "bash", "-c", install_script]);
-            println!("✓ WordPress 설치 완료. 도메인 라우트: prelik-wordpress route {} --domain {}", vmid, domain);
+            println!("✓ WordPress 설치 완료. 도메인 라우트: pxi-wordpress route {} --domain {}", vmid, domain);
         }
         Cmd::Status { vmid } => {
             common::run("pct", &["exec", &vmid, "--", "bash", "-c",

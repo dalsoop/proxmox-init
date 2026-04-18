@@ -1,16 +1,16 @@
-//! prelik-host — 호스트 시스템 관리.
+//! pxi-host — 호스트 시스템 관리.
 //! bootstrap / status / monitor / postfix-relay / ssh-keygen / smb / gh-auth / self-update.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
-use prelik_core::helpers::read_host_env;
-use prelik_core::os;
+use pxi_core::common;
+use pxi_core::helpers::read_host_env;
+use pxi_core::os;
 
 use std::fs;
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "prelik-host", about = "호스트 시스템 관리")]
+#[command(name = "pxi-host", about = "호스트 시스템 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -39,7 +39,7 @@ enum Cmd {
     SmbClose,
     /// gh CLI 풀스코프 인증 갱신 (repo/admin:org/admin:repo_hook 등 18개 스코프)
     GhAuth,
-    /// prelik CLI 자체 업데이트 (install.prelik.com 재실행)
+    /// pxi CLI 자체 업데이트 (install.pxi.com 재실행)
     SelfUpdate {
         /// 특정 버전 핀 (예: v1.8.3). 미지정 시 latest.
         #[arg(long)]
@@ -328,7 +328,7 @@ fn install_github_release(name: &str, repo: &str) -> anyhow::Result<()> {
         other => anyhow::bail!("[{name}] 지원하지 않는 아키텍처: {other}"),
     };
 
-    let tag = prelik_core::github::latest_tag(repo)?;
+    let tag = pxi_core::github::latest_tag(repo)?;
     let version = tag.trim_start_matches('v');
     let tarball = format!("{name}_{version}_Linux_{arch}.tar.gz");
     let url = format!("https://github.com/{repo}/releases/download/{tag}/{tarball}");
@@ -614,7 +614,7 @@ fn smb_set(open: bool) -> anyhow::Result<()> {
     }
 
     for (port, desc) in SMB_PORTS {
-        let rule = format!("INPUT -p tcp --dport {port} -j ACCEPT -m comment --comment 'prelik-smb {desc}'");
+        let rule = format!("INPUT -p tcp --dport {port} -j ACCEPT -m comment --comment 'pxi-smb {desc}'");
         if open {
             let check = format!("iptables -C {rule} 2>/dev/null");
             if common::run_bash(&check).is_err() {
@@ -711,7 +711,7 @@ fn gh_auth() -> anyhow::Result<()> {
     ];
     println!("=== gh CLI 풀스코프 인증 ===");
     if !common::has_cmd("gh") {
-        anyhow::bail!("gh CLI 없음 -- prelik run host bootstrap 먼저");
+        anyhow::bail!("gh CLI 없음 -- pxi run host bootstrap 먼저");
     }
     let scopes = SCOPES.join(",");
     println!("요청 스코프: {scopes}\n");
@@ -733,11 +733,11 @@ fn gh_auth() -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 fn self_update(version: Option<&str>, force: bool) -> anyhow::Result<()> {
-    println!("=== prelik self-update ===");
+    println!("=== pxi self-update ===");
     if !common::has_cmd("curl") { anyhow::bail!("curl 없음"); }
     if !common::has_cmd("bash") { anyhow::bail!("bash 없음"); }
     let mut cmd = std::process::Command::new("bash");
-    cmd.arg("-c").arg("set -eo pipefail; curl -fsSL https://install.prelik.com | bash");
+    cmd.arg("-c").arg("set -eo pipefail; curl -fsSL https://install.pxi.com | bash");
     if let Some(v) = version {
         cmd.env("PRELIK_VERSION", v);
         println!("  PRELIK_VERSION={v}");
@@ -795,7 +795,7 @@ fn postfix_relay(
 
     // 4. main.cf에 relay 블록 추가
     let main_cf_append = format!(
-        "\n# prelik host postfix-relay: Maddy SASL relay\nrelayhost = [{maddy_ip}]:{port}\nsmtp_sasl_auth_enable = yes\nsmtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd\nsmtp_sasl_security_options = noanonymous\nsmtp_tls_security_level = may\nsmtp_sasl_tls_security_options = noanonymous\nsender_canonical_maps = regexp:/etc/postfix/sender_canonical\n"
+        "\n# pxi host postfix-relay: Maddy SASL relay\nrelayhost = [{maddy_ip}]:{port}\nsmtp_sasl_auth_enable = yes\nsmtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd\nsmtp_sasl_security_options = noanonymous\nsmtp_tls_security_level = may\nsmtp_sasl_tls_security_options = noanonymous\nsender_canonical_maps = regexp:/etc/postfix/sender_canonical\n"
     );
     let main_cf = fs::read_to_string("/etc/postfix/main.cf").unwrap_or_default();
     fs::write("/etc/postfix/main.cf", main_cf + &main_cf_append)?;
@@ -836,7 +836,7 @@ fn postfix_relay(
 // ---------------------------------------------------------------------------
 
 fn doctor() {
-    println!("=== prelik-host doctor ===");
+    println!("=== pxi-host doctor ===");
     for (name, cmd) in &[
         ("iptables", "iptables"),
         ("ssh-keygen", "ssh-keygen"),

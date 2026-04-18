@@ -1,13 +1,13 @@
-//! prelik-monitor — 호스트/LXC/VM 리소스 모니터링 (read-only).
+//! pxi-monitor — 호스트/LXC/VM 리소스 모니터링 (read-only).
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::Serialize;
 use std::fs;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "prelik-monitor", about = "호스트/LXC/VM 리소스 모니터링")]
+#[command(name = "pxi-monitor", about = "호스트/LXC/VM 리소스 모니터링")]
 struct Cli {
     /// 출력 포맷을 JSON으로 (자동화/CI 친화)
     #[arg(long, global = true)]
@@ -111,7 +111,7 @@ fn doctor(json: bool) -> anyhow::Result<()> {
         let map: serde_json::Value = checks.iter().map(|(k, v)| (k.to_string(), serde_json::Value::Bool(*v))).collect();
         println!("{}", serde_json::to_string_pretty(&map)?);
     } else {
-        println!("=== prelik-monitor doctor ===");
+        println!("=== pxi-monitor doctor ===");
         for (k, v) in &checks {
             let mark = if *v { "✓" } else { "✗" };
             let note = match *k { "pct" => " (선택, LXC)", "qm" => " (선택, VM)", _ => "" };
@@ -519,7 +519,7 @@ fn healthcheck(fix: bool) -> anyhow::Result<()> {
             issues += 1;
             println!("  ✗ {} (LXC {}) — 토큰 만료", name, vmid);
             if fix {
-                println!("    → credential-sync 필요 (prelik-ai credential-sync --vmid {vmid})");
+                println!("    → credential-sync 필요 (pxi-ai credential-sync --vmid {vmid})");
             }
         }
     }
@@ -578,7 +578,7 @@ fn kuma_sync_run(vmid: &str) -> anyhow::Result<()> {
     // Load monitors from control-plane
     let monitor_paths = [
         "/root/control-plane/domains/kuma-monitors.json",
-        "/etc/prelik/domains/kuma-monitors.json",
+        "/etc/pxi/domains/kuma-monitors.json",
         "/etc/proxmox-host-setup/kuma-monitors.json",
     ];
     let monitors_json = monitor_paths.iter()

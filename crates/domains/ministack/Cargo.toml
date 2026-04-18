@@ -1,13 +1,13 @@
 [package]
-name = "prelik-ministack"
+name = "pxi-ministack"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-ministack"
+name = "pxi-ministack"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

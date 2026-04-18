@@ -1,5 +1,5 @@
 [package]
-name = "prelik-core"
+name = "pxi-core"
 version.workspace = true
 edition.workspace = true
 build = "build.rs"

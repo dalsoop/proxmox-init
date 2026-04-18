@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// 호스트의 설정 .env에서 값 읽기. 여러 경로 fallback.
 pub fn read_host_env(key: &str) -> String {
-    let paths = ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"];
+    let paths = ["/etc/pxi/.env", "/etc/proxmox-host-setup/.env"];
     for p in paths {
         if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
@@ -31,7 +31,7 @@ impl Drop for FileCleanup {
 /// mktemp로 private 파일 만들고 0600 권한 보장 + Drop 가드.
 /// 반환: (path 문자열, Cleanup 가드).
 pub fn secure_tempfile() -> anyhow::Result<(String, FileCleanup)> {
-    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
     let guard = FileCleanup(PathBuf::from(&tmp));
     common::run("chmod", &["600", &tmp])?;

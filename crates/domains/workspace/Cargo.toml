@@ -1,14 +1,14 @@
 [package]
-name = "prelik-workspace"
+name = "pxi-workspace"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-workspace"
+name = "pxi-workspace"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }
 dirs = { workspace = true }

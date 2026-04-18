@@ -1,8 +1,8 @@
-//! prelik-lxc -- Proxmox LXC 수명 관리.
+//! pxi-lxc -- Proxmox LXC 수명 관리.
 //! pct 바이너리를 전제로 함 (Proxmox VE 호스트에서만 동작).
 
 use clap::{Parser, Subcommand};
-use prelik_core::{common, os};
+use pxi_core::{common, os};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
@@ -11,7 +11,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(name = "prelik-lxc", about = "LXC 수명 관리 (Proxmox pct 래퍼)")]
+#[command(name = "pxi-lxc", about = "LXC 수명 관리 (Proxmox pct 래퍼)")]
 struct Cli {
     /// list/snapshot-list/status를 JSON으로 출력 (자동화/CI 친화)
     #[arg(long, global = true)]
@@ -669,7 +669,7 @@ fn create(
     let ip_cidr = if ip.contains('/') {
         ip.to_string()
     } else {
-        let cfg = prelik_core::config::Config::load().unwrap_or_default();
+        let cfg = pxi_core::config::Config::load().unwrap_or_default();
         let subnet = if cfg.network.subnet > 0 { cfg.network.subnet } else { 24 };
         format!("{ip}/{subnet}")
     };
@@ -677,7 +677,7 @@ fn create(
     let gw = if let Some(g) = gateway {
         g.to_string()
     } else {
-        let cfg = prelik_core::config::Config::load().unwrap_or_default();
+        let cfg = pxi_core::config::Config::load().unwrap_or_default();
         if !cfg.network.gateway.is_empty() {
             cfg.network.gateway
         } else {
@@ -740,7 +740,7 @@ fn delete(vmid: &str, force: bool) -> anyhow::Result<()> {
         common::run("pct", &["stop", vmid])?;
     }
     if !force {
-        eprintln!("  삭제 전 백업 권장: prelik-lxc backup {vmid}\n  또는 --force 로 무시");
+        eprintln!("  삭제 전 백업 권장: pxi-lxc backup {vmid}\n  또는 --force 로 무시");
         anyhow::bail!("중단됨");
     }
     common::run("pct", &["destroy", vmid])?;
@@ -855,7 +855,7 @@ fn mount(vmid: &str, mp_index: &str, source: &str, target: &str) -> anyhow::Resu
     let mp_value = format!("{source},mp={target}");
     println!("[mount] mp{mp_index}: {source} -> {target}");
     common::run("pct", &["set", vmid, &format!("-mp{mp_index}"), &mp_value])?;
-    println!("[mount] 완료. 재시작 필요: prelik-lxc restart {vmid}");
+    println!("[mount] 완료. 재시작 필요: pxi-lxc restart {vmid}");
     Ok(())
 }
 
@@ -867,7 +867,7 @@ fn unmount(vmid: &str, mp_index: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     common::run("pct", &["set", vmid, "--delete", &format!("mp{mp_index}")])?;
-    println!("[unmount] 완료. 재시작 필요: prelik-lxc restart {vmid}");
+    println!("[unmount] 완료. 재시작 필요: pxi-lxc restart {vmid}");
     Ok(())
 }
 
@@ -981,7 +981,7 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
         println!();
         println!("[align] dry-run 입니다. 실제 적용:");
         println!(
-            "  prelik-lxc align-vmid-ip --hostname-prefix {} --start-vmid {} --apply",
+            "  pxi-lxc align-vmid-ip --hostname-prefix {} --start-vmid {} --apply",
             hostname_prefix, start_vmid_num
         );
         if !exact_ip_map.is_empty() {
@@ -1193,7 +1193,7 @@ fn backup_file(path: &Path, backup_root: &Path) {
 
 fn build_backup_root() -> PathBuf {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let path = PathBuf::from(format!("/root/prelik-lxc-align-backup-{ts}"));
+    let path = PathBuf::from(format!("/root/pxi-lxc-align-backup-{ts}"));
     let _ = fs::create_dir_all(&path);
     path
 }
@@ -1414,7 +1414,7 @@ fn route_audit(node: Option<&str>, fix: bool) {
     println!("\n  등록: {registered} | 미등록: {} | 인프라(스킵): {infra_skipped}", unregistered.len());
 
     if !fix {
-        println!("\n  자동 등록: prelik-lxc route-audit --fix");
+        println!("\n  자동 등록: pxi-lxc route-audit --fix");
         return;
     }
 
@@ -1475,12 +1475,12 @@ fn extract_prefix_from_ip(ip: &str) -> String {
 }
 
 fn load_route_backends_from_dir(node: &str) -> Vec<String> {
-    // Look for route JSON files in /var/lib/prelik or /etc/prelik data dirs
+    // Look for route JSON files in /var/lib/pxi or /etc/pxi data dirs
     let paths = [
-        format!("/var/lib/prelik/traefik-routes.json"),
-        format!("/var/lib/prelik/traefik-routes-{node}.json"),
-        format!("/etc/prelik/traefik-routes.json"),
-        format!("/etc/prelik/traefik-routes-{node}.json"),
+        format!("/var/lib/pxi/traefik-routes.json"),
+        format!("/var/lib/pxi/traefik-routes-{node}.json"),
+        format!("/etc/pxi/traefik-routes.json"),
+        format!("/etc/pxi/traefik-routes-{node}.json"),
     ];
     for p in &paths {
         if let Ok(data) = fs::read_to_string(p) {
@@ -1510,7 +1510,7 @@ fn build_route_yml(name: &str, domain: &str, backend: &str) -> String {
 }
 
 fn write_to_lxc(vmid: &str, path: &str, content: &str) {
-    let tmp = format!("/tmp/prelik-lxc-{}", path.replace('/', "_"));
+    let tmp = format!("/tmp/pxi-lxc-{}", path.replace('/', "_"));
     let _ = fs::write(&tmp, content);
     let _ = Command::new("pct").args(["push", vmid, &tmp, path]).status();
     let _ = fs::remove_file(&tmp);
@@ -1521,30 +1521,30 @@ fn write_to_lxc(vmid: &str, path: &str, content: &str) {
 // =============================================================================
 
 fn route_audit_watch(action: &str) {
-    let service_unit = "/etc/systemd/system/prelik-route-audit.service";
-    let timer_unit = "/etc/systemd/system/prelik-route-audit.timer";
+    let service_unit = "/etc/systemd/system/pxi-route-audit.service";
+    let timer_unit = "/etc/systemd/system/pxi-route-audit.timer";
 
     match action {
         "install" => {
             let service = "[Unit]\n\
-Description=prelik Traefik route audit + auto-register\n\
+Description=pxi Traefik route audit + auto-register\n\
 After=pve-cluster.service\n\
 \n\
 [Service]\n\
 Type=oneshot\n\
-ExecStart=/usr/local/bin/prelik-lxc route-audit --fix\n\
+ExecStart=/usr/local/bin/pxi-lxc route-audit --fix\n\
 StandardOutput=journal\n\
 StandardError=journal\n";
 
             let timer = "[Unit]\n\
-Description=prelik Traefik route audit timer\n\
-Requires=prelik-route-audit.service\n\
+Description=pxi Traefik route audit timer\n\
+Requires=pxi-route-audit.service\n\
 \n\
 [Timer]\n\
 OnBootSec=30s\n\
 OnUnitActiveSec=1min\n\
 AccuracySec=10s\n\
-Unit=prelik-route-audit.service\n\
+Unit=pxi-route-audit.service\n\
 \n\
 [Install]\n\
 WantedBy=timers.target\n";
@@ -1554,38 +1554,38 @@ WantedBy=timers.target\n";
 
             for cmd in [
                 vec!["daemon-reload"],
-                vec!["enable", "prelik-route-audit.timer"],
-                vec!["start", "prelik-route-audit.timer"],
+                vec!["enable", "pxi-route-audit.timer"],
+                vec!["start", "pxi-route-audit.timer"],
             ] {
                 let _ = Command::new("systemctl").args(&cmd).status();
             }
 
             println!("[route-audit-watch] systemd timer 설치 완료");
             println!("  주기: 부팅 후 30초, 이후 1분마다");
-            println!("  로그: journalctl -u prelik-route-audit.service -f");
+            println!("  로그: journalctl -u pxi-route-audit.service -f");
         }
         "uninstall" => {
-            let _ = Command::new("systemctl").args(["stop", "prelik-route-audit.timer"]).status();
-            let _ = Command::new("systemctl").args(["disable", "prelik-route-audit.timer"]).status();
+            let _ = Command::new("systemctl").args(["stop", "pxi-route-audit.timer"]).status();
+            let _ = Command::new("systemctl").args(["disable", "pxi-route-audit.timer"]).status();
             let _ = fs::remove_file(service_unit);
             let _ = fs::remove_file(timer_unit);
             let _ = Command::new("systemctl").args(["daemon-reload"]).status();
             println!("[route-audit-watch] systemd timer 제거 완료");
         }
         "status" => {
-            let timer_status = cmd_output("systemctl", &["is-active", "prelik-route-audit.timer"]);
-            let timer_enabled = cmd_output("systemctl", &["is-enabled", "prelik-route-audit.timer"]);
+            let timer_status = cmd_output("systemctl", &["is-active", "pxi-route-audit.timer"]);
+            let timer_enabled = cmd_output("systemctl", &["is-enabled", "pxi-route-audit.timer"]);
             println!("[route-audit-watch] timer status:");
             println!("  active:  {}", timer_status);
             println!("  enabled: {}", timer_enabled);
 
-            let next_run = cmd_output("systemctl", &["show", "prelik-route-audit.timer", "--property=NextElapseUSecRealtime", "--value"]);
+            let next_run = cmd_output("systemctl", &["show", "pxi-route-audit.timer", "--property=NextElapseUSecRealtime", "--value"]);
             if !next_run.is_empty() {
                 println!("  next run: {}", next_run);
             }
 
             println!("\n[route-audit-watch] recent logs:");
-            let logs = cmd_output("journalctl", &["-u", "prelik-route-audit.service", "-n", "10", "--no-pager"]);
+            let logs = cmd_output("journalctl", &["-u", "pxi-route-audit.service", "-n", "10", "--no-pager"]);
             println!("{}", logs);
         }
         _ => {
@@ -1711,7 +1711,7 @@ fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
 // =============================================================================
 
 fn doctor() {
-    println!("=== prelik-lxc doctor ===");
+    println!("=== pxi-lxc doctor ===");
     println!("  pct:       {}", if common::has_cmd("pct") { "ok" } else { "missing" });
     println!("  vzdump:    {}", if common::has_cmd("vzdump") { "ok" } else { "missing" });
     println!("  pveam:     {}", if common::has_cmd("pveam") { "ok" } else { "missing" });
@@ -1822,7 +1822,7 @@ fn mgmt_setup(
     }
 
     println!("\n=== 관리 LXC {vmid} ({hostname}) 설정 완료 ===");
-    println!("  접속: prelik-lxc enter {vmid}");
+    println!("  접속: pxi-lxc enter {vmid}");
     println!("  SSH:  ssh root@{ip}");
     Ok(())
 }

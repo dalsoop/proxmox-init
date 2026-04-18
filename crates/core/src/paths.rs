@@ -1,6 +1,6 @@
 //! 경로 규약
-//! - root: /etc/prelik, /var/lib/prelik, /usr/local/bin
-//! - user: $XDG_CONFIG_HOME 또는 $HOME/.config/prelik (절대경로 필수)
+//! - root: /etc/pxi, /var/lib/pxi, /usr/local/bin
+//! - user: $XDG_CONFIG_HOME 또는 $HOME/.config/pxi (절대경로 필수)
 //!
 //! HOME/XDG 환경변수가 비어있으면 상대경로로 fallback 금지 — 명시적 에러.
 
@@ -9,20 +9,20 @@ use std::path::PathBuf;
 
 pub fn config_dir() -> Result<PathBuf> {
     if is_root() {
-        Ok(PathBuf::from("/etc/prelik"))
+        Ok(PathBuf::from("/etc/pxi"))
     } else {
         dirs::config_dir()
-            .map(|p| p.join("prelik"))
+            .map(|p| p.join("pxi"))
             .ok_or_else(|| anyhow!("XDG_CONFIG_HOME/HOME 미설정 — sudo -E 또는 HOME 지정 필요"))
     }
 }
 
 pub fn data_dir() -> Result<PathBuf> {
     if is_root() {
-        Ok(PathBuf::from("/var/lib/prelik"))
+        Ok(PathBuf::from("/var/lib/pxi"))
     } else {
         dirs::data_dir()
-            .map(|p| p.join("prelik"))
+            .map(|p| p.join("pxi"))
             .ok_or_else(|| anyhow!("XDG_DATA_HOME/HOME 미설정"))
     }
 }

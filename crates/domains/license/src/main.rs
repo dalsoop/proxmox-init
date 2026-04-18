@@ -1,4 +1,4 @@
-//! prelik-license — Keygen CE 라이선스 활성화/상태/해제/체크인/셀프업데이트.
+//! pxi-license — Keygen CE 라이선스 활성화/상태/해제/체크인/셀프업데이트.
 //!
 //! Endpoints hit (all at `${API}/v1/accounts/${ACCT}`):
 //!   POST /licenses/actions/validate-key
@@ -18,10 +18,10 @@ use std::process::Command;
 
 // ---- Embedded configuration ------------------------------------------------
 
-const KEYGEN_API_URL_DEFAULT: &str = "https://keygen.prelik.com";
+const KEYGEN_API_URL_DEFAULT: &str = "https://keygen.pxi.com";
 const KEYGEN_ACCOUNT_ID_DEFAULT: &str = "f45727f0-dcc6-423f-9d14-0433293a46da";
-const KEYGEN_PRODUCT_CODE: &str = "prelik";
-const LICENSE_FILE: &str = "/etc/prelik/license.json";
+const KEYGEN_PRODUCT_CODE: &str = "pxi";
+const LICENSE_FILE: &str = "/etc/pxi/license.json";
 const BYPASS_ENV: &str = "PRELIK_LICENSE_BYPASS";
 
 fn api_url() -> String {
@@ -47,7 +47,7 @@ fn product_id() -> String {
 // ---- CLI -------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "prelik-license", about = "라이선스 관리 (Keygen CE)")]
+#[command(name = "pxi-license", about = "라이선스 관리 (Keygen CE)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -150,7 +150,7 @@ fn machine_name() -> String {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "prelik-host".to_string())
+        .unwrap_or_else(|| "pxi-host".to_string())
 }
 
 // ---- HTTP helpers ----------------------------------------------------------
@@ -310,7 +310,7 @@ fn cmd_status() -> anyhow::Result<()> {
         Some(s) => s,
         None => {
             println!(
-                "저장된 라이선스 없음. `prelik-license activate <KEY>` 로 활성화하세요."
+                "저장된 라이선스 없음. `pxi-license activate <KEY>` 로 활성화하세요."
             );
             return Ok(());
         }
@@ -437,7 +437,7 @@ fn cmd_check_in() -> anyhow::Result<()> {
 
 fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
     let stored = load_stored().ok_or_else(|| {
-        anyhow::anyhow!("활성화되지 않음 — `prelik-license activate <KEY>` 먼저")
+        anyhow::anyhow!("활성화되지 않음 — `pxi-license activate <KEY>` 먼저")
     })?;
     let auth = format!("License {}", stored.key);
     let current = env!("CARGO_PKG_VERSION");
@@ -496,7 +496,7 @@ fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
     let art_id = art["id"].as_str().unwrap_or_default().to_string();
     let filename = art["attributes"]["filename"]
         .as_str()
-        .unwrap_or("prelik")
+        .unwrap_or("pxi")
         .to_string();
     let expected_sha512_b64 = art["attributes"]["checksum"]
         .as_str()
@@ -594,7 +594,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 // ---- Enforcement -----------------------------------------------------------
 
 /// Call from critical subcommand entry points. Cheap local check that a
-/// license file exists. Online validation is a separate `prelik-license status`
+/// license file exists. Online validation is a separate `pxi-license status`
 /// call.
 #[allow(dead_code)]
 fn require_licensed_or_bypass() -> anyhow::Result<()> {
@@ -606,7 +606,7 @@ fn require_licensed_or_bypass() -> anyhow::Result<()> {
     }
     if load_stored().is_none() {
         anyhow::bail!(
-            "라이선스가 활성화되지 않았습니다. 'prelik-license activate <KEY>' 먼저 실행하세요.\n\
+            "라이선스가 활성화되지 않았습니다. 'pxi-license activate <KEY>' 먼저 실행하세요.\n\
              (dev 환경에서는 환경변수 {}=1 로 우회 가능)",
             BYPASS_ENV
         );

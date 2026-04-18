@@ -1,15 +1,15 @@
 [package]
-name = "prelik-traefik"
+name = "pxi-traefik"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-traefik"
+name = "pxi-traefik"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

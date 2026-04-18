@@ -1,4 +1,4 @@
-//! prelik-init 공통 라이브러리.
+//! pxi-init 공통 라이브러리.
 //! OS 추상화, 경로 규약, dotenvx 래퍼, GitHub Release 다운로더, systemd 헬퍼.
 
 pub mod common;

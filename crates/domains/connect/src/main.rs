@@ -1,12 +1,12 @@
-//! prelik-connect — 외부 서비스 연결 관리 (.env + dotenvx 암호화)
+//! pxi-connect — 외부 서비스 연결 관리 (.env + dotenvx 암호화)
 
 use clap::{Parser, Subcommand};
-use prelik_core::{common, dotenvx, paths};
+use pxi_core::{common, dotenvx, paths};
 use std::fs;
 use std::io::Write;
 
 #[derive(Parser)]
-#[command(name = "prelik-connect", about = "외부 서비스 연결 관리 (.env + dotenvx)")]
+#[command(name = "pxi-connect", about = "외부 서비스 연결 관리 (.env + dotenvx)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -93,7 +93,7 @@ fn list() -> anyhow::Result<()> {
 
 fn encrypt() -> anyhow::Result<()> {
     if !dotenvx::is_installed() {
-        anyhow::bail!("dotenvx 미설치 — prelik install bootstrap");
+        anyhow::bail!("dotenvx 미설치 — pxi install bootstrap");
     }
     let path = env_path()?;
     dotenvx::encrypt(&path)?;
@@ -102,8 +102,8 @@ fn encrypt() -> anyhow::Result<()> {
 }
 
 fn doctor() {
-    println!("=== prelik-connect doctor ===");
-    println!("  dotenvx:  {}", if dotenvx::is_installed() { "✓" } else { "✗ (prelik install bootstrap)" });
+    println!("=== pxi-connect doctor ===");
+    println!("  dotenvx:  {}", if dotenvx::is_installed() { "✓" } else { "✗ (pxi install bootstrap)" });
     match paths::env_file() {
         Ok(p) => println!("  env:      {} ({})", p.display(), if p.exists() { "✓" } else { "없음" }),
         Err(e) => println!("  env:      ✗ {e}"),

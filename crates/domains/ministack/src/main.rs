@@ -1,12 +1,12 @@
-//! prelik-ministack — MiniStack (로컬 AWS 에뮬레이터 = LocalStack).
+//! pxi-ministack — MiniStack (로컬 AWS 에뮬레이터 = LocalStack).
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use std::path::Path;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "prelik-ministack", about = "MiniStack (LocalStack AWS 에뮬레이터)")]
+#[command(name = "pxi-ministack", about = "MiniStack (LocalStack AWS 에뮬레이터)")]
 struct Cli { #[command(subcommand)] cmd: Cmd }
 
 #[derive(Subcommand)]
@@ -55,7 +55,7 @@ fn saved_port() -> u16 {
 
 fn require_installed() {
     if !Path::new(COMPOSE_FILE).exists() {
-        eprintln!("MiniStack이 설치되어 있지 않습니다. `prelik run ministack install`을 먼저 실행하세요.");
+        eprintln!("MiniStack이 설치되어 있지 않습니다. `pxi run ministack install`을 먼저 실행하세요.");
         std::process::exit(1);
     }
 }
@@ -78,7 +78,7 @@ fn ministack_install(port: u16, data_dir: Option<&str>) {
 
     if Path::new(COMPOSE_FILE).exists() {
         println!("이미 설치됨: {INSTALL_DIR}");
-        println!("재설치하려면 먼저 `prelik run ministack uninstall --force`를 실행하세요.");
+        println!("재설치하려면 먼저 `pxi run ministack uninstall --force`를 실행하세요.");
         return;
     }
 
@@ -165,7 +165,7 @@ fn ministack_install(port: u16, data_dir: Option<&str>) {
 
     // AWS 환경변수 설정
     let env_content = format!(
-        r#"# MiniStack AWS endpoint (prelik ministack install 자동 생성)
+        r#"# MiniStack AWS endpoint (pxi ministack install 자동 생성)
 export AWS_ENDPOINT_URL="http://localhost:{port}"
 export AWS_ACCESS_KEY_ID="test"
 export AWS_SECRET_ACCESS_KEY="test"
@@ -185,7 +185,7 @@ export AWS_DEFAULT_REGION="us-east-1"
         println!("    source {AWS_ENV_FILE}");
         println!("    aws s3 mb s3://test-bucket");
     } else {
-        eprintln!("컨테이너 시작 실패. `prelik run ministack logs --tail 50`으로 확인하세요.");
+        eprintln!("컨테이너 시작 실패. `pxi run ministack logs --tail 50`으로 확인하세요.");
     }
 }
 
@@ -200,7 +200,7 @@ fn ministack_uninstall(force: bool) {
     if !force {
         eprintln!("경고: 모든 MiniStack 데이터가 삭제됩니다.");
         eprintln!("정말 제거하려면 --force 플래그를 추가하세요:");
-        eprintln!("  prelik run ministack uninstall --force");
+        eprintln!("  pxi run ministack uninstall --force");
         std::process::exit(1);
     }
 
@@ -228,7 +228,7 @@ fn ministack_reset() {
         .output();
     match result {
         Ok(out) if out.status.success() => println!("  초기화 완료 (모든 AWS 리소스 삭제됨)"),
-        _ => eprintln!("  초기화 실패 (MiniStack이 실행 중인지 확인: prelik run ministack status)"),
+        _ => eprintln!("  초기화 실패 (MiniStack이 실행 중인지 확인: pxi run ministack status)"),
     }
 }
 

@@ -1,20 +1,20 @@
-//! prelik-recovery — LXC config snapshot/restore + audit log.
+//! pxi-recovery — LXC config snapshot/restore + audit log.
 //! Destructive operation 전에 LXC config (/etc/pve/nodes/<node>/lxc/*.conf) +
 //! pvecm 노드 목록을 백업해두고, 사고 시 복원.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SNAPSHOT_DIR: &str = "/var/lib/prelik/snapshots";
-const AUDIT_LOG: &str = "/var/lib/prelik/audit.log";
+const SNAPSHOT_DIR: &str = "/var/lib/pxi/snapshots";
+const AUDIT_LOG: &str = "/var/lib/pxi/audit.log";
 
 #[derive(Parser)]
-#[command(name = "prelik-recovery", about = "LXC config 스냅샷 + audit log")]
+#[command(name = "pxi-recovery", about = "LXC config 스냅샷 + audit log")]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
@@ -78,7 +78,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn doctor() -> anyhow::Result<()> {
-    println!("=== prelik-recovery doctor ===");
+    println!("=== pxi-recovery doctor ===");
     println!("  snapshot dir : {} ({})", SNAPSHOT_DIR, mark(Path::new(SNAPSHOT_DIR).exists()));
     println!("  audit log    : {} ({})", AUDIT_LOG, mark(Path::new(AUDIT_LOG).exists()));
     println!("  pvecm        : {}", mark(common::has_cmd("pvecm")));
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn snapshot_path_basic() {
         let p = snapshot_path("12345").unwrap();
-        assert_eq!(p, PathBuf::from("/var/lib/prelik/snapshots/12345.json"));
+        assert_eq!(p, PathBuf::from("/var/lib/pxi/snapshots/12345.json"));
     }
 
     #[test]

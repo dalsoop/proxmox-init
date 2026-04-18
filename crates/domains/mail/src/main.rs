@@ -1,13 +1,13 @@
-//! prelik-mail — 메일 스택 관리.
+//! pxi-mail — 메일 스택 관리.
 //! - mailpit LXC 설치 (수신 아카이브)
 //! - postfix-relay 호스트 설정 (Maddy 경유 발송)
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "prelik-mail", about = "Maddy + Mailpit + Postfix relay")]
+#[command(name = "pxi-mail", about = "Maddy + Mailpit + Postfix relay")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -130,7 +130,7 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     let smtp_user = read_host_env("SMTP_USER");
     let smtp_pass = read_host_env("SMTP_PASSWORD");
     if smtp_user.is_empty() || smtp_pass.is_empty() {
-        anyhow::bail!("/etc/prelik/.env 또는 /etc/proxmox-host-setup/.env 에 SMTP_USER/SMTP_PASSWORD 필요");
+        anyhow::bail!("/etc/pxi/.env 또는 /etc/proxmox-host-setup/.env 에 SMTP_USER/SMTP_PASSWORD 필요");
     }
     // SMTP user/pass에도 개행/제어문자 차단 (sasl_passwd 포맷 주입)
     if smtp_user.contains('\n') || smtp_user.contains('\r') || smtp_user.contains('\0') {
@@ -148,7 +148,7 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     // (보조 맵 파일도 덮어쓰기 전에 저장해야 완전한 rollback이 가능)
     let ts_out = common::run("date", &["+%Y%m%d-%H%M%S.%N"]).unwrap_or_else(|_| "backup".into());
     let ts = ts_out.trim();
-    let backup_dir = format!("/etc/postfix/prelik-backup-{ts}");
+    let backup_dir = format!("/etc/postfix/pxi-backup-{ts}");
     common::run_bash(&format!("sudo mkdir -p {backup_dir}"))?;
 
     struct BackupSet {
@@ -214,7 +214,7 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
 
     // 추가
     let append = format!("
-# prelik postfix-relay
+# pxi postfix-relay
 relayhost = [{maddy_ip}]:{port}
 smtp_sasl_auth_enable = yes
 smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
@@ -227,7 +227,7 @@ sender_canonical_maps = regexp:/etc/postfix/sender_canonical
 
     // SASL 패스워드가 /tmp에 순간이라도 평문 노출되지 않게 먼저 권한 0600으로 생성
     let sasl = format!("[{maddy_ip}]:{port} {smtp_user}:{smtp_pass}\n");
-    let sasl_tmp = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let sasl_tmp = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let sasl_tmp = sasl_tmp.trim().to_string();
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
@@ -240,7 +240,7 @@ sender_canonical_maps = regexp:/etc/postfix/sender_canonical
     ))?;
 
     let canonical = format!("/.+/    {smtp_user}\n");
-    let can_tmp = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let can_tmp = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let can_tmp = can_tmp.trim().to_string();
     let _g2 = Cleanup(std::path::PathBuf::from(&can_tmp));
     fs::write(&can_tmp, canonical)?;
@@ -287,7 +287,7 @@ fn status() {
 }
 
 fn doctor() {
-    println!("=== prelik-mail doctor ===");
+    println!("=== pxi-mail doctor ===");
     println!("  pct:       {}", if common::has_cmd("pct") { "✓" } else { "✗" });
     println!("  postfix:   {}", if common::has_cmd("postfix") { "✓" } else { "✗" });
     println!("  systemctl: {}", if common::has_cmd("systemctl") { "✓" } else { "✗" });
@@ -321,7 +321,7 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
         let _ = std::process::Command::new("pct").args(["start", vmid]).status();
         std::thread::sleep(std::time::Duration::from_secs(3));
     } else {
-        anyhow::bail!("LXC {vmid} 없음 — 먼저 생성하세요 (prelik-lxc create)");
+        anyhow::bail!("LXC {vmid} 없음 — 먼저 생성하세요 (pxi-lxc create)");
     }
 
     // 2. Maddy 설치
@@ -447,7 +447,7 @@ target.queue remote_queue {{
 }
 
 fn read_host_env(key: &str) -> String {
-    for p in ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"] {
+    for p in ["/etc/pxi/.env", "/etc/proxmox-host-setup/.env"] {
         if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
                 if let Some(v) = line.strip_prefix(&format!("{key}=")) {
@@ -460,7 +460,7 @@ fn read_host_env(key: &str) -> String {
 }
 
 fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
-    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
     let tmp_path = std::path::PathBuf::from(&tmp);
     struct Cleanup(std::path::PathBuf);

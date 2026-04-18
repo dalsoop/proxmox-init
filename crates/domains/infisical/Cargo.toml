@@ -1,13 +1,13 @@
 [package]
-name = "prelik-infisical"
+name = "pxi-infisical"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "prelik-infisical"
+name = "pxi-infisical"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-prelik-core = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

@@ -1,12 +1,12 @@
-//! prelik-vm — Proxmox QEMU VM 관리 (qm 래퍼).
+//! pxi-vm — Proxmox QEMU VM 관리 (qm 래퍼).
 //! LXC와 별개. vzdump는 LXC와 공통.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::Serialize;
 
 #[derive(Parser)]
-#[command(name = "prelik-vm", about = "Proxmox QEMU VM 관리")]
+#[command(name = "pxi-vm", about = "Proxmox QEMU VM 관리")]
 struct Cli {
     /// list/status를 JSON으로 출력 (자동화/CI 친화)
     #[arg(long, global = true)]
@@ -256,7 +256,7 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
 }
 
 fn doctor() {
-    println!("=== prelik-vm doctor ===");
+    println!("=== pxi-vm doctor ===");
     for (name, cmd) in &[("qm", "qm"), ("vzdump", "vzdump"), ("pvesh", "pvesh")] {
         println!("  {} {name}", if common::has_cmd(cmd) { "✓" } else { "✗" });
     }

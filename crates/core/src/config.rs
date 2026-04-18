@@ -1,4 +1,4 @@
-//! 런타임 설정 로더. ~/.config/prelik/config.toml 또는 /etc/prelik/config.toml.
+//! 런타임 설정 로더. ~/.config/pxi/config.toml 또는 /etc/pxi/config.toml.
 
 use crate::paths;
 use serde::{Deserialize, Serialize};

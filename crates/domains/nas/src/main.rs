@@ -1,12 +1,12 @@
-//! prelik-nas — 범용 NAS 관리.
+//! pxi-nas — 범용 NAS 관리.
 //! SMB/CIFS + NFS 마운트, Synology DSM API, TrueNAS API 지원.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use prelik_core::common;
+use pxi_core::common;
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "prelik-nas", about = "NAS 마운트 + Synology/TrueNAS 관리")]
+#[command(name = "pxi-nas", about = "NAS 마운트 + Synology/TrueNAS 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -33,7 +33,7 @@ enum Cmd {
         /// SMB 사용자 (SMB에만 필요)
         #[arg(long)]
         user: Option<String>,
-        /// SMB 비밀번호 (SMB에만 필요, 또는 /etc/prelik/.env의 NAS_PASSWORD)
+        /// SMB 비밀번호 (SMB에만 필요, 또는 /etc/pxi/.env의 NAS_PASSWORD)
         #[arg(long)]
         password: Option<String>,
         /// /etc/fstab에 영구 등록
@@ -109,7 +109,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 // ============================================================
-// Mount management (ported from existing prelik-nas)
+// Mount management (ported from existing pxi-nas)
 // ============================================================
 
 fn mount(
@@ -229,7 +229,7 @@ fn fstab_add(target: &str, fstab_line: &str) -> anyhow::Result<()> {
 }
 
 fn secure_tempfile() -> anyhow::Result<(String, TempGuard)> {
-    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
     let guard = TempGuard(tmp.clone());
     common::run("chmod", &["600", &tmp])?;
@@ -313,7 +313,7 @@ fn synology_api_call(cfg: &SynologyConfig, sid: &str, api: &str, method: &str, v
 
 fn synology_login(cfg: &SynologyConfig) -> anyhow::Result<String> {
     let url = format!("{}/webapi/auth.cgi", cfg.url);
-    let device_id = "prelik-nas";
+    let device_id = "pxi-nas";
     let params = format!(
         "api=SYNO.API.Auth&version=6&method=login&account={}&passwd={}&format=sid&device_id={device_id}&device_name={device_id}",
         urlenc(&cfg.user),
@@ -345,7 +345,7 @@ fn synology_login(cfg: &SynologyConfig) -> anyhow::Result<String> {
 
 fn synology_login_with_otp(cfg: &SynologyConfig, otp: &str) -> anyhow::Result<String> {
     let url = format!("{}/webapi/auth.cgi", cfg.url);
-    let device_id = "prelik-nas";
+    let device_id = "pxi-nas";
     let params = format!(
         "api=SYNO.API.Auth&version=6&method=login&account={}&passwd={}&format=sid&otp_code={}&device_id={device_id}&device_name={device_id}",
         urlenc(&cfg.user),
@@ -759,7 +759,7 @@ fn read_env(key: &str) -> String {
             return v;
         }
     }
-    let paths = ["/etc/prelik/.env", "/etc/proxmox-host-setup/.env"];
+    let paths = ["/etc/pxi/.env", "/etc/proxmox-host-setup/.env"];
     for p in paths {
         if let Ok(raw) = fs::read_to_string(p) {
             for line in raw.lines() {
@@ -773,7 +773,7 @@ fn read_env(key: &str) -> String {
 }
 
 fn doctor() {
-    println!("=== prelik-nas doctor ===");
+    println!("=== pxi-nas doctor ===");
     for (name, cmd) in &[
         ("mount", "mount"),
         ("mount.cifs (cifs-utils)", "mount.cifs"),

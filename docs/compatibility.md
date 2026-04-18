@@ -22,7 +22,7 @@
 | **vm** | ✓ | ✗ | ✓ | ✗ | qm 필요 |
 | **backup** | ✓ | ✗ | ✓ | ✗ | vzdump 필요 |
 | **iso** | ✓ | ✗ | ✓ | ✗ | pvesm 필요 |
-| **deploy** | ✓ | ✗ | ✓ | ✗ | prelik-lxc 의존 |
+| **deploy** | ✓ | ✗ | ✓ | ✗ | pxi-lxc 의존 |
 | **monitor** | ✓ | △ | ✓ | ✓ | host 커맨드는 어디서나, lxc/vm은 PVE만 |
 | **net** | ✓ | ✓ | ✓ | ✓ | ip/ping/getent — 어디서나 |
 | **node** | ✓ | ✗ | ✓ | ✗ | pvesh + ssh 필요 |

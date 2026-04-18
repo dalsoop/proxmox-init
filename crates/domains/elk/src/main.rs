@@ -1,10 +1,10 @@
-//! prelik-elk — ELK 스택 (Elasticsearch + Kibana + Logstash) 관리.
+//! pxi-elk — ELK 스택 (Elasticsearch + Kibana + Logstash) 관리.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 
 #[derive(Parser)]
-#[command(name = "prelik-elk", about = "ELK 스택 관리 (ES + Kibana + Logstash)")]
+#[command(name = "pxi-elk", about = "ELK 스택 관리 (ES + Kibana + Logstash)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
                 "echo '*.* @@{}:5514' > /etc/rsyslog.d/90-elk.conf && \
                  apt-get install -y rsyslog 2>/dev/null; \
                  systemctl enable --now rsyslog && systemctl restart rsyslog && \
-                 logger -t prelik-elk 'ELK connected from LXC {}'",
+                 logger -t pxi-elk 'ELK connected from LXC {}'",
                 ELK_IP, vmid
             );
             common::run("pct", &["exec", &vmid, "--", "bash", "-c", &script]);

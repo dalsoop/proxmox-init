@@ -48,21 +48,21 @@ jobs:
           mkdir -p dist
           # CLI: install.sh가 내려받는 단일 엔트리
           if [ -f "$BIN_DIR/prelik" ]; then
-            tar czf "dist/prelik-${TARGET}.tar.gz" -C "$BIN_DIR" prelik
+            tar czf "dist/pxi-${TARGET}.tar.gz" -C "$BIN_DIR" prelik
           fi
-          # Domains: prelik-{domain}-{target}.tar.gz
-          for bin in prelik-ai prelik-bootstrap prelik-cloudflare prelik-host prelik-nas prelik-workspace prelik-account prelik-telegram prelik-comfyui prelik-vm prelik-backup prelik-connect prelik-lxc prelik-mail prelik-traefik prelik-iso prelik-monitor prelik-net prelik-node prelik-recovery; do
+          # Domains: pxi-{domain}-{target}.tar.gz
+          for bin in pxi-ai pxi-bootstrap pxi-cloudflare pxi-host pxi-nas pxi-workspace pxi-account pxi-telegram pxi-comfyui pxi-vm pxi-backup pxi-connect pxi-lxc pxi-mail pxi-traefik pxi-iso pxi-monitor pxi-net pxi-node pxi-recovery; do
             if [ -f "$BIN_DIR/$bin" ]; then
               tar czf "dist/${bin}-${TARGET}.tar.gz" -C "$BIN_DIR" "$bin"
             fi
           done
           # deploy: 바이너리 + 기본 레시피 번들 (install 시 자동 배포)
-          if [ -f "$BIN_DIR/prelik-deploy" ]; then
+          if [ -f "$BIN_DIR/pxi-deploy" ]; then
             STAGE=$(mktemp -d)
-            cp "$BIN_DIR/prelik-deploy" "$STAGE/"
+            cp "$BIN_DIR/pxi-deploy" "$STAGE/"
             mkdir -p "$STAGE/recipes"
             cp examples/recipes/*.toml "$STAGE/recipes/" 2>/dev/null || true
-            tar czf "dist/prelik-deploy-${TARGET}.tar.gz" -C "$STAGE" .
+            tar czf "dist/pxi-deploy-${TARGET}.tar.gz" -C "$STAGE" .
             rm -rf "$STAGE"
           fi
           ls -la dist/

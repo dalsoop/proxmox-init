@@ -5,7 +5,7 @@ unmaintained = "warn"
 yanked = "warn"
 
 [licenses]
-# 허용 라이선스 (prelik은 MIT)
+# 허용 라이선스 (pxi은 MIT)
 allow = [
     "MIT",
     "Apache-2.0",

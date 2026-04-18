@@ -1,5 +1,5 @@
 // 빌드 타임에 git tag를 CARGO_PKG_VERSION 대신 PRELIK_GIT_VERSION으로 주입.
-// cargo workspace.version은 0.1.0 고정이라 `prelik --version`이 부정확했음.
+// cargo workspace.version은 0.1.0 고정이라 `pxi --version`이 부정확했음.
 fn main() {
     let version = std::process::Command::new("git")
         .args(["describe", "--tags", "--dirty=-dev", "--always"])

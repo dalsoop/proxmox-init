@@ -1,12 +1,12 @@
-//! prelik-net — 네트워크 진단 (read-only). Proxmox 브리지/route/DNS/ping.
+//! pxi-net — 네트워크 진단 (read-only). Proxmox 브리지/route/DNS/ping.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::Serialize;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "prelik-net", about = "네트워크 진단")]
+#[command(name = "pxi-net", about = "네트워크 진단")]
 struct Cli {
     /// JSON 출력 (자동화/CI 친화)
     #[arg(long, global = true)]
@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn doctor() -> anyhow::Result<()> {
-    println!("=== prelik-net doctor ===");
+    println!("=== pxi-net doctor ===");
     println!("  ip       : {}", mark(common::has_cmd("ip")));
     println!("  ping     : {}", mark(common::has_cmd("ping")));
     println!("  getent   : {}", mark(common::has_cmd("getent")));
@@ -342,7 +342,7 @@ fn net_status() -> anyhow::Result<()> {
 
     println!();
     if !fwd_ok || (policy_warning && !has_forward) {
-        println!("  ⚠ 문제 발견됨 → `prelik-net net-fix --apply`로 복구 가능");
+        println!("  ⚠ 문제 발견됨 → `pxi-net net-fix --apply`로 복구 가능");
     } else {
         println!("  ✓ 네트워크 정상");
     }
@@ -410,7 +410,7 @@ fn net_audit() -> anyhow::Result<()> {
     if !failed_list.is_empty() {
         println!("\n  실패 목록:");
         for (vmid, name) in &failed_list { println!("    - {vmid} ({name})"); }
-        println!("\n  → `prelik-net net-fix --apply`로 FORWARD 규칙 복구 후 재테스트");
+        println!("\n  → `pxi-net net-fix --apply`로 FORWARD 규칙 복구 후 재테스트");
     }
     Ok(())
 }
@@ -436,7 +436,7 @@ fn net_fix(apply: bool) -> anyhow::Result<()> {
     for issue in &issues { println!("    ✗ {issue}"); }
 
     if !apply {
-        println!("\n  → `prelik-net net-fix --apply`로 자동 복구");
+        println!("\n  → `pxi-net net-fix --apply`로 자동 복구");
         return Ok(());
     }
 
@@ -455,7 +455,7 @@ fn net_fix(apply: bool) -> anyhow::Result<()> {
         println!("  ✓ MASQUERADE 룰 추가");
     }
 
-    println!("\n  복구 완료. `prelik-net net-audit`으로 검증하세요.");
+    println!("\n  복구 완료. `pxi-net net-audit`으로 검증하세요.");
     Ok(())
 }
 
@@ -504,7 +504,7 @@ fn ip_audit() -> anyhow::Result<()> {
 
     println!("\n  총 {total}개 LXC, 위반 {violations}개");
     if violations > 0 {
-        println!("  → `prelik-net ip-fix --apply`로 IP 일괄 수정");
+        println!("  → `pxi-net ip-fix --apply`로 IP 일괄 수정");
     }
     Ok(())
 }
@@ -587,9 +587,9 @@ fn ip_fix(apply: bool) -> anyhow::Result<()> {
     }
 
     if apply {
-        println!("\n  완료. `prelik-net ip-audit`으로 재검증하세요.");
+        println!("\n  완료. `pxi-net ip-audit`으로 재검증하세요.");
     } else {
-        println!("\n  → `prelik-net ip-fix --apply`로 실제 적용");
+        println!("\n  → `pxi-net ip-fix --apply`로 실제 적용");
     }
     Ok(())
 }
@@ -662,7 +662,7 @@ fn ingress_audit() -> anyhow::Result<()> {
     if issues == 0 {
         println!("  ✓ 외부 접근 파이프라인 정상");
     } else {
-        println!("  ⚠ {issues}건 문제 발견 → `prelik-net ingress-fix --apply`로 DNAT 복구");
+        println!("  ⚠ {issues}건 문제 발견 → `pxi-net ingress-fix --apply`로 DNAT 복구");
     }
     Ok(())
 }
@@ -689,7 +689,7 @@ fn ingress_fix(apply: bool) -> anyhow::Result<()> {
     if !apply {
         if !has_http { println!("  ✗ HTTP DNAT 누락: vmbr0:80 -> {traefik_ip}:80"); }
         if !has_https { println!("  ✗ HTTPS DNAT 누락: vmbr0:443 -> {traefik_ip}:443"); }
-        println!("\n  → `prelik-net ingress-fix --apply`로 적용");
+        println!("\n  → `pxi-net ingress-fix --apply`로 적용");
         return Ok(());
     }
 
@@ -712,7 +712,7 @@ fn ingress_fix(apply: bool) -> anyhow::Result<()> {
         println!("  ✓ HTTPS DNAT 추가");
     }
 
-    println!("\n  복구 완료. `prelik-net ingress-audit`으로 검증하세요.");
+    println!("\n  복구 완료. `pxi-net ingress-audit`으로 검증하세요.");
     Ok(())
 }
 

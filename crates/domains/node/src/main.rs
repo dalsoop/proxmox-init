@@ -1,12 +1,12 @@
-//! prelik-node — Proxmox 클러스터 노드 관리 (read-only + ssh exec).
+//! pxi-node — Proxmox 클러스터 노드 관리 (read-only + ssh exec).
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "prelik-node", about = "Proxmox 클러스터 노드 관리")]
+#[command(name = "pxi-node", about = "Proxmox 클러스터 노드 관리")]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn doctor() -> anyhow::Result<()> {
-    println!("=== prelik-node doctor ===");
+    println!("=== pxi-node doctor ===");
     println!("  pvesh : {}", mark(common::has_cmd("pvesh")));
     println!("  ssh   : {} (exec 명령용)", mark(common::has_cmd("ssh")));
     Ok(())
@@ -180,7 +180,7 @@ fn cluster_node_ip(node: &str) -> anyhow::Result<String> {
         .find(|v| v["type"].as_str() == Some("node") && v["name"].as_str() == Some(node))
         .and_then(|v| v["ip"].as_str().map(String::from))
         .ok_or_else(|| anyhow::anyhow!(
-            "노드 '{node}'는 클러스터 멤버가 아니거나 IP 없음 (prelik-node list 로 확인). \
+            "노드 '{node}'는 클러스터 멤버가 아니거나 IP 없음 (pxi-node list 로 확인). \
              임의 호스트 SSH는 차단됩니다."
         ))
 }

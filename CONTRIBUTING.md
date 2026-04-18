@@ -3,7 +3,7 @@
 ## 새 도메인 추가
 
 1. `crates/domains/<name>/` 생성
-   - `Cargo.toml` — `prelik-<name>` 바이너리 + `prelik-core` 의존
+   - `Cargo.toml` — `pxi-<name>` 바이너리 + `pxi-core` 의존
    - `src/main.rs` — `clap` CLI + `Doctor` 서브커맨드 (graceful, exit 0)
 
 2. `ncl/domains.ncl` 레지스트리에 메타데이터:
@@ -20,7 +20,7 @@
 
 4. `tests/smoke.sh`의 도메인 리스트에 추가 (알파벳 순)
 
-5. `.github/workflows/release.yml`의 `for bin in ...` 목록에 `prelik-<name>` 추가
+5. `.github/workflows/release.yml`의 `for bin in ...` 목록에 `pxi-<name>` 추가
 
 6. PR 생성
 
@@ -103,14 +103,14 @@ read-only 명령(list/status 등)에 `--json` 글로벌 플래그:
 
 - `clap` derive 매크로
 - 에러: `anyhow::Result`
-- 외부 명령: `prelik_core::common::run()` (비밀 포함 시 `run_secret()`)
+- 외부 명령: `pxi_core::common::run()` (비밀 포함 시 `run_secret()`)
 - 명령 존재 확인: `common::has_cmd()` (외부 `which` 바이너리 의존 금지)
-- 호스트 경로: `prelik_core::paths::*`
+- 호스트 경로: `pxi_core::paths::*`
 - doctor: 누락 의존성은 **보고만**, exit 0 (CI smoke 호환)
 
 ## 보안 원칙
 
-- 크리덴셜은 `/etc/prelik/.env` 또는 인자로만
+- 크리덴셜은 `/etc/pxi/.env` 또는 인자로만
 - `/tmp` 직접 안 쓰고 `mktemp` 사용 (예측 불가 경로)
 - curl 다운로드: HTTPS + `--fail` + atomic mv (`.tmp` → 최종)
 - 사용자 설정 파일: merge/append (절대 replace 안 함)

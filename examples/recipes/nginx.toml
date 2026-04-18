@@ -16,7 +16,7 @@ run = """
 cat > /var/www/html/index.html << 'HTML'
 <!DOCTYPE html><html>
 <head><title>Prelik nginx</title></head>
-<body><h1>Deployed via prelik-deploy</h1><p>nginx LXC</p></body>
+<body><h1>Deployed via pxi-deploy</h1><p>nginx LXC</p></body>
 </html>
 HTML
 """

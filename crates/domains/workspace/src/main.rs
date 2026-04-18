@@ -1,15 +1,15 @@
-//! prelik-workspace — 개발자 작업 환경 초기화.
+//! pxi-workspace — 개발자 작업 환경 초기화.
 //! tmux conf/start + shell alias (BEGIN/END markers) + lxc-shell + lxc-tmux + nvim-markdown + status.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use prelik_core::common;
-use prelik_core::helpers;
+use pxi_core::common;
+use pxi_core::helpers;
 
 use std::fs;
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "prelik-workspace", about = "작업 환경 (tmux + shell 도구 + LXC 환경)")]
+#[command(name = "pxi-workspace", about = "작업 환경 (tmux + shell 도구 + LXC 환경)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -70,12 +70,12 @@ impl MarkdownProfile {
 
 const SHELL_TOOLS: &[&str] = &["fzf", "zoxide", "fd-find", "bat", "eza"];
 
-const ALIAS_BEGIN: &str = "# BEGIN: prelik-shell-setup v1";
-const ALIAS_END: &str = "# END: prelik-shell-setup v1";
+const ALIAS_BEGIN: &str = "# BEGIN: pxi-shell-setup v1";
+const ALIAS_END: &str = "# END: pxi-shell-setup v1";
 
 const ALIAS_BLOCK: &str = r#"
-# BEGIN: prelik-shell-setup v1
-# (managed by prelik workspace shell-setup -- 수동 수정 금지)
+# BEGIN: pxi-shell-setup v1
+# (managed by pxi workspace shell-setup -- 수동 수정 금지)
 alias ll='eza -alh'
 alias ls='eza'
 alias lt='eza --tree --level=2'
@@ -87,7 +87,7 @@ if command -v zoxide >/dev/null 2>&1; then
 fi
 
 # tmux 세션 숫자 스위치 (1~99 입력 시 해당 세션, 없으면 최근 tmux)
-__prelik_tmux_jump() {
+__pxi_tmux_jump() {
     local n="$1" target
     if [ -n "$TMUX" ]; then
         tmux switch-client -t ="$n" 2>/dev/null && return
@@ -105,10 +105,10 @@ __prelik_tmux_jump() {
     fi
 }
 for _n in $(seq 1 99); do
-    alias $_n="__prelik_tmux_jump $_n"
+    alias $_n="__pxi_tmux_jump $_n"
 done
 unset _n
-# END: prelik-shell-setup v1
+# END: pxi-shell-setup v1
 "#;
 
 const TMUX_PLUGINS: &[(&str, &str)] = &[
@@ -118,7 +118,7 @@ const TMUX_PLUGINS: &[(&str, &str)] = &[
 ];
 
 const TMUX_CONF: &str = "\
-# prelik-workspace 자동 생성
+# pxi-workspace 자동 생성
 set -g default-terminal \"tmux-256color\"
 set -ga terminal-overrides \",*256col*:Tc\"
 set -g mouse on
@@ -152,11 +152,11 @@ set -g @resurrect-capture-pane-contents 'on'
 run '~/.tmux/plugins/tpm/tpm'
 ";
 
-const TMUX_SESSION: &str = "prelik";
+const TMUX_SESSION: &str = "pxi";
 
 const MDNVIM_APPNAME: &str = "mdnvim";
 const MDNVIM_WRAPPER: &str = "/usr/local/bin/mdnvim";
-const MDNVIM_MARKER: &str = "-- prelik-workspace mdnvim";
+const MDNVIM_MARKER: &str = "-- pxi-workspace mdnvim";
 const MDNVIM_PACKAGES: &[&str] = &[
     "neovim", "git", "curl", "ripgrep", "fd-find", "unzip", "build-essential",
 ];
@@ -198,7 +198,7 @@ fn tmux_setup() -> anyhow::Result<()> {
 
     let conf_path = home.join(".tmux.conf");
     if conf_path.exists() {
-        let backup = home.join(format!(".tmux.conf.prelik-backup-{}",
+        let backup = home.join(format!(".tmux.conf.pxi-backup-{}",
             common::run("date", &["+%Y%m%d-%H%M%S"]).unwrap_or_default().trim()));
         fs::copy(&conf_path, &backup)?;
         println!("  백업: {}", backup.display());
@@ -277,8 +277,8 @@ fn shell_setup() -> anyhow::Result<()> {
     // .bashrc.d 방식도 지원
     let rc_dir = home.join(".bashrc.d");
     fs::create_dir_all(&rc_dir)?;
-    let rc_path = rc_dir.join("prelik.sh");
-    let shell_rc = "# prelik-workspace shell extras\n\
+    let rc_path = rc_dir.join("pxi.sh");
+    let shell_rc = "# pxi-workspace shell extras\n\
         if command -v bat >/dev/null; then alias cat='bat --paging=never'; fi\n\
         if command -v eza >/dev/null; then alias ls='eza'; fi\n\
         alias g='git'\nalias t='tmux'\nalias ta='tmux attach -t'\nalias tl='tmux ls'\n";
@@ -287,7 +287,7 @@ fn shell_setup() -> anyhow::Result<()> {
     // ~/.bashrc에 source 줄 추가 (없으면)
     let bashrc_content = fs::read_to_string(home.join(".bashrc")).unwrap_or_default();
     if !bashrc_content.contains("bashrc.d") {
-        let source_line = "\n# prelik-workspace\nfor f in ~/.bashrc.d/*.sh; do [ -r \"$f\" ] && source \"$f\"; done\n";
+        let source_line = "\n# pxi-workspace\nfor f in ~/.bashrc.d/*.sh; do [ -r \"$f\" ] && source \"$f\"; done\n";
         fs::write(home.join(".bashrc"), bashrc_content + source_line)?;
         println!("[shell] ~/.bashrc에 bashrc.d source 줄 추가");
     }
@@ -360,7 +360,7 @@ fn reconcile_bashrc(existing: &str) -> (String, ReconcileAction) {
 }
 
 fn strip_managed_block(input: &str) -> String {
-    // Strip both new prelik and old phs BEGIN/END markers
+    // Strip both new pxi and old phs BEGIN/END markers
     strip_block_between(input, ALIAS_BEGIN, ALIAS_END)
 }
 
@@ -729,7 +729,7 @@ fn lxc_shell_setup(vmid: &str) -> anyhow::Result<()> {
             println!("[shell] {}", action.message());
             let b64 = base64_encode(next.as_bytes());
             lxc_exec(vmid, &["bash", "-c",
-                &format!("echo '{b64}' | base64 -d > /root/.bashrc.prelik.new && mv /root/.bashrc.prelik.new /root/.bashrc")])?;
+                &format!("echo '{b64}' | base64 -d > /root/.bashrc.pxi.new && mv /root/.bashrc.pxi.new /root/.bashrc")])?;
             println!("[shell] .bashrc 갱신 완료");
         }
     }
@@ -778,7 +778,7 @@ fn lxc_tmux_setup(vmid: &str) -> anyhow::Result<()> {
 
     // .tmux.conf 배포
     let existing = lxc_exec(vmid, &["cat", "/root/.tmux.conf"]).unwrap_or_default();
-    if existing.contains("prelik-workspace") {
+    if existing.contains("pxi-workspace") {
         println!("[tmux] .tmux.conf 이미 설정됨");
     } else {
         println!("[tmux] .tmux.conf 배포 중...");
@@ -811,7 +811,7 @@ fn status() {
 
     println!("\n[tmux]");
     let tmux_conf = home.join(".tmux.conf");
-    println!("  .tmux.conf: {}", if tmux_conf.exists() { "+" } else { "- (prelik run workspace tmux-setup)" });
+    println!("  .tmux.conf: {}", if tmux_conf.exists() { "+" } else { "- (pxi run workspace tmux-setup)" });
 
     let session_ok = common::run("tmux", &["has-session", "-t", TMUX_SESSION]).is_ok();
     println!("  세션 '{TMUX_SESSION}': {}", if session_ok { "+ 실행중" } else { "-" });
@@ -831,12 +831,12 @@ fn status() {
     if bashrc.exists() {
         let content = fs::read_to_string(&bashrc).unwrap_or_default();
         let has_block = content.contains(ALIAS_BEGIN);
-        println!("  managed block: {}", if has_block { "+" } else { "- (prelik run workspace shell-setup)" });
+        println!("  managed block: {}", if has_block { "+" } else { "- (pxi run workspace shell-setup)" });
     } else {
         println!("  .bashrc: - (없음)");
     }
-    let alias_file = home.join(".bashrc.d/prelik.sh");
-    println!("  bashrc.d/prelik.sh: {}", if alias_file.exists() { "+" } else { "-" });
+    let alias_file = home.join(".bashrc.d/pxi.sh");
+    println!("  bashrc.d/pxi.sh: {}", if alias_file.exists() { "+" } else { "-" });
 
     println!("\n[mdnvim]");
     println!("  wrapper ({}): {}", MDNVIM_WRAPPER, if Path::new(MDNVIM_WRAPPER).exists() { "+" } else { "-" });
@@ -849,7 +849,7 @@ fn status() {
 // ---------------------------------------------------------------------------
 
 fn doctor() {
-    println!("=== prelik-workspace doctor ===");
+    println!("=== pxi-workspace doctor ===");
     for (name, cmd) in &[
         ("tmux", "tmux"),
         ("nvim", "nvim"),

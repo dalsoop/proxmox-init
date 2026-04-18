@@ -1,5 +1,5 @@
 //! dotenvx 래퍼 (.env.vault 암호화/복호화).
-//! 전제: `dotenvx` CLI가 PATH에 있음. `prelik install bootstrap`이 설치.
+//! 전제: `dotenvx` CLI가 PATH에 있음. `pxi install bootstrap`이 설치.
 
 use crate::{common, paths};
 use std::path::Path;

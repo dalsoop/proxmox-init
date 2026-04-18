@@ -1,12 +1,12 @@
-//! prelik-comfyui — ComfyUI LXC 설치 관리.
+//! pxi-comfyui — ComfyUI LXC 설치 관리.
 //! GPU 패스스루 + ComfyUI 클론 + Python 의존성 + systemd.
 //! phs의 dalsoop-specific 워크플로우는 제외, 설치 골격만.
 
 use clap::{Parser, Subcommand};
-use prelik_core::common;
+use pxi_core::common;
 
 #[derive(Parser)]
-#[command(name = "prelik-comfyui", about = "ComfyUI LXC 설치 관리")]
+#[command(name = "pxi-comfyui", about = "ComfyUI LXC 설치 관리")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -118,7 +118,7 @@ fn install(vmid: &str, path: &str, port: &str) -> anyhow::Result<()> {
     // systemd unit
     let unit = format!(
         "[Unit]
-Description=ComfyUI (prelik)
+Description=ComfyUI (pxi)
 After=network-online.target
 
 [Service]
@@ -161,7 +161,7 @@ fn status(vmid: &str) -> anyhow::Result<()> {
 }
 
 fn secure_tempfile() -> anyhow::Result<(String, TempGuard)> {
-    let out = common::run("mktemp", &["-t", "prelik.XXXXXXXX"])?;
+    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim().to_string();
     let guard = TempGuard(tmp.clone());
     common::run("chmod", &["600", &tmp])?;
@@ -176,7 +176,7 @@ impl Drop for TempGuard {
 }
 
 fn doctor() {
-    println!("=== prelik-comfyui doctor ===");
+    println!("=== pxi-comfyui doctor ===");
     println!("  pct:       {}", if common::has_cmd("pct") { "✓" } else { "✗" });
     // NVIDIA 드라이버 호스트 확인
     if std::path::Path::new("/dev/nvidia0").exists() {
