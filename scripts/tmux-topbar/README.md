@@ -23,8 +23,10 @@ Apps     🔐 spf  📊 htop
 ```
 
 - Panes 줄 끝의 `| -` (split-h / split-v) 버튼을 Users 줄 우측 끝으로 이식
-- Users 줄 가장 오른쪽에 큰 톱니바퀴(⚙) 추가 → 클릭 시 `tmux-config` 새 윈도우
-- Apps 줄에서 `tmux-config` 항목 제거 (톱니바퀴로 대체)
+- Users 줄 가장 오른쪽에 큰 톱니바퀴(⚙) 추가 → 클릭 시 `tmux-topbar` TUI 새 윈도우
+- Apps 줄에서 `tmux-topbar` (구 `tmux-config`) 항목 제거 (톱니바퀴로 대체)
+- 호환을 위해 `/usr/local/bin/tmux-config` → `tmux-topbar` 심링크는 유지
+  (`tmux-sessionbar` 가 init 단계에서 옛 이름을 호출함)
 
 ## 동작
 
@@ -55,13 +57,13 @@ systemctl daemon-reload
 tmux-sessionbar apply  # 기본 레이아웃으로 복구
 ```
 
-`tmux-config` 앱을 다시 활성화하려면 `/root/.config/tmux-windowbar/config.toml`
+설정 TUI 를 Apps 줄에 다시 노출하려면 `/root/.config/tmux-windowbar/config.toml`
 의 `[[apps]]` 에 다음을 추가:
 
 ```toml
 [[apps]]
 emoji = "⚙️"
-command = "tmux-config"
+command = "tmux-topbar"
 fg = "#282c34"
 bg = "#56b6c2"
 mode = "pane"

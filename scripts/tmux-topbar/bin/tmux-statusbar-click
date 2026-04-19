@@ -5,7 +5,7 @@ range="${1:-}"
 
 case "$range" in
     _settings)
-        tmux new-window -n settings tmux-config
+        tmux new-window -n tmux-topbar tmux-topbar
         exit 0
         ;;
 esac
