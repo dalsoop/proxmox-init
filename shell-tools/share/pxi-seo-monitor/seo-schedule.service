@@ -1,0 +1,16 @@
+[Unit]
+Description=Prelik SEO Monitor — Laravel scheduler (schedule:work)
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/html
+ExecStart=/usr/bin/php artisan schedule:work
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

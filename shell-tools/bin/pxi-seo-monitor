@@ -146,6 +146,19 @@ cmd_sites_import_wp() {
 cmd_analyze() { require_up; artisan "seo:analyze ${1:-}"; }
 cmd_report()  { require_up; artisan "seo:report  ${1:-}"; }
 
+# ── Laravel 스케줄러 (schedule:work systemd) ────────────────────────────────
+cmd_schedule_install() {
+  require_up
+  [ -f "$SHARE_DIR/seo-schedule.service" ] || die "seo-schedule.service 시드 없음"
+  pct push "$VMID" "$SHARE_DIR/seo-schedule.service" /etc/systemd/system/seo-schedule.service
+  in_lxc "systemctl daemon-reload && systemctl enable --now seo-schedule"
+  ok "seo-schedule 등록"
+}
+cmd_schedule_status()  { require_up; in_lxc "systemctl --no-pager --lines=0 status seo-schedule 2>&1 | head -10"; }
+cmd_schedule_logs()    { require_up; in_lxc "journalctl -u seo-schedule -n ${1:-100} --no-pager"; }
+cmd_schedule_restart() { require_up; in_lxc "systemctl restart seo-schedule"; ok "restart OK"; }
+cmd_schedule_list()    { require_up; artisan "schedule:list"; }
+
 # ── Playwright API (내장, LXC 내부 127.0.0.1) ──────────────────────────────
 cmd_playwright_status() {
   require_up
@@ -309,6 +322,10 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor schedule install                  # Laravel schedule:work systemd 등록
+  pxi-seo-monitor schedule list                     # routes/console.php 의 스케줄 목록
+  pxi-seo-monitor schedule status / logs [N] / restart
+
   pxi-seo-monitor status / url
   pxi-seo-monitor logs [app|nginx|php|error]
   pxi-seo-monitor artisan <args...>
@@ -352,6 +369,17 @@ main() {
         results)  cmd_tests_results "$@" ;;
         report)   cmd_tests_report "$@" ;;
         *) usage; die "알 수 없는 tests 서브커맨드: $sub" ;;
+      esac
+      ;;
+    schedule)
+      local sub="${1:-status}"; shift || true
+      case "$sub" in
+        install)  cmd_schedule_install ;;
+        status)   cmd_schedule_status ;;
+        logs)     cmd_schedule_logs "$@" ;;
+        restart)  cmd_schedule_restart ;;
+        list)     cmd_schedule_list ;;
+        *) usage; die "알 수 없는 schedule 서브커맨드: $sub" ;;
       esac
       ;;
     analyze)  cmd_analyze "$@" ;;
