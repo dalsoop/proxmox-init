@@ -390,6 +390,19 @@ systemctl daemon-reload
 systemctl enable xpra-xdesktop.service
 systemctl restart xpra-xdesktop.service
 
+# Xpra HTML5 클라이언트 더블 커서 해결 — 브라우저 커서 + 서버 렌더 커서 동시 표시 방지.
+# div.window 영역만 브라우저 커서 숨김 (connect 대화상자 등 다른 영역은 그대로).
+if [ -f /usr/share/xpra/www/css/client.css ] && ! grep -q "xpra-single-cursor-override" /usr/share/xpra/www/css/client.css; then
+  cat >> /usr/share/xpra/www/css/client.css <<'CURSOR_CSS'
+
+/* xpra-single-cursor-override (pxi-xdesktop)
+ * 브라우저 커서 + 서버-렌더 커서 = 더블 커서. Xpra 창 내부만 브라우저 커서 숨김. */
+div.window, div.window canvas {
+  cursor: none !important;
+}
+CURSOR_CSS
+fi
+
 # Xpra HTML5 기본 index.html → 자동접속 리다이렉터.
 # 원본 폼에 비어있는 password 필드가 있어 UX가 혼란 → autoconnect=true 로 바로 연결.
 # 서버 쪽 auth 는 이미 비활성 (--tcp-auth 없음) 이라 실제 인증은 필요 없음.
