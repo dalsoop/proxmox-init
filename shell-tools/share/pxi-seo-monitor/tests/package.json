@@ -1,0 +1,12 @@
+{
+  "name": "prelik-seo-monitor-tests",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:site": "playwright test --grep",
+    "report": "playwright show-report /mnt/seo-artifacts/__html-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}

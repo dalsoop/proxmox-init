@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+# pxi-laravel — 자체 호스팅 Laravel LXC 관리 CLI
+# 패턴: pxi-wordpress 미러. nginx + php-fpm + mariadb + composer + node + Traefik.
+#
+# Usage:
+#   pxi-laravel install --vmid N --hostname HN --domain D --repo URL [opts]
+#   pxi-laravel setup    <vmid>           # composer/npm/migrate/cache 재실행
+#   pxi-laravel update   <vmid>           # git pull + setup + opcache 재시작
+#   pxi-laravel artisan  <vmid> <args...>
+#   pxi-laravel logs     <vmid> [app|nginx|php|error]
+#   pxi-laravel status   <vmid>
+#   pxi-laravel doctor   <vmid>
+#   pxi-laravel env-show <vmid>
+#   pxi-laravel env-edit <vmid>
+#   pxi-laravel db       <vmid> [client|dump|psql…]
+#   pxi-laravel delete   <vmid>
+#   pxi-laravel list
+#   pxi-laravel help
+
+set -euo pipefail
+
+TEMPLATE="local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
+STORAGE="local-lvm"
+BRIDGE="vmbr1"
+GW="10.0.50.1"
+NETMASK="/16"
+APP_ROOT="/var/www/html"
+TAG="laravel"
+
+c_red()   { printf '\033[0;31m%s\033[0m' "$*"; }
+c_green() { printf '\033[0;32m%s\033[0m' "$*"; }
+c_blue()  { printf '\033[0;34m%s\033[0m' "$*"; }
+c_yel()   { printf '\033[0;33m%s\033[0m' "$*"; }
+log()  { echo "$(c_blue '[pxi-laravel]') $*" >&2; }
+ok()   { echo "$(c_green '✓') $*" >&2; }
+warn() { echo "$(c_yel '⚠') $*" >&2; }
+die()  { echo "$(c_red '✗') $*" >&2; exit 1; }
+
+in_lxc() { pct exec "$1" -- bash -lc "$2"; }
+
+# ── LXC 상태/존재 헬퍼 ──────────────────────────────────────────────────────
+lxc_exists() { pct config "$1" >/dev/null 2>&1; }
+lxc_running() { [ "$(pct status "$1" 2>/dev/null | awk '{print $2}')" = "running" ]; }
+lxc_ip() { pct config "$1" 2>/dev/null | grep -oP 'ip=\K[0-9.]+' | head -1; }
+
+require_laravel() {
+  local vmid="$1"
+  lxc_exists "$vmid" || die "LXC $vmid 없음"
+  pct config "$vmid" | grep -qE "^tags:.*\b$TAG\b" \
+    || die "LXC $vmid 는 laravel 태그가 없음 (pxi-laravel install 로 생성된 게 아님)"
+}
+
+gen_pw() { head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24; }
+
+# ── 설치 ────────────────────────────────────────────────────────────────────
+usage_install() {
+  cat <<'EOF'
+LXC 생성 + nginx + PHP-FPM + MariaDB + Composer + Node + Laravel 앱 배포 + Traefik 라우트
+
+Usage:
+  pxi-laravel install \
+    --vmid <VMID> --hostname <HN> --domain <DOMAIN> --repo <URL> \
+    [--ip 10.0.50.XX] [--branch main] [--app-name "name"] \
+    [--disk 16] [--cores 2] [--memory 2048] \
+    [--db-name laravel] [--db-user laravel] [--db-password PW] \
+    [--php 8.2|8.3|8.4] [--node 20|22] \
+    [--no-npm] [--no-migrate] [--no-traefik] \
+    [--composer-remove "pkg/a,pkg/b"] [--composer-remove-repos "host1,host2"]
+
+예:
+  pxi-laravel install \
+    --vmid 50183 --hostname ranode-seo --domain ranode-seo.50.internal.kr \
+    --repo http://gitlab.50.internal.kr/dalsoop/legacy/ranode-seo.git \
+    --db-name ranode_seo --db-user ranode_seo
+EOF
+}
+
+cmd_install() {
+  local vmid="" hostname="" domain="" repo="" branch="main"
+  local ip="" app_name=""
+  local disk="16" cores="2" memory="2048"
+  local db_name="" db_user="" db_password=""
+  local php_ver="8.2" node_ver="20"
+  local do_npm="yes" do_migrate="yes" do_traefik="yes"
+  local composer_remove=""
+  local composer_remove_repos=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --vmid)        vmid="$2"; shift 2 ;;
+      --hostname)    hostname="$2"; shift 2 ;;
+      --domain)      domain="$2"; shift 2 ;;
+      --repo)        repo="$2"; shift 2 ;;
+      --branch)      branch="$2"; shift 2 ;;
+      --ip)          ip="$2"; shift 2 ;;
+      --app-name)    app_name="$2"; shift 2 ;;
+      --disk)        disk="$2"; shift 2 ;;
+      --cores)       cores="$2"; shift 2 ;;
+      --memory)      memory="$2"; shift 2 ;;
+      --db-name)     db_name="$2"; shift 2 ;;
+      --db-user)     db_user="$2"; shift 2 ;;
+      --db-password) db_password="$2"; shift 2 ;;
+      --php)         php_ver="$2"; shift 2 ;;
+      --node)        node_ver="$2"; shift 2 ;;
+      --no-npm)      do_npm="no"; shift ;;
+      --no-migrate)  do_migrate="no"; shift ;;
+      --no-traefik)  do_traefik="no"; shift ;;
+      --composer-remove)       composer_remove="$2"; shift 2 ;;
+      --composer-remove-repos) composer_remove_repos="$2"; shift 2 ;;
+      -h|--help)     usage_install; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [[ -n "$vmid" && -n "$hostname" && -n "$domain" && -n "$repo" ]] \
+    || { usage_install; die "--vmid/--hostname/--domain/--repo 는 필수"; }
+
+  [[ -z "$app_name"    ]] && app_name="$hostname"
+  [[ -z "$db_name"     ]] && db_name="$(echo "$hostname" | tr '-' '_')"
+  [[ -z "$db_user"     ]] && db_user="$db_name"
+  [[ -z "$db_password" ]] && db_password="$(gen_pw)"
+
+  # IP 자동 할당
+  if [[ -z "$ip" ]]; then
+    for i in $(seq 180 250); do
+      ping -c1 -W1 "10.0.50.$i" >/dev/null 2>&1 || { ip="10.0.50.$i"; break; }
+    done
+  fi
+  [[ -n "$ip" ]] || die "IP 자동 할당 실패 — --ip 로 지정하세요"
+
+  log "설치 요약:"
+  cat <<EOF >&2
+  VMID:       $vmid
+  Hostname:   $hostname
+  Domain:     $domain
+  IP:         $ip$NETMASK (gw $GW, $BRIDGE)
+  Repo:       $repo  (branch=$branch)
+  Resources:  ${cores}c / ${memory}MB / ${disk}GB
+  PHP:        $php_ver        Node: $node_ver
+  DB:         $db_name / user=$db_user
+  Migrate:    $do_migrate   NPM build: $do_npm   Traefik: $do_traefik
+EOF
+
+  if lxc_exists "$vmid"; then
+    die "LXC $vmid 이미 존재. 다른 vmid 쓰거나 pxi-laravel delete $vmid"
+  fi
+
+  # ── 1. LXC 생성 ─────────────────────────────────────────────────────────
+  log "[1/9] LXC 생성"
+  local pw; pw="$(gen_pw)"
+  pct create "$vmid" "$TEMPLATE" \
+    --hostname "$hostname" \
+    --cores "$cores" \
+    --memory "$memory" \
+    --rootfs "${STORAGE}:${disk}" \
+    --net0 "name=eth0,bridge=${BRIDGE},gw=${GW},ip=${ip}${NETMASK},type=veth" \
+    --onboot 1 \
+    --unprivileged 1 \
+    --features nesting=1 \
+    --password "$pw" \
+    --tags "$TAG" \
+    >/dev/null
+  pct start "$vmid"
+  sleep 3
+  in_lxc "$vmid" "until getent hosts deb.debian.org >/dev/null 2>&1; do sleep 1; done" || true
+  ok "LXC $vmid 부팅 완료"
+
+  # ── 2. 시스템 패키지 ─────────────────────────────────────────────────────
+  log "[2/9] 시스템 패키지 설치"
+  in_lxc "$vmid" "
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg git unzip nginx \
+      mariadb-server mariadb-client supervisor cron
+  " >&2
+  ok "OS base 설치"
+
+  # ── 3. PHP 설치 (Sury) ──────────────────────────────────────────────────
+  log "[3/9] PHP ${php_ver} 설치"
+  in_lxc "$vmid" "
+    export DEBIAN_FRONTEND=noninteractive
+    curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/sury-php.gpg
+    echo 'deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ trixie main' \
+      > /etc/apt/sources.list.d/sury-php.list
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends \
+      php${php_ver}-fpm php${php_ver}-cli php${php_ver}-common php${php_ver}-mysql \
+      php${php_ver}-mbstring php${php_ver}-xml php${php_ver}-zip php${php_ver}-gd \
+      php${php_ver}-curl php${php_ver}-bcmath php${php_ver}-intl php${php_ver}-redis \
+      php${php_ver}-bz2 php${php_ver}-opcache php${php_ver}-sqlite3
+    update-alternatives --set php /usr/bin/php${php_ver} || true
+  " >&2
+  ok "PHP ${php_ver}"
+
+  # ── 4. Composer ─────────────────────────────────────────────────────────
+  log "[4/9] Composer 설치"
+  in_lxc "$vmid" "
+    curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer --quiet
+    composer --version
+  " >&2
+  ok "Composer"
+
+  # ── 5. Node.js ──────────────────────────────────────────────────────────
+  log "[5/9] Node.js ${node_ver} 설치"
+  in_lxc "$vmid" "
+    export DEBIAN_FRONTEND=noninteractive
+    curl -fsSL https://deb.nodesource.com/setup_${node_ver}.x | bash -
+    apt-get install -y -qq --no-install-recommends nodejs
+    node --version; npm --version
+  " >&2
+  ok "Node.js ${node_ver}"
+
+  # ── 6. MariaDB + DB 생성 ────────────────────────────────────────────────
+  log "[6/9] MariaDB 설정 + DB/유저 생성"
+  in_lxc "$vmid" "
+    systemctl enable --now mariadb
+    mariadb -e \"CREATE DATABASE IF NOT EXISTS \\\`${db_name}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\"
+    mariadb -e \"CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_password}';\"
+    mariadb -e \"GRANT ALL ON \\\`${db_name}\\\`.* TO '${db_user}'@'localhost';\"
+    mariadb -e 'FLUSH PRIVILEGES;'
+  " >&2
+  ok "MariaDB 준비"
+
+  # ── 7. 리포 클론 + .env ──────────────────────────────────────────────────
+  log "[7/9] 리포 클론 ($repo @ $branch)"
+  in_lxc "$vmid" "
+    rm -rf $APP_ROOT
+    git clone --branch '$branch' --depth 1 '$repo' $APP_ROOT
+    cd $APP_ROOT
+    [ -f .env ] || cp .env.example .env
+  " >&2
+
+  # composer.json 에서 패키지 제거 (dead private repo 대응)
+  if [[ -n "$composer_remove" ]]; then
+    log "composer.json 에서 패키지 제거: $composer_remove"
+    # LXC 내부에 헬퍼 스크립트 드롭 후 실행 (shell quoting 지옥 회피)
+    pct exec "$vmid" -- bash -c "cat > /tmp/_cr.py <<'PYEOF'
+import json, os
+pkgs = [p.strip() for p in os.environ['PKGS'].split(',') if p.strip()]
+path = '$APP_ROOT/composer.json'
+data = json.load(open(path))
+for p in pkgs:
+    data.get('require', {}).pop(p, None)
+    data.get('require-dev', {}).pop(p, None)
+json.dump(data, open(path,'w'), indent=4)
+print('removed:', pkgs)
+PYEOF"
+    pct exec "$vmid" -- bash -c "PKGS='$composer_remove' python3 /tmp/_cr.py" >&2
+    # composer.lock 는 제거된 패키지를 여전히 붙잡고 있으므로 삭제 → install 시 재해결
+    in_lxc "$vmid" "rm -f $APP_ROOT/composer.lock" >&2
+  fi
+
+  # composer.json 의 repositories 섹션에서 죽은 호스트 제거
+  if [[ -n "$composer_remove_repos" ]]; then
+    log "composer.json repositories 에서 호스트 제거: $composer_remove_repos"
+    pct exec "$vmid" -- bash -c "cat > /tmp/_crr.py <<'PYEOF'
+import json, os
+hosts = [h.strip() for h in os.environ['HOSTS'].split(',') if h.strip()]
+path = '$APP_ROOT/composer.json'
+data = json.load(open(path))
+repos = data.get('repositories', [])
+keep = [r for r in repos if not (isinstance(r, dict) and any(h in (r.get('url') or '') for h in hosts))]
+data['repositories'] = keep
+json.dump(data, open(path,'w'), indent=4)
+print('kept repos:', keep)
+PYEOF"
+    pct exec "$vmid" -- bash -c "HOSTS='$composer_remove_repos' python3 /tmp/_crr.py" >&2
+    in_lxc "$vmid" "rm -f $APP_ROOT/composer.lock" >&2
+  fi
+
+  # APP_KEY 는 아직 없음 — artisan key:generate 에서 채움.
+  # .env 의 DB/APP 관련 값 주입.
+  in_lxc "$vmid" "
+    cd $APP_ROOT
+    sed -i -E \"s|^APP_NAME=.*|APP_NAME='${app_name}'|\"            .env
+    sed -i -E \"s|^APP_ENV=.*|APP_ENV=production|\"                  .env
+    sed -i -E \"s|^APP_DEBUG=.*|APP_DEBUG=false|\"                   .env
+    sed -i -E \"s|^APP_URL=.*|APP_URL=https://${domain}|\"           .env
+    sed -i -E \"s|^DB_CONNECTION=.*|DB_CONNECTION=mysql|\"           .env
+    sed -i -E \"s|^[# ]*DB_HOST=.*|DB_HOST=127.0.0.1|\"              .env
+    sed -i -E \"s|^[# ]*DB_PORT=.*|DB_PORT=3306|\"                   .env
+    sed -i -E \"s|^[# ]*DB_DATABASE=.*|DB_DATABASE=${db_name}|\"     .env
+    sed -i -E \"s|^[# ]*DB_USERNAME=.*|DB_USERNAME=${db_user}|\"     .env
+    sed -i -E \"s|^[# ]*DB_PASSWORD=.*|DB_PASSWORD=${db_password}|\" .env
+    # 옵션: 내부 메일 프록시 사용
+    sed -i -E \"s|^MAIL_MAILER=.*|MAIL_MAILER=smtp|\"                .env
+    sed -i -E \"s|^MAIL_HOST=.*|MAIL_HOST=10.0.50.122|\"             .env
+    sed -i -E \"s|^MAIL_PORT=.*|MAIL_PORT=2525|\"                    .env
+    grep -qE '^MAIL_ENCRYPTION=' .env && sed -i -E \"s|^MAIL_ENCRYPTION=.*|MAIL_ENCRYPTION=null|\" .env || echo 'MAIL_ENCRYPTION=null' >> .env
+  " >&2
+  ok "리포 + .env"
+
+  # ── 8. App 셋업 (composer / key / migrate / npm / cache) ────────────────
+  log "[8/9] 앱 셋업 (composer install / key:generate / migrate / npm build)"
+  _run_setup "$vmid" "$do_npm" "$do_migrate"
+  ok "앱 셋업"
+
+  # ── 9. nginx + php-fpm + Traefik 라우트 ─────────────────────────────────
+  log "[9/9] nginx + php-fpm vhost + Traefik 라우트"
+  _deploy_nginx "$vmid" "$domain" "$php_ver"
+
+  if [[ "$do_traefik" == "yes" ]]; then
+    _traefik_register "$vmid" "$hostname" "$domain" "$ip"
+  else
+    warn "--no-traefik → Traefik 라우트 등록 생략 (수동 pxi-service add)"
+  fi
+
+  # 요약 저장
+  in_lxc "$vmid" "
+    mkdir -p /etc/pxi
+    cat > /etc/pxi/laravel.meta <<META
+VMID=$vmid
+HOSTNAME=$hostname
+DOMAIN=$domain
+IP=$ip
+REPO=$repo
+BRANCH=$branch
+APP_ROOT=$APP_ROOT
+PHP_VER=$php_ver
+NODE_VER=$node_ver
+DB_NAME=$db_name
+DB_USER=$db_user
+DB_PASSWORD=$db_password
+INSTALLED_AT=\$(date -Iseconds)
+META
+    chmod 600 /etc/pxi/laravel.meta
+  " >&2
+
+  echo >&2
+  ok "Laravel 배포 완료"
+  cat <<EOF >&2
+
+  $(c_green '서비스:') https://$domain
+  $(c_green 'SSH 진입:') pct enter $vmid
+  $(c_green 'DB 정보:') /etc/pxi/laravel.meta (inside LXC)
+
+  다음 단계 (필요 시):
+    pxi-laravel artisan $vmid migrate:status
+    pxi-laravel logs    $vmid app
+    pxi-laravel doctor  $vmid
+EOF
+}
+
+# ── app setup: composer + key + migrate + npm ──────────────────────────────
+_run_setup() {
+  local vmid="$1" do_npm="$2" do_migrate="$3"
+
+  # Laravel storage 서브디렉토리 보장 (git 은 이것들을 추적 안 함)
+  in_lxc "$vmid" "mkdir -p $APP_ROOT/storage/framework/{cache/data,sessions,views,testing} $APP_ROOT/storage/logs $APP_ROOT/bootstrap/cache" >&2
+
+  in_lxc "$vmid" "cd $APP_ROOT && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress" \
+    || die "composer install 실패. pct enter $vmid 로 들어가서 composer.json 확인 후 pxi-laravel setup $vmid 로 재시도"
+
+  in_lxc "$vmid" "cd $APP_ROOT && grep -q '^APP_KEY=base64:' .env || php artisan key:generate --force" >&2
+
+  if [[ "$do_migrate" == "yes" ]]; then
+    in_lxc "$vmid" "cd $APP_ROOT && php artisan migrate --force" \
+      || warn "migrate 실패 — 로그 확인 필요"
+  fi
+
+  if [[ "$do_npm" == "yes" ]]; then
+    if in_lxc "$vmid" "test -f $APP_ROOT/package.json"; then
+      in_lxc "$vmid" "cd $APP_ROOT && npm ci --no-audit --no-fund" \
+        || die "npm ci 실패"
+      in_lxc "$vmid" "cd $APP_ROOT && npm run build" \
+        || warn "npm run build 실패 — build 스크립트 확인"
+    else
+      warn "package.json 없음 — npm 단계 생략"
+    fi
+  fi
+
+  # 캐시 + 심볼릭 링크 + 퍼미션
+  in_lxc "$vmid" "
+    cd $APP_ROOT
+    php artisan storage:link 2>/dev/null || true
+    php artisan config:cache 2>/dev/null || true
+    php artisan route:cache  2>/dev/null || true
+    php artisan view:cache   2>/dev/null || true
+    chown -R www-data:www-data $APP_ROOT/storage $APP_ROOT/bootstrap/cache
+    find $APP_ROOT/storage -type d -exec chmod 775 {} \\;
+    find $APP_ROOT/bootstrap/cache -type d -exec chmod 775 {} \\;
+  " >&2
+}
+
+# ── nginx vhost ─────────────────────────────────────────────────────────────
+_deploy_nginx() {
+  local vmid="$1" domain="$2" php_ver="$3"
+  in_lxc "$vmid" "
+    cat > /etc/nginx/sites-available/laravel <<NGX
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _ $domain;
+    root $APP_ROOT/public;
+    index index.php index.html;
+
+    add_header X-Frame-Options \"SAMEORIGIN\";
+    add_header X-Content-Type-Options \"nosniff\";
+
+    client_max_body_size 50M;
+
+    location / {
+        try_files \\\$uri \\\$uri/ /index.php?\\\$query_string;
+    }
+
+    location ~ \\.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php${php_ver}-fpm.sock;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\\.(?!well-known).* { deny all; }
+    access_log /var/log/nginx/laravel.access.log;
+    error_log  /var/log/nginx/laravel.error.log;
+}
+NGX
+    ln -sf /etc/nginx/sites-available/laravel /etc/nginx/sites-enabled/laravel
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t
+    systemctl enable --now php${php_ver}-fpm nginx
+    systemctl reload nginx
+  " >&2
+  ok "nginx + php-fpm 활성화"
+}
+
+# ── Traefik 라우트 ──────────────────────────────────────────────────────────
+_traefik_register() {
+  local vmid="$1" name="$2" domain="$3" ip="$4"
+  # domain = foo.50.internal.kr → root = 50.internal.kr
+  local root_domain
+  root_domain="$(echo "$domain" | sed -E 's/^[^.]+\.//')"
+  if pxi-service add \
+    --domain "$root_domain" \
+    --name "$name" \
+    --host "$domain" \
+    --ip "$ip" \
+    --port 80 \
+    --vmid "$vmid" >&2; then
+    ok "Traefik 라우트 등록: https://$domain → $ip:80"
+  else
+    warn "pxi-service add 실패 — 수동 등록 필요"
+  fi
+}
+
+# ── setup (install 후 재셋업) ───────────────────────────────────────────────
+cmd_setup() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel setup <vmid>"
+  require_laravel "$vmid"
+  _run_setup "$vmid" "yes" "yes"
+  ok "setup 완료"
+}
+
+# ── update (git pull + setup) ──────────────────────────────────────────────
+cmd_update() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel update <vmid>"
+  require_laravel "$vmid"
+  log "git pull"
+  in_lxc "$vmid" "cd $APP_ROOT && php artisan down || true; git fetch --all && git reset --hard @{u}" >&2
+  _run_setup "$vmid" "yes" "yes"
+  in_lxc "$vmid" "cd $APP_ROOT && php artisan up || true; systemctl reload php*-fpm nginx || true" >&2
+  ok "update 완료"
+}
+
+cmd_artisan() {
+  local vmid="${1:-}"; shift || true
+  [[ -n "$vmid" ]] || die "사용법: pxi-laravel artisan <vmid> <artisan args...>"
+  require_laravel "$vmid"
+  in_lxc "$vmid" "cd $APP_ROOT && php artisan $*"
+}
+
+cmd_logs() {
+  local vmid="${1:-}" kind="${2:-app}"
+  [[ -n "$vmid" ]] || die "사용법: pxi-laravel logs <vmid> [app|nginx|php|error]"
+  require_laravel "$vmid"
+  case "$kind" in
+    app)    in_lxc "$vmid" "tail -n 200 $APP_ROOT/storage/logs/laravel.log 2>/dev/null || echo '(no laravel.log yet)'" ;;
+    nginx)  in_lxc "$vmid" "tail -n 200 /var/log/nginx/laravel.access.log 2>/dev/null" ;;
+    error)  in_lxc "$vmid" "tail -n 200 /var/log/nginx/laravel.error.log 2>/dev/null" ;;
+    php)    in_lxc "$vmid" "journalctl -u 'php*-fpm' -n 200 --no-pager" ;;
+    *) die "kind: app|nginx|php|error" ;;
+  esac
+}
+
+cmd_status() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel status <vmid>"
+  require_laravel "$vmid"
+  echo "== LXC =="; pct status "$vmid"; pct config "$vmid" | grep -E '^(hostname|tags|net0|memory|cores):'
+  echo; echo "== Services =="
+  in_lxc "$vmid" "systemctl is-active mariadb nginx php*-fpm 2>&1 | head"
+  echo; echo "== App =="
+  in_lxc "$vmid" "cd $APP_ROOT && php artisan --version && php artisan about 2>/dev/null | head -40 || true"
+}
+
+cmd_doctor() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel doctor <vmid>"
+  require_laravel "$vmid"
+  local ip; ip="$(lxc_ip "$vmid")"
+  echo "IP: $ip"
+  echo -n "HTTP 80: "; curl -sk -o /dev/null -w "%{http_code}\n" "http://${ip}/" --max-time 5 || true
+  echo "services:"
+  in_lxc "$vmid" "for s in mariadb nginx php8.2-fpm php8.3-fpm php8.4-fpm; do
+    systemctl is-enabled \$s 2>/dev/null >/dev/null && printf '  %-18s %s\n' \$s \$(systemctl is-active \$s)
+  done"
+  echo "DB:"
+  in_lxc "$vmid" "mariadb -e 'SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN (\"mysql\",\"information_schema\",\"performance_schema\",\"sys\") GROUP BY table_schema;'"
+  echo "Storage perms:"
+  in_lxc "$vmid" "stat -c '%a %U:%G %n' $APP_ROOT/storage $APP_ROOT/bootstrap/cache 2>/dev/null"
+}
+
+cmd_env_show() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-show <vmid>"
+  require_laravel "$vmid"
+  in_lxc "$vmid" "cat $APP_ROOT/.env"
+}
+
+cmd_env_edit() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-edit <vmid>"
+  require_laravel "$vmid"
+  pct exec "$vmid" -- ${EDITOR:-nano} "$APP_ROOT/.env"
+  in_lxc "$vmid" "cd $APP_ROOT && php artisan config:clear && php artisan config:cache" >&2
+  ok ".env 저장 + config 캐시 재생성"
+}
+
+cmd_db() {
+  local vmid="${1:-}"; shift || true
+  [[ -n "$vmid" ]] || die "사용법: pxi-laravel db <vmid> [client|dump|mariadb args...]"
+  require_laravel "$vmid"
+  local action="${1:-client}"; shift || true
+  case "$action" in
+    client|mariadb)
+      pct exec "$vmid" -- mariadb "$@"
+      ;;
+    dump)
+      local name; name="$(in_lxc "$vmid" "grep ^DB_DATABASE= /etc/pxi/laravel.meta | cut -d= -f2")" || name=""
+      [[ -n "$name" ]] || name="$(in_lxc "$vmid" "grep ^DB_DATABASE= $APP_ROOT/.env | cut -d= -f2")"
+      local ts; ts="$(date +%Y%m%d-%H%M%S)"
+      in_lxc "$vmid" "mariadb-dump --single-transaction --quick '$name' | gzip -c > /root/${name}-${ts}.sql.gz && ls -lh /root/${name}-${ts}.sql.gz"
+      ;;
+    *) die "db action: client|dump" ;;
+  esac
+}
+
+cmd_delete() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel delete <vmid>"
+  require_laravel "$vmid"
+  local domain; domain="$(in_lxc "$vmid" "grep ^DOMAIN= /etc/pxi/laravel.meta | cut -d= -f2" 2>/dev/null || true)"
+  local hostname; hostname="$(pct config "$vmid" | awk '/^hostname:/{print $2}')"
+  warn "LXC $vmid ($hostname / $domain) 삭제 — 10초 내 Ctrl-C"
+  sleep 10
+  if [[ -n "$domain" ]]; then
+    local root_domain; root_domain="$(echo "$domain" | sed -E 's/^[^.]+\.//')"
+    pxi-service remove --domain "$root_domain" --name "$hostname" 2>/dev/null || \
+      pxi-service remove --domain "$root_domain" --host "$domain" 2>/dev/null || \
+      warn "Traefik 라우트 자동 제거 실패 — 수동: pxi-service remove"
+  fi
+  pct stop "$vmid" 2>/dev/null || true
+  pct destroy "$vmid" --purge --force 2>/dev/null
+  ok "삭제 완료"
+}
+
+cmd_list() {
+  printf '%-7s %-20s %-34s %s\n' VMID HOSTNAME DOMAIN IP
+  for v in $(pct list | awk 'NR>1 {print $1}'); do
+    pct config "$v" 2>/dev/null | grep -qE "^tags:.*\b${TAG}\b" || continue
+    local h d i
+    h="$(pct config "$v" | awk '/^hostname:/{print $2}')"
+    i="$(pct config "$v" | grep -oP 'ip=\K[0-9.]+' | head -1)"
+    d="$(in_lxc "$v" 'grep ^DOMAIN= /etc/pxi/laravel.meta 2>/dev/null | cut -d= -f2' 2>/dev/null || echo '')"
+    printf '%-7s %-20s %-34s %s\n' "$v" "$h" "$d" "$i"
+  done
+}
+
+usage() {
+  cat <<EOF
+pxi-laravel — 자체 호스팅 Laravel LXC 관리
+
+Usage:
+  pxi-laravel install  --vmid N --hostname HN --domain D --repo URL [opts]
+  pxi-laravel setup    <vmid>                         # composer/npm/migrate/cache 재실행
+  pxi-laravel update   <vmid>                         # git pull + setup + reload
+  pxi-laravel artisan  <vmid> <args...>               # php artisan pass-through
+  pxi-laravel logs     <vmid> [app|nginx|php|error]
+  pxi-laravel status   <vmid>
+  pxi-laravel doctor   <vmid>
+  pxi-laravel env-show <vmid>
+  pxi-laravel env-edit <vmid>
+  pxi-laravel db       <vmid> [client|dump]
+  pxi-laravel delete   <vmid>
+  pxi-laravel list
+
+install 상세:  pxi-laravel install --help
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    install)  cmd_install "$@" ;;
+    setup)    cmd_setup "$@" ;;
+    update)   cmd_update "$@" ;;
+    artisan)  cmd_artisan "$@" ;;
+    logs)     cmd_logs "$@" ;;
+    status)   cmd_status "$@" ;;
+    doctor)   cmd_doctor "$@" ;;
+    env-show) cmd_env_show "$@" ;;
+    env-edit) cmd_env_edit "$@" ;;
+    db)       cmd_db "$@" ;;
+    delete)   cmd_delete "$@" ;;
+    list)     cmd_list "$@" ;;
+    help|--help|-h) usage ;;
+    *) usage; die "알 수 없는 커맨드: $cmd" ;;
+  esac
+}
+
+main "$@"

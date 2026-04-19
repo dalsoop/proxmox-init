@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SPEC_GREP="${1:-@smoke}"
+TAG="${2:-default}"
+RUN_ID="run-$(date +%Y%m%d-%H%M%S)"
+NAS="/mnt/synology/works-nfs/e2e/kubetest/results"
+
+echo "=== kubetest: ${RUN_ID} ==="
+echo "  grep: ${SPEC_GREP}, 태그: ${TAG}"
+
+cat << JOBEOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${RUN_ID}
+  namespace: testkube
+  labels: { tag: "${TAG}" }
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      hostAliases:
+      - ip: "10.0.50.100"
+        hostnames: [wordpress.50.internal.kr, blog-presser.50.internal.kr, novel-eunha.50.internal.kr, photo-dalsoop.50.internal.kr, wadecho.50.internal.kr, infocutter.50.internal.kr]
+      containers:
+      - name: playwright
+        image: docker.io/library/kubetest-playwright:latest
+        imagePullPolicy: Never
+        command: ["bash", "-c"]
+        args:
+        - |
+          cp /specs/*.spec.ts /specs/playwright.config.ts /app/ 2>/dev/null
+          cd /app
+          mkdir -p /results/${RUN_ID}/artifacts
+          npx playwright test --grep "${SPEC_GREP}" --output=/results/${RUN_ID}/artifacts 2>&1 | tee /results/${RUN_ID}/output.log
+          EXIT=\\\$?
+          echo "{\"id\":\"${RUN_ID}\",\"tag\":\"${TAG}\",\"grep\":\"${SPEC_GREP}\",\"exit_code\":\\\$EXIT,\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > /results/${RUN_ID}/meta.json
+          exit \\\$EXIT
+        resources:
+          limits: { cpu: "2", memory: "2Gi" }
+        volumeMounts:
+        - { name: specs, mountPath: /specs, readOnly: true }
+        - { name: results, mountPath: /results }
+      volumes:
+      - { name: specs, nfs: { server: "192.168.2.15", path: "/volume1/works/e2e/kubetest/specs" } }
+      - { name: results, nfs: { server: "192.168.2.15", path: "/volume1/works/e2e/kubetest/results" } }
+JOBEOF
+
+echo "  실행 중..."
+if kubectl wait --for=condition=complete --timeout=300s "job/${RUN_ID}" -n testkube 2>/dev/null; then
+  RESULT="\033[32mPASS\033[0m"
+else
+  RESULT="\033[31mFAIL\033[0m"
+fi
+
+echo ""
+kubectl logs -n testkube -l "job-name=${RUN_ID}" --tail=5 2>/dev/null
+
+VIDEOS=$(find "${NAS}/${RUN_ID}" -name "*.webm" 2>/dev/null | wc -l)
+SCREENSHOTS=$(find "${NAS}/${RUN_ID}" -name "*.png" 2>/dev/null | wc -l)
+TRACES=$(find "${NAS}/${RUN_ID}" -name "*.zip" 2>/dev/null | wc -l)
+
+echo ""
+echo "=================================================="
+echo -e "  ${RESULT}  — ${RUN_ID}"
+echo "  영상: ${VIDEOS}, 스크린샷: ${SCREENSHOTS}, 트레이스: ${TRACES}"
+echo "  결과: ${NAS}/${RUN_ID}/"
+echo "=================================================="

@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+# pxi-seo-monitor — Prelik SEO Monitor (LXC 50183, prelik-seo-monitor.50.internal.kr) 관리 CLI
+# Laravel 12 + Livewire SEO 분석 앱 + 내장 Playwright (docker/ + tests/ 모노레포 스타일)
+# 템플릿: /usr/local/share/pxi-seo-monitor/ (testkube 구조 미러)
+# 공통 수명관리는 pxi-laravel 에 위임.
+set -euo pipefail
+
+SHARE_DIR="/usr/local/share/pxi-seo-monitor"
+
+VMID="${SEO_VMID:-50183}"
+APP_ROOT="/var/www/html"
+DB_NAME="ranode_seo"   # legacy DB 이름 유지 (마이그레이션 비용 회피)
+DEFAULT_EMAIL="${SEO_DEFAULT_EMAIL:-tex02@naver.com}"
+PLAYWRIGHT_ROOT="/opt/playwright"
+PLAYWRIGHT_DOCKER_DIR="$PLAYWRIGHT_ROOT/docker"
+PLAYWRIGHT_TESTS_DIR="$PLAYWRIGHT_ROOT/tests"
+PLAYWRIGHT_PORT="${SEO_PLAYWRIGHT_PORT:-3000}"
+ARTIFACTS_ROOT="/mnt/seo-artifacts"
+NAS_HOST_PATH="/mnt/synology/works-nfs/e2e/prelik-seo-monitor/playwright"
+
+c_r(){ printf '\033[0;31m%s\033[0m' "$*"; }
+c_g(){ printf '\033[0;32m%s\033[0m' "$*"; }
+c_b(){ printf '\033[0;34m%s\033[0m' "$*"; }
+c_y(){ printf '\033[0;33m%s\033[0m' "$*"; }
+ok()   { echo "$(c_g '✓') $*" >&2; }
+warn() { echo "$(c_y '⚠') $*" >&2; }
+die()  { echo "$(c_r '✗') $*" >&2; exit 1; }
+log()  { echo "$(c_b '[seo-monitor]') $*" >&2; }
+
+in_lxc()  { pct exec "$VMID" -- bash -lc "$*"; }
+artisan() { in_lxc "cd $APP_ROOT && php artisan $*"; }
+
+require_up() {
+  pct config "$VMID" >/dev/null 2>&1 || die "LXC $VMID (seo) 없음"
+  [ "$(pct status "$VMID" 2>/dev/null | awk '{print $2}')" = "running" ] \
+    || die "LXC $VMID 중지됨. pct start $VMID"
+}
+
+# ── sites ──────────────────────────────────────────────────────────────────
+cmd_sites_list() {
+  require_up
+  in_lxc "mariadb $DB_NAME -e 'SELECT id, url, name, email, schedule_time, is_active, latest_score, last_analyzed_at FROM sites ORDER BY id;'"
+}
+
+sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
+
+cmd_sites_add() {
+  require_up
+  local url="" name="" email="$DEFAULT_EMAIL" schedule="08:00"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --url)      url="$2"; shift 2 ;;
+      --name)     name="$2"; shift 2 ;;
+      --email)    email="$2"; shift 2 ;;
+      --schedule) schedule="$2"; shift 2 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  [[ -n "$url" ]] || die "--url 필요"
+
+  local e_url e_name e_email e_sched
+  e_url="$(sql_escape "$url")"
+  e_name="$(sql_escape "$name")"
+  e_email="$(sql_escape "$email")"
+  e_sched="$(sql_escape "$schedule")"
+
+  local name_val="NULL"
+  [[ -n "$name" ]] && name_val="'$e_name'"
+
+  in_lxc "mariadb $DB_NAME -e \"
+    INSERT INTO sites (url, name, email, schedule_time, is_active, created_at, updated_at)
+    VALUES ('$e_url', $name_val, '$e_email', '$e_sched', 1, NOW(), NOW())
+    ON DUPLICATE KEY UPDATE
+      name = COALESCE(VALUES(name), name),
+      email = VALUES(email),
+      schedule_time = VALUES(schedule_time),
+      updated_at = NOW();
+  \""
+  ok "upsert: $url"
+}
+
+cmd_sites_delete() {
+  require_up
+  local id="${1:-}"; [[ -n "$id" ]] || die "사용법: sites delete <id>"
+  in_lxc "mariadb $DB_NAME -e 'DELETE FROM analyses WHERE site_id=$id; DELETE FROM sites WHERE id=$id;'"
+  ok "삭제: id=$id"
+}
+
+# ── WP 자동 디스커버리 (TSV: vmid<TAB>path<TAB>siteurl<TAB>blogname) ─────────
+_wp_discover() {
+  for v in $(pct list | awk 'NR>1 && $2=="running"{print $1}'); do
+    pct exec "$v" -- bash -c '
+      shopt -s nullglob
+      for cfg in /var/www/*/wp-config.php /var/www/wp-config.php; do
+        [ -f "$cfg" ] || continue
+        p="$(dirname "$cfg")"
+        db=$(awk -F"[\047\"]" "/^define.*DB_NAME/ {for(i=1;i<=NF;i++) if (\$i==\"DB_NAME\") {print \$(i+2); break}}" "$cfg")
+        [ -n "$db" ] || continue
+        url=$(mariadb -N -s -e "SELECT option_value FROM $db.wp_options WHERE option_name=\"siteurl\" LIMIT 1;" 2>/dev/null)
+        name=$(mariadb -N -s -e "SELECT option_value FROM $db.wp_options WHERE option_name=\"blogname\" LIMIT 1;" 2>/dev/null)
+        [ -n "$url" ] && printf "%s\t%s\t%s\n" "$p" "$url" "$name"
+      done
+    ' 2>/dev/null | while IFS= read -r line; do
+      printf '%s\t%s\n' "$v" "$line"
+    done
+  done
+}
+
+cmd_sites_discover_wp() {
+  printf '%-7s %-30s %-45s %s\n' VMID PATH SITEURL BLOGNAME
+  _wp_discover | awk -F'\t' '{printf "%-7s %-30s %-45s %s\n", $1, $2, $3, $4}'
+}
+
+cmd_sites_import_wp() {
+  require_up
+  local dry_run="no" email="$DEFAULT_EMAIL"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run="yes"; shift ;;
+      --email)   email="$2"; shift 2 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  log "WP 사이트 수집 중..."
+  local tmp; tmp="$(mktemp)"
+  _wp_discover | tee "$tmp" | awk -F'\t' '{printf "  found: %s  (%s)\n", $3, $4}' >&2
+  local count; count="$(wc -l <"$tmp")"
+  [[ "$count" -eq 0 ]] && { rm -f "$tmp"; die "발견된 WP 사이트 없음"; }
+
+  if [[ "$dry_run" == "yes" ]]; then
+    warn "--dry-run: 실제 등록 생략"; rm -f "$tmp"; return 0
+  fi
+
+  log "seo 에 $count 개 사이트 upsert"
+  while IFS=$'\t' read -r vmid path url name; do
+    cmd_sites_add --url "$url" --name "$name" --email "$email"
+  done <"$tmp"
+  rm -f "$tmp"
+  ok "import-wp 완료"
+  echo >&2
+  cmd_sites_list
+}
+
+# ── 분석/리포트 ─────────────────────────────────────────────────────────────
+cmd_analyze() { require_up; artisan "seo:analyze ${1:-}"; }
+cmd_report()  { require_up; artisan "seo:report  ${1:-}"; }
+
+# ── Playwright API (내장, LXC 내부 127.0.0.1) ──────────────────────────────
+cmd_playwright_status() {
+  require_up
+  echo "== systemd =="
+  in_lxc "systemctl --no-pager --lines=0 status playwright-api 2>&1 | head -10"
+  echo "== health =="
+  in_lxc "curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health || echo 'health check FAILED'"
+}
+
+cmd_playwright_logs() {
+  require_up
+  in_lxc "journalctl -u playwright-api -n ${1:-200} --no-pager"
+}
+
+cmd_playwright_restart() {
+  require_up
+  in_lxc "systemctl restart playwright-api && sleep 2 && curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health"
+  ok "restart OK"
+}
+
+cmd_playwright_install() {
+  require_up
+  [ -d "$SHARE_DIR" ] || die "템플릿 폴더 없음: $SHARE_DIR"
+  log "Playwright 올인원 설치: $PLAYWRIGHT_ROOT/{docker,tests} + NAS 바인드마운트"
+
+  # 1. NAS 바인드 마운트 보장 (호스트 측)
+  mkdir -p "$NAS_HOST_PATH"
+  if ! pct config "$VMID" | grep -q "mp=/mnt/seo-artifacts"; then
+    log "LXC $VMID mp1 바인드 추가: $NAS_HOST_PATH → $ARTIFACTS_ROOT"
+    pct set "$VMID" --mp1 "$NAS_HOST_PATH,mp=$ARTIFACTS_ROOT,backup=0"
+    pct reboot "$VMID"
+    sleep 15
+  fi
+
+  # 2. docker/ tests/ 씨드 푸시
+  in_lxc "mkdir -p $PLAYWRIGHT_DOCKER_DIR $PLAYWRIGHT_TESTS_DIR/specs"
+  for f in Dockerfile package.json playwright.config.ts server.js; do
+    pct push "$VMID" "$SHARE_DIR/docker/$f" "$PLAYWRIGHT_DOCKER_DIR/$f"
+  done
+  for f in package.json playwright.config.ts; do
+    pct push "$VMID" "$SHARE_DIR/tests/$f" "$PLAYWRIGHT_TESTS_DIR/$f"
+  done
+  pct push "$VMID" "$SHARE_DIR/tests/specs/seo-audit.spec.ts" "$PLAYWRIGHT_TESTS_DIR/specs/seo-audit.spec.ts"
+
+  # 3. npm install + 브라우저 다운로드
+  log "docker/ 의존성 + Chromium"
+  in_lxc "cd $PLAYWRIGHT_DOCKER_DIR && npm install --omit=dev --no-audit --no-fund"
+  in_lxc "cd $PLAYWRIGHT_DOCKER_DIR && npx --yes playwright install chromium"
+  log "tests/ 의존성 + Chromium (@playwright/test)"
+  in_lxc "cd $PLAYWRIGHT_TESTS_DIR && npm install --no-audit --no-fund"
+  in_lxc "cd $PLAYWRIGHT_TESTS_DIR && npx playwright install chromium"
+
+  # 4. systemd
+  pct push "$VMID" "$SHARE_DIR/playwright-api.service" /etc/systemd/system/playwright-api.service
+  in_lxc "systemctl daemon-reload && systemctl enable playwright-api && systemctl restart playwright-api && sleep 2"
+  in_lxc "curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health" \
+    && ok "Playwright API 기동 OK" || die "기동 실패"
+
+  # 5. 앱 .env 포인트
+  in_lxc "
+    cd $APP_ROOT
+    grep -q '^PLAYWRIGHT_API_URL=' .env \
+      && sed -i 's|^PLAYWRIGHT_API_URL=.*|PLAYWRIGHT_API_URL=http://127.0.0.1:$PLAYWRIGHT_PORT|' .env \
+      || echo 'PLAYWRIGHT_API_URL=http://127.0.0.1:$PLAYWRIGHT_PORT' >> .env
+    grep -q '^PLAYWRIGHT_FALLBACK_URL=' .env \
+      && sed -i 's|^PLAYWRIGHT_FALLBACK_URL=.*|PLAYWRIGHT_FALLBACK_URL=http://127.0.0.1:$PLAYWRIGHT_PORT|' .env \
+      || echo 'PLAYWRIGHT_FALLBACK_URL=http://127.0.0.1:$PLAYWRIGHT_PORT' >> .env
+    php artisan config:clear >/dev/null
+    php artisan config:cache >/dev/null
+  "
+  ok "올인원 설치 완료 — artifacts → $ARTIFACTS_ROOT/{domain}/"
+}
+
+# ── tests (on-demand @playwright/test 실행) ────────────────────────────────
+cmd_tests_run() {
+  require_up
+  local target_url="" domain=""
+  # 인자: site_id 또는 --url URL
+  if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+    target_url="$(in_lxc "mariadb -N -s $DB_NAME -e \"SELECT url FROM sites WHERE id=$1;\"")"
+    [[ -n "$target_url" ]] || die "site id=$1 없음"
+  else
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --url)    target_url="$2"; shift 2 ;;
+        --domain) domain="$2"; shift 2 ;;
+        *) die "사용법: tests run <site_id> 또는 tests run --url URL [--domain D]" ;;
+      esac
+    done
+  fi
+  [[ -n "$target_url" ]] || die "타겟 URL 필수"
+  [[ -z "$domain" ]] && domain="$(echo "$target_url" | sed -E 's|^https?://||; s|/.*||')"
+  log "tests run → $target_url  (domain=$domain)"
+  in_lxc "cd $PLAYWRIGHT_TESTS_DIR && \
+    PLAYWRIGHT_DOMAIN='$domain' \
+    PLAYWRIGHT_TARGET_URL='$target_url' \
+    ARTIFACTS_ROOT='$ARTIFACTS_ROOT' \
+    npx playwright test ${2:-}"
+  ok "artifacts → $ARTIFACTS_ROOT/$domain/"
+}
+
+cmd_tests_results() {
+  require_up
+  local domain="${1:-}"
+  if [[ -z "$domain" ]]; then
+    in_lxc "ls -la $ARTIFACTS_ROOT/ 2>/dev/null"
+  else
+    in_lxc "find $ARTIFACTS_ROOT/$domain -maxdepth 3 -type d 2>/dev/null | head -30"
+    in_lxc "ls -la $ARTIFACTS_ROOT/$domain/last-report.json 2>/dev/null"
+  fi
+}
+
+cmd_tests_report() {
+  require_up
+  local domain="${1:-}"; [[ -n "$domain" ]] || die "사용법: tests report <domain>"
+  in_lxc "cd $PLAYWRIGHT_TESTS_DIR && npx playwright show-report $ARTIFACTS_ROOT/$domain/html-report"
+}
+
+
+cmd_status() {
+  require_up
+  echo "== LXC =="
+  pxi-laravel status "$VMID" 2>/dev/null | head -12
+  echo; echo "== Playwright API =="
+  in_lxc "systemctl is-active playwright-api; curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health || echo 'unhealthy'"
+  echo; echo "== Sites =="
+  in_lxc "mariadb $DB_NAME -e 'SELECT COUNT(*) AS total, SUM(is_active) AS active FROM sites; SELECT COUNT(*) AS analyses FROM analyses;'"
+  echo "== Latest =="
+  in_lxc "mariadb $DB_NAME -e 'SELECT id, url, latest_score, last_analyzed_at FROM sites ORDER BY last_analyzed_at DESC LIMIT 10;'"
+}
+
+cmd_url() { echo "https://prelik-seo-monitor.50.internal.kr"; }
+
+# ── pxi-laravel 패스스루 ────────────────────────────────────────────────────
+cmd_logs()    { pxi-laravel logs    "$VMID" "${1:-app}"; }
+cmd_artisan() { pxi-laravel artisan "$VMID" "$@"; }
+cmd_update()  { pxi-laravel update  "$VMID"; }
+cmd_doctor()  { pxi-laravel doctor  "$VMID"; }
+cmd_env()     { pxi-laravel env-show "$VMID"; }
+cmd_shell()   { pct enter "$VMID"; }
+
+usage() {
+  cat <<EOF
+pxi-seo-monitor — Prelik SEO Monitor (LXC $VMID, https://prelik-seo-monitor.50.internal.kr)
+
+Usage:
+  pxi-seo-monitor sites list
+  pxi-seo-monitor sites add --url URL [--name N] [--email E] [--schedule HH:MM]
+  pxi-seo-monitor sites delete <id>
+  pxi-seo-monitor sites discover-wp                # 전체 LXC 에서 WP 자동 탐지
+  pxi-seo-monitor sites import-wp [--dry-run] [--email E]
+  pxi-seo-monitor analyze  [site_id]               # seo:analyze (전체 | 특정)
+  pxi-seo-monitor report   [site_id]               # seo:report
+
+  pxi-seo-monitor playwright status
+  pxi-seo-monitor playwright logs [lines]
+  pxi-seo-monitor playwright restart
+  pxi-seo-monitor playwright install               # 올인원 재설치 (docker/+tests/, NAS 바인드, systemd, 브라우저)
+
+  pxi-seo-monitor tests run <site_id | --url URL [--domain D]>   # @playwright/test 실행, 도메인별 NAS 저장
+  pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
+  pxi-seo-monitor tests report <domain>             # html-report 서빙
+
+  pxi-seo-monitor status / url
+  pxi-seo-monitor logs [app|nginx|php|error]
+  pxi-seo-monitor artisan <args...>
+  pxi-seo-monitor update / doctor / env / shell
+
+환경변수:
+  SEO_VMID (기본 $VMID)
+  SEO_DEFAULT_EMAIL (기본 $DEFAULT_EMAIL)
+  SEO_PLAYWRIGHT_PORT (기본 $PLAYWRIGHT_PORT, 127.0.0.1 only)
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    sites)
+      local sub="${1:-list}"; shift || true
+      case "$sub" in
+        list)         cmd_sites_list ;;
+        add)          cmd_sites_add "$@" ;;
+        delete|rm)    cmd_sites_delete "$@" ;;
+        discover-wp)  cmd_sites_discover_wp ;;
+        import-wp)    cmd_sites_import_wp "$@" ;;
+        *) usage; die "알 수 없는 sites 서브커맨드: $sub" ;;
+      esac
+      ;;
+    playwright|pw)
+      local sub="${1:-status}"; shift || true
+      case "$sub" in
+        status)   cmd_playwright_status ;;
+        logs)     cmd_playwright_logs "$@" ;;
+        restart)  cmd_playwright_restart ;;
+        install)  cmd_playwright_install ;;
+        *) usage; die "알 수 없는 playwright 서브커맨드: $sub" ;;
+      esac
+      ;;
+    tests)
+      local sub="${1:-results}"; shift || true
+      case "$sub" in
+        run)      cmd_tests_run "$@" ;;
+        results)  cmd_tests_results "$@" ;;
+        report)   cmd_tests_report "$@" ;;
+        *) usage; die "알 수 없는 tests 서브커맨드: $sub" ;;
+      esac
+      ;;
+    analyze)  cmd_analyze "$@" ;;
+    report)   cmd_report "$@" ;;
+    status)   cmd_status ;;
+    url)      cmd_url ;;
+    logs)     cmd_logs "$@" ;;
+    artisan)  cmd_artisan "$@" ;;
+    update)   cmd_update ;;
+    doctor)   cmd_doctor ;;
+    env)      cmd_env ;;
+    shell)    cmd_shell ;;
+    help|--help|-h) usage ;;
+    *) usage; die "알 수 없는 커맨드: $cmd" ;;
+  esac
+}
+
+main "$@"
