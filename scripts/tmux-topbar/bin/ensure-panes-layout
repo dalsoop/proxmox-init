@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# tmux-sessionbar 가 ~/.tmux.conf 를 regen 할 때:
+#   1) patch-split-buttons.sh 호출 줄을 tmux.conf 에 재주입
+#   2) tmux 훅(session/window 이벤트)에 patch 호출을 덧붙여, render-status left 가
+#      format 을 리셋해도 바로 재이식되도록 한다.
+#   3) 런타임 format 에 즉시 적용.
+# systemd path 유닛에서 트리거됨.
+set -euo pipefail
+
+TMUX_CONF="/root/.tmux.conf"
+PATCH_SCRIPT="/root/.config/tmux-windowbar/bin/patch-split-buttons.sh"
+MARKER="patch-split-buttons.sh"
+
+[[ -f "$TMUX_CONF" ]] || exit 0
+
+if ! grep -qF "$MARKER" "$TMUX_CONF"; then
+    python3 - <<'PY'
+from pathlib import Path
+p = Path("/root/.tmux.conf")
+text = p.read_text()
+anchor = "run-shell -b '/root/.config/tmux-sessionbar/bin/tmux-windowbar apply'\n"
+if anchor not in text:
+    raise SystemExit(0)
+insert = (
+    "\n"
+    "# --- Custom: move panes split buttons to top-right (auto-maintained by ensure-panes-layout) ---\n"
+    "run-shell -b 'sleep 0.3 && /root/.config/tmux-windowbar/bin/patch-split-buttons.sh'\n"
+)
+p.write_text(text.replace(anchor, anchor + insert, 1))
+PY
+fi
+
+tmux list-sessions >/dev/null 2>&1 || exit 0
+
+# tmux-sessionbar/windowbar apply 가 완전히 끝나고 format 이 세팅되길 대기.
+sleep 4
+
+# sessionbar 의 원래 훅(render-status left)은 format[0..4]를 리셋한다. 그 훅 뒤에
+# patch 를 덧붙여, 리셋 직후 자동으로 재이식되게 한다. window-linked/unlinked 훅은
+# windowbar apply 가 사후에 재설정하므로 여기서 덮어쓰더라도 windowbar 가 또 돌면
+# 사라질 수 있음 — 그래서 patch 자체에서 windowbar apply 를 호출하지 않아야 한다.
+HOOK_CMD='run-shell -b "/root/.config/tmux-sessionbar/bin/tmux-sessionbar render-status left; /root/.config/tmux-windowbar/bin/patch-split-buttons.sh"'
+for h in client-session-changed session-created session-closed session-renamed window-linked window-unlinked; do
+    tmux set-hook -g "$h" "$HOOK_CMD"
+done
+
+# 톱니바퀴 등 커스텀 range 클릭 처리: 기본 바인딩 → 디스패처로 교체.
+tmux bind-key -T root MouseDown1Status \
+    'run-shell "TMUX_CLIENT=\"#{client_tty}\" /usr/local/bin/tmux-statusbar-click \"#{mouse_status_range}\""'
+
+"$PATCH_SCRIPT" || true
+# 혹시 늦게 돌아오는 apply 가 덮어쓰면 다시 한번.
+sleep 2
+"$PATCH_SCRIPT" || true

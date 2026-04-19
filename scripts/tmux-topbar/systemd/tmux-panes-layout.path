@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch /root/.tmux.conf for regen
+
+[Path]
+PathChanged=/root/.tmux.conf
+Unit=tmux-panes-layout.service
+
+[Install]
+WantedBy=multi-user.target

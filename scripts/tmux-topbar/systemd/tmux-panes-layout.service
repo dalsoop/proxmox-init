@@ -1,0 +1,10 @@
+[Unit]
+Description=Reinject tmux panes split-button layout after .tmux.conf regen
+
+[Service]
+Type=oneshot
+TimeoutStartSec=30
+ExecStart=/usr/local/bin/ensure-panes-layout
+Environment=HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+StandardOutput=journal
+StandardError=journal
