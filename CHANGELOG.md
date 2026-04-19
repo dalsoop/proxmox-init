@@ -9,8 +9,8 @@ Semantic Versioning (https://semver.org/)
 
 - tmux-sessionbar/windowbar 위에 얹는 우측 상단 레이아웃 커스터마이즈
 - Panes 줄 split 버튼(`| -`)을 Users 줄 우측 끝으로 이식
-- Apps 줄에서 `tmux-config` 제거, 톱니바퀴(⚙)를 Users 줄 맨 오른쪽에 배치
-  (클릭 → `tmux-config` 새 윈도우)
+- Apps 줄에서 설정 TUI 항목 제거, 톱니바퀴(⚙)를 Users 줄 맨 오른쪽에 배치
+  (클릭 → `tmux-topbar` 새 윈도우; 구 `tmux-config` 는 호환 심링크로 유지)
 - systemd path 유닛 + tmux 훅 오버라이드로 `tmux-sessionbar apply` /
   세션·윈도우 이벤트 발생 시 자동 재이식
 - 멱등 install.sh, 자세한 동작/제거 가이드는 `scripts/tmux-topbar/README.md`
