@@ -268,6 +268,95 @@ cmd_hints_clear() {
   fi
 }
 
+# ── GEO Outcome (LLM citation 측정) ────────────────────────────────────────
+cmd_geo_queries_list() {
+  require_up
+  local site_id="${1:-}"
+  artisan "seo:geo-query list $site_id"
+}
+
+cmd_geo_queries_add() {
+  require_up
+  local site_id="${1:-}"; local text="${2:-}"
+  [[ -n "$site_id" && -n "$text" ]] || die "사용법: geo-outcome queries add <site_id> \"<text>\""
+  artisan "seo:geo-query add $site_id --text=\"$text\""
+}
+
+cmd_geo_queries_remove() {
+  require_up
+  local id="${1:-}"; [[ -n "$id" ]] || die "사용법: geo-outcome queries remove <query_id>"
+  artisan "seo:geo-query remove $id"
+}
+
+cmd_geo_queries_toggle() {
+  require_up
+  local id="${1:-}"; [[ -n "$id" ]] || die "사용법: geo-outcome queries toggle <query_id>"
+  artisan "seo:geo-query toggle $id"
+}
+
+cmd_geo_queries_seed() {
+  require_up
+  local site_id="${1:-}"; [[ -n "$site_id" ]] || die "사용법: geo-outcome queries seed <site_id> [--limit N]"
+  shift || true
+  local limit="5"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --limit) limit="$2"; shift 2 ;; *) shift ;; esac
+  done
+  artisan "seo:geo-query seed $site_id --limit=$limit"
+}
+
+cmd_geo_queries_clear() {
+  require_up
+  local site_id="${1:-}"; [[ -n "$site_id" ]] || die "사용법: geo-outcome queries clear <site_id>"
+  artisan "seo:geo-query clear $site_id"
+}
+
+cmd_geo_run() {
+  require_up
+  local site_id="" provider="all" query="" text=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --provider)   provider="$2"; shift 2 ;;
+      --provider=*) provider="${1#*=}"; shift ;;
+      --query)      query="$2"; shift 2 ;;
+      --query=*)    query="${1#*=}"; shift ;;
+      --text)       text="$2"; shift 2 ;;
+      --text=*)     text="${1#*=}"; shift ;;
+      --*)          die "알 수 없는 옵션: $1" ;;
+      *)            site_id="$1"; shift ;;
+    esac
+  done
+  local args=""
+  [[ -n "$site_id" ]] && args="$args $site_id"
+  args="$args --provider=$provider"
+  [[ -n "$query"   ]] && args="$args --query=$query"
+  [[ -n "$text"    ]] && args="$args --text=\"$text\""
+  artisan "seo:geo-outcome $args"
+}
+
+cmd_geo_stats() {
+  require_up
+  local site_id="" days="30" list="" limit="50"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days)    days="$2"; shift 2 ;;
+      --days=*)  days="${1#*=}"; shift ;;
+      --list)    list="--list"; shift ;;
+      --limit)   limit="$2"; shift 2 ;;
+      --limit=*) limit="${1#*=}"; shift ;;
+      *)         site_id="$1"; shift ;;
+    esac
+  done
+  local args="$site_id --days=$days"
+  [[ -n "$list" ]] && args="$args --list --limit=$limit"
+  artisan "seo:geo-outcome-stats $args"
+}
+
+cmd_geo_providers() {
+  require_up
+  artisan "tinker --execute='\$s = app(\\App\\Services\\GeoOutcome\\Service::class); foreach (\$s->availableProviders() as \$k => \$v) { echo \$k.\": \".(\$v ? \"READY\" : \"missing API key\").PHP_EOL; }'"
+}
+
 # ── 테스트 ──────────────────────────────────────────────────────────────────
 cmd_test() {
   require_up
@@ -567,6 +656,16 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor geo-outcome providers                       # 제공자 API key 상태 확인
+  pxi-seo-monitor geo-outcome queries list [site_id]
+  pxi-seo-monitor geo-outcome queries add <site_id> "<텍스트>"
+  pxi-seo-monitor geo-outcome queries remove <query_id>
+  pxi-seo-monitor geo-outcome queries toggle <query_id>       # active on/off
+  pxi-seo-monitor geo-outcome queries seed <site_id> [--limit N]   # 분석 기반 자동 제안
+  pxi-seo-monitor geo-outcome queries clear <site_id>
+  pxi-seo-monitor geo-outcome run [site_id] [--provider=openai|perplexity|all] [--query=ID | --text="..."]
+  pxi-seo-monitor geo-outcome stats [site_id] [--days 30] [--list --limit 50]
+
   pxi-seo-monitor schedule install                  # Laravel schedule:work systemd 등록
   pxi-seo-monitor schedule list                     # routes/console.php 의 스케줄 목록
   pxi-seo-monitor schedule status / logs [N] / restart
@@ -683,6 +782,27 @@ main() {
         materialize)  cmd_hints_materialize "$@" ;;
         clear)        cmd_hints_clear "$@" ;;
         *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
+      esac
+      ;;
+    geo-outcome|geo)
+      local sub="${1:-stats}"; shift || true
+      case "$sub" in
+        run)        cmd_geo_run "$@" ;;
+        stats)      cmd_geo_stats "$@" ;;
+        providers)  cmd_geo_providers ;;
+        queries)
+          local sub2="${1:-list}"; shift || true
+          case "$sub2" in
+            list)    cmd_geo_queries_list "$@" ;;
+            add)     cmd_geo_queries_add "$@" ;;
+            remove|rm) cmd_geo_queries_remove "$@" ;;
+            toggle)  cmd_geo_queries_toggle "$@" ;;
+            seed)    cmd_geo_queries_seed "$@" ;;
+            clear)   cmd_geo_queries_clear "$@" ;;
+            *) usage; die "알 수 없는 geo-outcome queries 서브커맨드: $sub2" ;;
+          esac
+          ;;
+        *) usage; die "알 수 없는 geo-outcome 서브커맨드: $sub" ;;
       esac
       ;;
     status)   cmd_status ;;
