@@ -201,6 +201,41 @@ cmd_pages_clear() {
   ok "site_id=$site_id 페이지 삭제"
 }
 
+# ── Hints (Sitebulb 스타일 집계 이슈) ───────────────────────────────────────
+cmd_hints_list() {
+  require_up
+  local site_id="" severity="" analyzer="" top="20"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --severity) severity="$2"; shift 2 ;;
+      --analyzer) analyzer="$2"; shift 2 ;;
+      --top)      top="$2"; shift 2 ;;
+      *)          site_id="$1"; shift ;;
+    esac
+  done
+  local args="$site_id"
+  [[ -n "$severity" ]] && args="$args --severity=$severity"
+  [[ -n "$analyzer" ]] && args="$args --analyzer=$analyzer"
+  [[ -n "$top"      ]] && args="$args --top=$top"
+  artisan "seo:hints $args"
+}
+
+cmd_hints_materialize() {
+  require_up
+  artisan "seo:hints ${1:-} --materialize"
+}
+
+cmd_hints_clear() {
+  require_up
+  local site_id="${1:-}"
+  if [[ -n "$site_id" ]]; then
+    in_lxc "mariadb $DB_NAME -e 'DELETE FROM hints WHERE site_id=$site_id;'"
+    ok "site_id=$site_id hints 삭제"
+  else
+    warn "전체 hints 삭제하려면: pxi-seo-monitor hints clear all"
+  fi
+}
+
 # ── Laravel 스케줄러 (schedule:work systemd) ────────────────────────────────
 cmd_schedule_install() {
   require_up
@@ -467,6 +502,9 @@ Usage:
   pxi-seo-monitor crawl [site_id] [--depth N] [--max N] [--timeout S]  # Guzzle BFS
   pxi-seo-monitor pages list [site_id]             # 크롤된 페이지 목록
   pxi-seo-monitor pages clear <site_id>
+  pxi-seo-monitor hints list [site_id] [--severity critical|warning|info] [--analyzer meta|...] [--top N]
+  pxi-seo-monitor hints materialize [site_id]      # 기존 analyses 에서 hints 재추출
+  pxi-seo-monitor hints clear <site_id>
   pxi-seo-monitor analyze  [site_id]               # seo:analyze (전체 | 특정)
   pxi-seo-monitor report   [site_id]               # seo:report
 
@@ -583,6 +621,15 @@ main() {
         list)   cmd_pages_list "$@" ;;
         clear)  cmd_pages_clear "$@" ;;
         *) usage; die "알 수 없는 pages 서브커맨드: $sub" ;;
+      esac
+      ;;
+    hints)
+      local sub="${1:-list}"; shift || true
+      case "$sub" in
+        list)         cmd_hints_list "$@" ;;
+        materialize)  cmd_hints_materialize "$@" ;;
+        clear)        cmd_hints_clear "$@" ;;
+        *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
       esac
       ;;
     status)   cmd_status ;;
