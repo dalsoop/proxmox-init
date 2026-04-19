@@ -390,22 +390,47 @@ systemctl daemon-reload
 systemctl enable xpra-xdesktop.service
 systemctl restart xpra-xdesktop.service
 
-# Xpra HTML5 CSS 패치 — 2가지 이슈:
-#  1) start-desktop 모드에서 .windowhead (Xpra 자체 타이틀바) 가 루트창 위에 중복 표시됨.
-#     그 헤더 높이만큼 canvas 클릭/드래그 좌표가 offset 되어 **드래그가 실제로 빗나감**.
+# Xpra HTML5 클라이언트 패치 — 2가지 이슈 해결:
+#  1) start-desktop 모드에서 .windowhead (Xpra 자체 타이틀바) 가 루트창 위에 중복 렌더.
+#     update_offsets() 가 header.css("height") 를 topoffset 에 더함 → canvas 클릭/드래그
+#     좌표가 실제 서버 좌표보다 topoffset 만큼 **밀림**. CSS display:none 만으론 불충분
+#     (jQuery .css("height") 가 "auto" 반환 → NaN). JS 패치 병행 필요.
 #  2) 브라우저 기본 커서 + Xpra 서버 렌더 커서 = 더블 커서.
-if [ -f /usr/share/xpra/www/css/client.css ] && ! grep -q "xpra-pxi-overrides" /usr/share/xpra/www/css/client.css; then
-  cat >> /usr/share/xpra/www/css/client.css <<'XPRA_OVERRIDES'
+XPRA_CSS=/usr/share/xpra/www/css/client.css
+XPRA_JS=/usr/share/xpra/www/js/Window.js
+
+# CSS override (멱등)
+if [ -f "$XPRA_CSS" ] && ! grep -q "xpra-pxi-overrides" "$XPRA_CSS"; then
+  cat >> "$XPRA_CSS" <<'XPRA_OVERRIDES'
 
 /* xpra-pxi-overrides (pxi-xdesktop)
- * start-desktop 모드: Xpra HTML5 의 자체 타이틀바(.windowhead) 는 불필요 + 좌표 offset 유발.
- * 완전 숨김. 창 border/둥근모서리도 제거해 풀스크린 느낌. */
-.windowhead { display: none !important; }
+ * start-desktop 루트창의 Xpra 자체 타이틀바 숨김 (JS 패치와 병행 — 아래 Window.js 참조). */
+.windowhead { display: none !important; height: 0 !important; min-height: 0 !important; }
 .window { border: none !important; border-radius: 0 !important; }
 
 /* 더블 커서 방지 — Xpra 창 내부에선 브라우저 커서 숨김 (서버 Adwaita 커서만 표시) */
 div.window, div.window canvas { cursor: none !important; }
 XPRA_OVERRIDES
+fi
+
+# Window.js 패치 — server_is_desktop|shadow 인 창에선 add_headerbar() 를 건너뛰고
+# decorated=false 로 고정. update_offsets() 가 topoffset 에 헤더 높이 더하는 경로 차단.
+if [ -f "$XPRA_JS" ] && ! grep -q "server_is_desktop||this.client.server_is_shadow?(this.decorated" "$XPRA_JS"; then
+  python3 - "$XPRA_JS" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+orig = "this.configure_border_class(),this.add_headerbar(),this.make_draggable()"
+patched = "this.configure_border_class(),(this.client.server_is_desktop||this.client.server_is_shadow?(this.decorated=!1,this.decorations=!1):this.add_headerbar()),this.make_draggable()"
+if orig in s:
+    # 백업
+    if not (p.parent / "Window.js.orig").exists():
+        (p.parent / "Window.js.orig").write_text(s)
+    p.write_text(s.replace(orig, patched, 1))
+    print("Window.js patched")
+else:
+    print("Window.js 원본 시그니처 불일치 — 이미 패치됐거나 xpra-html5 버전 다름 (수동 확인 필요)")
+PY
 fi
 
 # Xpra HTML5 기본 index.html → 자동접속 리다이렉터.
