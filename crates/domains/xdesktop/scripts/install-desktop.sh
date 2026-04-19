@@ -154,7 +154,38 @@ cp "$USER_HOME/Desktop/Helium.desktop" "$USER_HOME/.config/autostart/Helium.desk
 
 chown -R "$XDESKTOP_USER:$XDESKTOP_USER" "$USER_HOME/Desktop" "$USER_HOME/.config"
 
-step 8/9 "Xpra systemd 서비스 (HTML5, 인증 없음, 내부망)"
+step 8/9 "nginx HTTP/1.1 bridge + Xpra systemd 서비스"
+# Xpra 내장 Python HTTP 서버는 HTTP/1.0 응답 + 동시 TCP burst 에 TCP RST 로 reject.
+# → Safari 등 HTTP/2 multistream 클라이언트가 502 연쇄 (traefik 이 RST 받음).
+# 해결: Xpra 는 127.0.0.1:$((PORT+1)) 에 바인드, 외부 :$PORT 는 nginx 가 받아 HTTP/1.1 로 변환 + keepalive pool 로 Xpra 에 중계.
+apt-get install -y --no-install-recommends nginx 2>&1 | tail -1
+rm -f /etc/nginx/sites-enabled/default
+cat > /etc/nginx/sites-enabled/xdesktop <<NGX_EOF
+upstream xpra_backend {
+  server 127.0.0.1:$((XPRA_PORT + 1));
+  keepalive 32;
+}
+server {
+  listen $XPRA_PORT default_server;
+  server_name _;
+  location / {
+    proxy_pass http://xpra_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_buffering off;
+  }
+}
+NGX_EOF
+nginx -t
+systemctl enable --now nginx
+systemctl reload nginx
+
 # xpra-server 패키지가 설치하는 스톡 socket/service 비활성화 (포트 충돌 방지).
 # 우리 커스텀 xpra-xdesktop.service 가 XPRA_PORT 를 직접 바인딩함.
 systemctl stop xpra-server.socket 2>/dev/null || true
@@ -191,7 +222,7 @@ Environment=XDG_RUNTIME_DIR=/tmp/xpra-runtime-$XDESKTOP_USER
 # root 권한으로 생성 후 xuser 소유로 변경.
 ExecStartPre=+/bin/install -d -o $XDESKTOP_USER -g $XDESKTOP_USER -m 0700 /tmp/xpra-runtime-$XDESKTOP_USER
 ExecStart=/usr/bin/xpra start-desktop $XPRA_DISPLAY \\
-  --bind-tcp=0.0.0.0:$XPRA_PORT \\
+  --bind-tcp=127.0.0.1:$((XPRA_PORT + 1)) \\
   --html=on \\
   --start=xfce4-session \\
   --daemon=no \\
