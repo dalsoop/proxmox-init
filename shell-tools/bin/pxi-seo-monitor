@@ -236,6 +236,19 @@ cmd_hints_clear() {
   fi
 }
 
+# ── 테스트 ──────────────────────────────────────────────────────────────────
+cmd_test() {
+  require_up
+  local filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --filter) filter="--filter=$2"; shift 2 ;;
+      *)        filter="--filter=$1"; shift ;;
+    esac
+  done
+  in_lxc "cd $APP_ROOT && php artisan test $filter"
+}
+
 # ── Laravel 스케줄러 (schedule:work systemd) ────────────────────────────────
 cmd_schedule_install() {
   require_up
@@ -492,6 +505,7 @@ pxi-seo-monitor — Prelik SEO Monitor (LXC $VMID, https://prelik-seo-monitor.50
 
 Usage:
   pxi-seo-monitor bootstrap                        # 올인원 (playwright install + schedule + import-wp)
+  pxi-seo-monitor test [filter]                    # php artisan test (--filter 인자 전달)
 
   pxi-seo-monitor sites list
   pxi-seo-monitor sites add --url URL [--name N] [--email E] [--schedule HH:MM]
@@ -612,6 +626,7 @@ main() {
       esac
       ;;
     bootstrap) cmd_bootstrap ;;
+    test)      cmd_test "$@" ;;
     analyze)  cmd_analyze "$@" ;;
     report)   cmd_report "$@" ;;
     crawl)    cmd_crawl "$@" ;;
