@@ -229,7 +229,9 @@ http:
 
   serversTransports:
     xdesktop-{vmid}-transport:
-      maxIdleConnsPerHost: 0
+      # Xpra 서버 = HTTP/1.0 → backend keep-alive 완전 비활성화 (Go http.Transport 기준).
+      # 주의: maxIdleConnsPerHost=0 은 '기본값 2 사용' 이지 비활성 아님 — disableKeepAlives 가 정답.
+      disableKeepAlives: true
       disableHTTP2: true
       forwardingTimeouts:
         dialTimeout: 5s
