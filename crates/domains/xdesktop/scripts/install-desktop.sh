@@ -152,6 +152,109 @@ chmod +x "$USER_HOME/Desktop/Helium.desktop"
 # 자동 실행 (선택사항 — 세션 열면 helium 바로 뜸)
 cp "$USER_HOME/Desktop/Helium.desktop" "$USER_HOME/.config/autostart/Helium.desktop"
 
+# XFCE4 패널 프로필 — 기본 XFCE 설정은 pager(빈 워크스페이스 4개), 비는 systray 슬롯 등으로
+# 원격 데스크톱 UX 에 너절함. 깔끔한 minimal profile 강제:
+#   panel-1 (상단): applicationsmenu("프로그램") + tasklist + separator + systray(fcitx5) + clock
+#   panel-2 (하단 dock): Helium / Terminal / Thunar / Mousepad 런처
+# 런처는 시스템 /usr/share/applications/*.desktop 직접 참조 (XFCE 4.20+ 지원)
+# pager 제거, 액션 플러그인 제거, 워크스페이스 1개.
+PANEL_DIR="$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$PANEL_DIR"
+cat > "$PANEL_DIR/xfce4-panel.xml" <<'PANEL_XML'
+<?xml version="1.1" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+    <value type="int" value="2"/>
+    <property name="dark-mode" type="bool" value="true"/>
+    <property name="panel-1" type="empty">
+      <property name="position" type="string" value="p=6;x=0;y=0"/>
+      <property name="length" type="uint" value="100"/>
+      <property name="position-locked" type="bool" value="true"/>
+      <property name="icon-size" type="uint" value="16"/>
+      <property name="size" type="uint" value="28"/>
+      <property name="plugin-ids" type="array">
+        <value type="int" value="1"/>
+        <value type="int" value="2"/>
+        <value type="int" value="3"/>
+        <value type="int" value="6"/>
+        <value type="int" value="7"/>
+        <value type="int" value="8"/>
+      </property>
+    </property>
+    <property name="panel-2" type="empty">
+      <property name="autohide-behavior" type="uint" value="0"/>
+      <property name="position" type="string" value="p=10;x=0;y=0"/>
+      <property name="length" type="uint" value="1"/>
+      <property name="position-locked" type="bool" value="true"/>
+      <property name="size" type="uint" value="44"/>
+      <property name="icon-size" type="uint" value="32"/>
+      <property name="plugin-ids" type="array">
+        <value type="int" value="13"/>
+        <value type="int" value="11"/>
+        <value type="int" value="12"/>
+        <value type="int" value="14"/>
+      </property>
+    </property>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="button-title" type="string" value="프로그램"/>
+    </property>
+    <property name="plugin-2" type="string" value="tasklist">
+      <property name="grouping" type="uint" value="1"/>
+      <property name="show-labels" type="bool" value="true"/>
+    </property>
+    <property name="plugin-3" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-6" type="string" value="systray">
+      <property name="square-icons" type="bool" value="true"/>
+    </property>
+    <property name="plugin-7" type="string" value="separator">
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-8" type="string" value="clock"/>
+    <property name="plugin-11" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="xfce4-terminal.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-12" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="thunar.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-13" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="helium.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-14" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="org.xfce.mousepad.desktop"/>
+      </property>
+    </property>
+  </property>
+</channel>
+PANEL_XML
+
+# xfce4-session 도 워크스페이스 1개로 고정 (pager 제거와 일관)
+cat > "$PANEL_DIR/xfwm4.xml" <<'WM_XML'
+<?xml version="1.1" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="workspace_count" type="int" value="1"/>
+    <property name="theme" type="string" value="Default-xhdpi"/>
+  </property>
+</channel>
+WM_XML
+
+# 이전 설치의 launcher-*/ 잔재 정리 (시스템 .desktop 참조로 통일했으므로 불필요)
+rm -rf "$USER_HOME/.config/xfce4/panel/launcher-"* 2>/dev/null || true
+
 chown -R "$XDESKTOP_USER:$XDESKTOP_USER" "$USER_HOME/Desktop" "$USER_HOME/.config"
 
 step 8/9 "nginx HTTP/1.1 bridge + Xpra systemd 서비스"
