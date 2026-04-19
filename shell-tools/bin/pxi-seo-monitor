@@ -109,6 +109,25 @@ cmd_sites_set_email() {
   ok "id=$id → $email"
 }
 
+# ── 사이트 진입용 인증 (encrypted 저장) ─────────────────────────────────────
+cmd_sites_auth() {
+  require_up
+  local action="${1:-show}"; shift || true
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: sites auth <show|set|clear> <id> [type] [creds]"
+  case "$action" in
+    show)  artisan "seo:auth show $site_id" ;;
+    clear) artisan "seo:auth clear $site_id" ;;
+    set)
+      local type="${1:-}"; local creds="${2:-}"
+      [[ -n "$type" && -n "$creds" ]] || die "사용법: sites auth set <id> <type> <creds>  (type: http_basic|wp_post_password|form)"
+      # creds 를 안전하게 전달 (쉘 escape)
+      in_lxc "cd $APP_ROOT && php artisan seo:auth set $site_id $type $(printf %q "$creds")"
+      ;;
+    *) die "action: show|set|clear" ;;
+  esac
+}
+
 # ── WP 자동 디스커버리 (TSV: vmid<TAB>path<TAB>siteurl<TAB>blogname) ─────────
 _wp_discover() {
   for v in $(pct list | awk 'NR>1 && $2=="running"{print $1}'); do
@@ -524,6 +543,9 @@ Usage:
   pxi-seo-monitor sites add --url URL [--name N] [--email E] [--schedule HH:MM]
   pxi-seo-monitor sites delete <id>
   pxi-seo-monitor sites activate / deactivate / set-email <id> [<email>]
+  pxi-seo-monitor sites auth show <id>
+  pxi-seo-monitor sites auth set <id> <http_basic|wp_post_password|form> <creds>
+  pxi-seo-monitor sites auth clear <id>
   pxi-seo-monitor sites discover-wp                # 전체 LXC 에서 WP 자동 탐지
   pxi-seo-monitor sites import-wp [--dry-run] [--email E]
   pxi-seo-monitor crawl [site_id] [--depth N] [--max N] [--timeout S]  # Guzzle BFS
@@ -577,6 +599,7 @@ main() {
         activate)     cmd_sites_activate "$@" ;;
         deactivate)   cmd_sites_deactivate "$@" ;;
         set-email)    cmd_sites_set_email "$@" ;;
+        auth)         cmd_sites_auth "$@" ;;
         discover-wp)  cmd_sites_discover_wp ;;
         import-wp)    cmd_sites_import_wp "$@" ;;
         *) usage; die "알 수 없는 sites 서브커맨드: $sub" ;;
