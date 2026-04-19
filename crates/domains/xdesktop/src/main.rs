@@ -173,22 +173,19 @@ fn install(vmid: &str, port: &str, user: &str, helium_tag: &str) -> anyhow::Resu
 }
 
 fn expose(vmid: &str, host: &str, port: &str) -> anyhow::Result<()> {
-    // 1) 기본 레지스트리 등록 (pxi run service list 에 노출 + traefik 기본 yml 생성)
+    // 기본 레지스트리 등록 — pxi run service list 에 노출 + traefik dynamic/ 기본 yml 생성.
+    // nginx HTTP/1.1 bridge 가 LXC 내부에서 Xpra 앞에 있으므로 traefik 특수 설정 불필요.
     let domain = host.splitn(2, '.').nth(1).unwrap_or("50.internal.kr");
-    let ip = lxc_ip(vmid)?;
     common::run("pxi-service", &[
         "add",
         "--domain", domain,
         "--name", &format!("xdesktop-{vmid}"),
         "--host", host,
-        "--ip", &ip,
+        "--ip", &lxc_ip(vmid)?,
         "--port", port,
         "--vmid", vmid,
     ])?;
-
-    // 2) traefik 기본 route 로 충분 (nginx HTTP/1.1 bridge 가 LXC 내부에서 Xpra 정리).
     println!("  ✓ traefik route 등록 완료");
-    let _ = ip;
     Ok(())
 }
 
@@ -210,10 +207,10 @@ fn status(vmid: &str) -> anyhow::Result<()> {
         .unwrap_or_else(|_| "inactive\n".into());
     println!("  xpra:     {}", svc.trim());
 
-    // 포트
+    // 포트 (nginx 14500 + Xpra 14501)
     let ports = common::pct_exec(vmid, &[
         "bash", "-c",
-        "ss -tlnp 2>/dev/null | awk 'NR==1 || /:145[0-9][0-9]/' | head -5"
+        "ss -tlnp 2>/dev/null | awk 'NR==1 || /:(14500|14501)\\>/' | head -5"
     ]).unwrap_or_default();
     println!("  포트:");
     for line in ports.lines() {

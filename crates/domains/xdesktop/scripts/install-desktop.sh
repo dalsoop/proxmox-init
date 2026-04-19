@@ -149,8 +149,9 @@ Categories=Network;WebBrowser;
 DESK
 chmod +x "$USER_HOME/Desktop/Helium.desktop"
 
-# 자동 실행 (선택사항 — 세션 열면 helium 바로 뜸)
-cp "$USER_HOME/Desktop/Helium.desktop" "$USER_HOME/.config/autostart/Helium.desktop"
+# Helium 자동 실행은 일부러 생략 — 사용자가 바탕화면/하단 dock 에서 클릭해 시작.
+# (autostart 하면 세션마다 첫 인상으로 Helium 창이 뜨는데 원격 리프레시 시 중복 실행 위험.)
+rm -f "$USER_HOME/.config/autostart/Helium.desktop" 2>/dev/null || true
 
 # XFCE4 패널 프로필 — 기본 XFCE 설정은 pager(빈 워크스페이스 4개), 비는 systray 슬롯 등으로
 # 원격 데스크톱 UX 에 너절함. 깔끔한 minimal profile 강제:
@@ -216,7 +217,12 @@ cat > "$PANEL_DIR/xfce4-panel.xml" <<'PANEL_XML'
     <property name="plugin-7" type="string" value="separator">
       <property name="style" type="uint" value="0"/>
     </property>
-    <property name="plugin-8" type="string" value="clock"/>
+    <property name="plugin-8" type="string" value="clock">
+      <property name="mode" type="uint" value="2"/>
+      <property name="digital-time-format" type="string" value="%H:%M"/>
+      <property name="digital-date-format" type="string" value="%m/%d(%a)"/>
+      <property name="tooltip-format" type="string" value="%Y년 %m월 %d일 %A"/>
+    </property>
     <property name="plugin-11" type="string" value="launcher">
       <property name="items" type="array">
         <value type="string" value="xfce4-terminal.desktop"/>
@@ -328,6 +334,7 @@ ExecStart=/usr/bin/xpra start-desktop $XPRA_DISPLAY \\
   --bind-tcp=127.0.0.1:$((XPRA_PORT + 1)) \\
   --html=on \\
   --start=xfce4-session \\
+  --resize-display=1920x1080 \\
   --daemon=no \\
   --mdns=no \\
   --notifications=yes \\
