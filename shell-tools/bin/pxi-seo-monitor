@@ -469,6 +469,38 @@ cmd_backlinks_stats() {
   artisan "seo:backlinks-stats ${1:-}"
 }
 
+cmd_backlinks_audit() {
+  require_up
+  local site_id="" limit="" conc="6" timeout="12" days="14" force=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit|--limit=*)        [[ "$1" == *=* ]] && limit="${1#*=}"   || { limit="$2";   shift; }; shift ;;
+      --concurrency|--concurrency=*) [[ "$1" == *=* ]] && conc="${1#*=}" || { conc="$2"; shift; }; shift ;;
+      --timeout|--timeout=*)    [[ "$1" == *=* ]] && timeout="${1#*=}" || { timeout="$2"; shift; }; shift ;;
+      --recheck-days|--recheck-days=*) [[ "$1" == *=* ]] && days="${1#*=}" || { days="$2"; shift; }; shift ;;
+      --force)  force="--force"; shift ;;
+      *)        site_id="$1"; shift ;;
+    esac
+  done
+  local args="$site_id --concurrency=$conc --timeout=$timeout --recheck-days=$days"
+  [[ -n "$limit" ]] && args="$args --limit=$limit"
+  [[ -n "$force" ]] && args="$args $force"
+  artisan "seo:backlinks-audit $args"
+}
+
+cmd_backlinks_bing() {
+  require_up
+  local site_id="" count="100" max="1000"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --count|--count=*) [[ "$1" == *=* ]] && count="${1#*=}" || { count="$2"; shift; }; shift ;;
+      --max|--max=*)     [[ "$1" == *=* ]] && max="${1#*=}"   || { max="$2";   shift; }; shift ;;
+      *)                 site_id="$1"; shift ;;
+    esac
+  done
+  artisan "seo:backlinks-bing $site_id --count=$count --max=$max"
+}
+
 cmd_backlinks_list() {
   require_up
   local site_id="${1:-}"; shift || true
@@ -975,6 +1007,8 @@ Usage:
   pxi-seo-monitor backlinks set-log-source <site_id> --vmid N [--path /var/log/nginx/access.log]
   pxi-seo-monitor backlinks discover <site_id> [--tail N] [--include-rotated]  # nginx log → referer 집계
   pxi-seo-monitor backlinks import <site_id> --csv <파일> [--source gsc|ahrefs|bing|manual]
+  pxi-seo-monitor backlinks audit [site_id] [--limit N] [--force]                    # source_url HEAD 생존 검증
+  pxi-seo-monitor backlinks bing  [site_id] [--count 100] [--max 1000]                # Bing Webmaster API (env BING_WEBMASTER_API_KEY)
   pxi-seo-monitor backlinks stats [site_id]
   pxi-seo-monitor backlinks list <site_id> [--domain X] [--method M] [--days N] [--follow dofollow|nofollow] [--limit N]
 
@@ -1121,6 +1155,8 @@ main() {
         set-log-source) cmd_backlinks_set_log_source "$@" ;;
         discover)       cmd_backlinks_discover "$@" ;;
         import)         cmd_backlinks_import "$@" ;;
+        audit)          cmd_backlinks_audit "$@" ;;
+        bing)           cmd_backlinks_bing "$@" ;;
         stats)          cmd_backlinks_stats "$@" ;;
         list)           cmd_backlinks_list "$@" ;;
         *) usage; die "알 수 없는 backlinks 서브커맨드: $sub" ;;
