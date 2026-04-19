@@ -148,6 +148,37 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$BIN_DIR"; then
     fi
 fi
 
+# ---------- shell-tools (선택, Proxmox 호스트에서만) ----------
+# Proxmox 호스트(=pct 존재) 에서만 pxi-laravel, pxi-seo-monitor, kubetest-run 같은
+# shell 기반 확장 설치. PRELIK_SKIP_SHELL_TOOLS=1 이면 생략.
+if [ -z "${PRELIK_SKIP_SHELL_TOOLS:-}" ] && command -v pct >/dev/null 2>&1; then
+    SHARE_DIR="${PRELIK_SHARE_DIR:-/usr/local/share}"
+    if [ ! -w "$SHARE_DIR" ] && [ "$(id -u)" -ne 0 ]; then
+        SHARE_DIR="$HOME/.local/share"
+    fi
+    mkdir -p "$SHARE_DIR"
+
+    ST_URL="https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz"
+    ST_TMP="$TMP/src"
+    mkdir -p "$ST_TMP"
+    if curl -sSL --fail --connect-timeout 10 --max-time 180 "$ST_URL" \
+        | tar -xz -C "$ST_TMP" --wildcards '*/shell-tools/*' 2>/dev/null; then
+        ST_ROOT=$(find "$ST_TMP" -maxdepth 2 -name 'shell-tools' -type d | head -1)
+        if [ -n "$ST_ROOT" ]; then
+            for f in "$ST_ROOT/bin/"*; do
+                [ -f "$f" ] || continue
+                install -m 0755 "$f" "$BIN_DIR/$(basename "$f")"
+            done
+            if [ -d "$ST_ROOT/share" ]; then
+                cp -r "$ST_ROOT/share/." "$SHARE_DIR/"
+            fi
+            echo "  shell-tools: $(ls "$ST_ROOT/bin" 2>/dev/null | tr '\n' ' ')→ $BIN_DIR/"
+        fi
+    else
+        echo "  shell-tools: 이 태그에 shell-tools/ 없음 — skip"
+    fi
+fi
+
 echo ""
 echo "✓ prelik $VERSION 설치 완료"
 echo "  다음 단계:"

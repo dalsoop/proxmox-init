@@ -1,0 +1,18 @@
+[Unit]
+Description=Playwright API (prelik-seo-monitor /navigate runtime)
+After=network.target mnt-seo\x2dartifacts.mount
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/playwright/docker
+Environment=PORT=3000
+Environment=HOME=/root
+Environment=ARTIFACTS_ROOT=/mnt/seo-artifacts
+ExecStart=/usr/bin/node /opt/playwright/docker/server.js
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
