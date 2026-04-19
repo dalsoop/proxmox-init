@@ -366,6 +366,81 @@ cmd_links_graph() {
     }\""
 }
 
+# ── 404 Monitor ────────────────────────────────────────────────────────────
+cmd_404_scan() {
+  require_up
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: 404 scan <site_id> [--tail N] [--include-rotated]"
+  local tail_n="200000" rotated=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --tail|--tail=*)   [[ "$1" == *=* ]] && tail_n="${1#*=}" || { tail_n="$2"; shift; }; shift ;;
+      --include-rotated) rotated="1"; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  local row vmid path url
+  row=$(in_lxc "mariadb -B --skip-column-names $DB_NAME -e \"SELECT log_lxc_vmid, log_path, url FROM sites WHERE id=$site_id;\"" | tr '\t' '|')
+  [[ -n "$row" ]] || die "site #$site_id 없음"
+  vmid=$(echo "$row" | cut -d'|' -f1); path=$(echo "$row" | cut -d'|' -f2); url=$(echo "$row" | cut -d'|' -f3)
+  [[ "$vmid" != "NULL" && -n "$vmid" ]] || die "log_lxc_vmid 미설정. backlinks set-log-source 먼저"
+  [[ "$path" != "NULL" && -n "$path" ]] || path="/var/log/nginx/access.log"
+
+  log "scan: LXC $vmid : $path (tail=$tail_n, site=$url)"
+  local hostfile="/tmp/404-$site_id-$$.log"
+  if [[ -n "$rotated" ]]; then
+    pct exec "$vmid" -- bash -c "
+      out=/tmp/404-concat-$$.log
+      for f in ${path}* $(dirname $path)/*.log.*.gz; do [ -e \"\$f\" ] || continue
+        case \"\$f\" in *.gz) zcat \"\$f\" >> \"\$out\" ;; *) cat \"\$f\" >> \"\$out\" ;; esac
+      done
+      tail -n $tail_n \"\$out\"; rm -f \"\$out\"
+    " > "$hostfile"
+  else
+    pct exec "$vmid" -- bash -c "tail -n $tail_n $path 2>/dev/null" > "$hostfile"
+  fi
+
+  local lxc_file="/tmp/404-$site_id.log"
+  pct push "$VMID" "$hostfile" "$lxc_file"
+  artisan "seo:404-scan $site_id --log-file=$lxc_file"
+  in_lxc "rm -f $lxc_file"
+  rm -f "$hostfile"
+}
+
+cmd_404_list() {
+  require_up
+  local site_id="${1:?사용법: 404 list <site_id> [--days N] [--unresolved] [--limit N]}"; shift || true
+  local days="30" unresolved="" limit="50"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days|--days=*)   [[ "$1" == *=* ]] && days="${1#*=}"  || { days="$2";  shift; }; shift ;;
+      --limit|--limit=*) [[ "$1" == *=* ]] && limit="${1#*=}" || { limit="$2"; shift; }; shift ;;
+      --unresolved)      unresolved="--unresolved"; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  local args="$site_id --days=$days --limit=$limit $unresolved"
+  artisan "seo:404-list $args"
+}
+
+cmd_404_suggest() { require_up; artisan "seo:404-suggest ${1:?사용법: 404 suggest <site_id>} --limit=${2:-30}"; }
+
+cmd_404_resolve() {
+  require_up
+  local id="${1:?사용법: 404 resolve <id> [--redirect URL]}"; shift || true
+  local r=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --redirect|--redirect=*) [[ "$1" == *=* ]] && r="${1#*=}" || { r="$2"; shift; }; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  local args="$id"
+  [[ -n "$r" ]] && args="$args --redirect=\"$r\""
+  artisan "seo:404-resolve $args"
+}
+
 # ── Alerts / Diff ───────────────────────────────────────────────────────────
 cmd_alert_test() {
   require_up
@@ -1097,6 +1172,11 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor 404 scan <site_id> [--tail N] [--include-rotated]          # access log → 4xx 수집
+  pxi-seo-monitor 404 list <site_id> [--days N] [--unresolved] [--limit N]
+  pxi-seo-monitor 404 suggest <site_id> [--limit N]                           # redirect 대상 제안
+  pxi-seo-monitor 404 resolve <id> [--redirect URL]                           # resolved 마킹
+
   pxi-seo-monitor alert channels                                # 채널 설정 상태 (telegram 등)
   pxi-seo-monitor alert test ["메시지"]                          # 테스트 메시지 발송
   pxi-seo-monitor alert recent [site_id] [--days N] [--rule X] [--severity critical|warning|info]
@@ -1251,6 +1331,16 @@ main() {
         materialize)  cmd_hints_materialize "$@" ;;
         clear)        cmd_hints_clear "$@" ;;
         *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
+      esac
+      ;;
+    404)
+      local sub="${1:-list}"; shift || true
+      case "$sub" in
+        scan)     cmd_404_scan "$@" ;;
+        list)     cmd_404_list "$@" ;;
+        suggest)  cmd_404_suggest "$@" ;;
+        resolve)  cmd_404_resolve "$@" ;;
+        *) usage; die "알 수 없는 404 서브커맨드: $sub" ;;
       esac
       ;;
     alert)
