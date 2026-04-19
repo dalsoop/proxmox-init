@@ -366,6 +366,127 @@ cmd_links_graph() {
     }\""
 }
 
+# ── Backlinks (Referer log + CSV import) ───────────────────────────────────
+cmd_backlinks_set_log_source() {
+  require_up
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: backlinks set-log-source <site_id> --vmid N [--path /var/log/nginx/access.log]"
+  local vmid="" path="/var/log/nginx/access.log"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --vmid)    vmid="$2"; shift 2 ;;
+      --vmid=*)  vmid="${1#*=}"; shift ;;
+      --path)    path="$2"; shift 2 ;;
+      --path=*)  path="${1#*=}"; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  [[ -n "$vmid" ]] || die "--vmid 필요"
+  local e_path; e_path="$(sql_escape "$path")"
+  in_lxc "mariadb $DB_NAME -e \"UPDATE sites SET log_lxc_vmid=$vmid, log_path='$e_path' WHERE id=$site_id;\""
+  ok "site #$site_id log source: LXC $vmid : $path"
+}
+
+cmd_backlinks_discover() {
+  require_up
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: backlinks discover <site_id> [--tail N] [--include-rotated]"
+  local tail_n="100000" rotated=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --tail)     tail_n="$2"; shift 2 ;;
+      --tail=*)   tail_n="${1#*=}"; shift ;;
+      --include-rotated) rotated="1"; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  # site 의 log_lxc_vmid / log_path 조회
+  local row
+  row=$(in_lxc "mariadb -B --skip-column-names $DB_NAME -e \"SELECT log_lxc_vmid, log_path, url FROM sites WHERE id=$site_id;\"" | tr '\t' '|')
+  [[ -n "$row" ]] || die "site #$site_id 없음"
+  local vmid path url
+  vmid=$(echo "$row" | cut -d'|' -f1)
+  path=$(echo "$row" | cut -d'|' -f2)
+  url=$(echo "$row" | cut -d'|' -f3)
+  [[ "$vmid" != "NULL" && -n "$vmid" ]] || die "site #$site_id 의 log_lxc_vmid 미설정. backlinks set-log-source 먼저"
+  [[ "$path" != "NULL" && -n "$path" ]] || path="/var/log/nginx/access.log"
+
+  log "source LXC $vmid : $path (tail=$tail_n, site=$url)"
+
+  # LXC 에서 로그 수집 (rotated 포함 옵션)
+  local hostfile="/tmp/bl-$site_id-$$.log"
+  if [[ -n "$rotated" ]]; then
+    pct exec "$vmid" -- bash -c "
+      out=/tmp/bl-concat-$$.log
+      for f in ${path}* $(dirname $path)/*.log.*.gz; do [ -e \"\$f\" ] || continue
+        case \"\$f\" in *.gz) zcat \"\$f\" >> \"\$out\" ;; *) cat \"\$f\" >> \"\$out\" ;; esac
+      done
+      tail -n $tail_n \"\$out\"; rm -f \"\$out\"
+    " > "$hostfile"
+  else
+    pct exec "$vmid" -- bash -c "tail -n $tail_n $path 2>/dev/null" > "$hostfile"
+  fi
+
+  local sz; sz=$(stat -c%s "$hostfile" 2>/dev/null || echo 0)
+  [[ "$sz" -gt 0 ]] || { rm -f "$hostfile"; die "로그 비어있음 — path 확인"; }
+  log "수집: $(du -sh "$hostfile" | cut -f1)"
+
+  # 50183 으로 push 후 artisan 실행
+  local lxc_file="/tmp/bl-$site_id.log"
+  pct push "$VMID" "$hostfile" "$lxc_file"
+  artisan "seo:backlinks-discover $site_id --log-file=$lxc_file"
+  in_lxc "rm -f $lxc_file"
+  rm -f "$hostfile"
+}
+
+cmd_backlinks_import() {
+  require_up
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: backlinks import <site_id> --csv <file> [--source gsc|ahrefs|bing|manual]"
+  local csv="" source=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --csv)     csv="$2"; shift 2 ;;
+      --csv=*)   csv="${1#*=}"; shift ;;
+      --source)  source="$2"; shift 2 ;;
+      --source=*) source="${1#*=}"; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  [[ -n "$csv" && -r "$csv" ]] || die "--csv <읽을 수 있는 파일> 필요"
+
+  local lxc_csv="/tmp/bl-import-$site_id.csv"
+  pct push "$VMID" "$csv" "$lxc_csv"
+  local args="$site_id --csv=$lxc_csv"
+  [[ -n "$source" ]] && args="$args --source=$source"
+  artisan "seo:backlinks-import $args"
+  in_lxc "rm -f $lxc_csv"
+}
+
+cmd_backlinks_stats() {
+  require_up
+  artisan "seo:backlinks-stats ${1:-}"
+}
+
+cmd_backlinks_list() {
+  require_up
+  local site_id="${1:-}"; shift || true
+  [[ -n "$site_id" ]] || die "사용법: backlinks list <site_id> [--domain X] [--method M] [--days N] [--follow dofollow|nofollow] [--limit N]"
+  local args="$site_id"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --domain|--domain=*)   [[ "$1" == *=* ]] && args="$args --domain=${1#*=}" || { args="$args --domain=$2"; shift; }; shift ;;
+      --method|--method=*)   [[ "$1" == *=* ]] && args="$args --method=${1#*=}" || { args="$args --method=$2"; shift; }; shift ;;
+      --days|--days=*)       [[ "$1" == *=* ]] && args="$args --days=${1#*=}"   || { args="$args --days=$2";   shift; }; shift ;;
+      --follow|--follow=*)   [[ "$1" == *=* ]] && args="$args --follow=${1#*=}" || { args="$args --follow=$2"; shift; }; shift ;;
+      --limit|--limit=*)     [[ "$1" == *=* ]] && args="$args --limit=${1#*=}"  || { args="$args --limit=$2";  shift; }; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  artisan "seo:backlinks-list $args"
+}
+
 # ── GEO Outcome (LLM citation 측정) ────────────────────────────────────────
 cmd_geo_queries_list() {
   require_up
@@ -851,6 +972,12 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor backlinks set-log-source <site_id> --vmid N [--path /var/log/nginx/access.log]
+  pxi-seo-monitor backlinks discover <site_id> [--tail N] [--include-rotated]  # nginx log → referer 집계
+  pxi-seo-monitor backlinks import <site_id> --csv <파일> [--source gsc|ahrefs|bing|manual]
+  pxi-seo-monitor backlinks stats [site_id]
+  pxi-seo-monitor backlinks list <site_id> [--domain X] [--method M] [--days N] [--follow dofollow|nofollow] [--limit N]
+
   pxi-seo-monitor links audit [site_id] [--limit N] [--external-only] [--force]  # HEAD 배치 검증
   pxi-seo-monitor links stats [site_id]                                  # total/internal/broken/unchecked
   pxi-seo-monitor links broken <site_id> [--type internal|external]      # 깨진 링크 목록
@@ -986,6 +1113,17 @@ main() {
         materialize)  cmd_hints_materialize "$@" ;;
         clear)        cmd_hints_clear "$@" ;;
         *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
+      esac
+      ;;
+    backlinks|bl)
+      local sub="${1:-stats}"; shift || true
+      case "$sub" in
+        set-log-source) cmd_backlinks_set_log_source "$@" ;;
+        discover)       cmd_backlinks_discover "$@" ;;
+        import)         cmd_backlinks_import "$@" ;;
+        stats)          cmd_backlinks_stats "$@" ;;
+        list)           cmd_backlinks_list "$@" ;;
+        *) usage; die "알 수 없는 backlinks 서브커맨드: $sub" ;;
       esac
       ;;
     links)
