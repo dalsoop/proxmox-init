@@ -2,6 +2,19 @@
 
 Semantic Versioning (https://semver.org/)
 
+## scripts/tmux-topbar — 2026-04-20
+
+신규 보조 스크립트 번들 (PR #27). pxi 도메인이나 버전 bump는 아니며,
+`scripts/tmux-topbar/install.sh` 로 호스트에 직접 설치.
+
+- tmux-sessionbar/windowbar 위에 얹는 우측 상단 레이아웃 커스터마이즈
+- Panes 줄 split 버튼(`| -`)을 Users 줄 우측 끝으로 이식
+- Apps 줄에서 `tmux-config` 제거, 톱니바퀴(⚙)를 Users 줄 맨 오른쪽에 배치
+  (클릭 → `tmux-config` 새 윈도우)
+- systemd path 유닛 + tmux 훅 오버라이드로 `tmux-sessionbar apply` /
+  세션·윈도우 이벤트 발생 시 자동 재이식
+- 멱등 install.sh, 자세한 동작/제거 가이드는 `scripts/tmux-topbar/README.md`
+
 ## [1.9.x] — 2026-04-16 (uninstall + 시스템 정리)
 
 ### v1.9.6 — NFS fstab replace TOCTOU 차단
