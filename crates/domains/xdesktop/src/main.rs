@@ -38,13 +38,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// 전체 배포: LXC 생성 → 데스크톱 설치 → (선택) traefik 라우트 등록
+    ///
+    /// 규약: VMID 5XXXX → IP 10.0.50.XXX (XXX = 마지막 3자리).
+    /// --ip 와 --hostname 은 생략 가능 (vmid/host 로부터 유도).
+    /// 명시적으로 주면 규약 일치 검증 후 진행, 불일치면 오류.
     Setup {
+        /// VMID — 5XXXX 형태 필수. 마지막 3자리가 IP 마지막 옥텟이 됨 (5YYY → 10.0.50.YYY)
         #[arg(long)] vmid: String,
-        #[arg(long)] hostname: String,
-        /// IP CIDR (예: 10.0.50.210/16)
-        #[arg(long)] ip: String,
-        /// traefik 공개 호스트 (예: xdesktop.50.internal.kr). 지정 시 라우트 등록
+        /// traefik 공개 호스트 (예: xdesktop-02.50.internal.kr). 지정 시 라우트 등록
         #[arg(long)] host: Option<String>,
+        /// 호스트네임 (생략 시 --host 앞부분 또는 xdesktop-<tail> 에서 유도)
+        #[arg(long)] hostname: Option<String>,
+        /// IP CIDR (생략 시 VMID 규약으로 유도: 5YYY → 10.0.50.YYY/16)
+        #[arg(long)] ip: Option<String>,
         #[arg(long, default_value = "4")] cores: String,
         #[arg(long, default_value = "4096")] memory: String,
         #[arg(long, default_value = "20")] disk: String,
@@ -105,6 +111,16 @@ fn main() -> anyhow::Result<()> {
     }
     match cli.cmd {
         Cmd::Setup { vmid, hostname, ip, host, cores, memory, disk, port, user, helium_tag } => {
+            // VMID 규약으로 ip/hostname 유도 + 검증
+            let canonical_ip = canonical_ip_for(&vmid)?;
+            let ip = match ip {
+                Some(explicit) => {
+                    validate_ip_matches_vmid(&explicit, &canonical_ip)?;
+                    explicit
+                }
+                None => format!("{canonical_ip}/16"),
+            };
+            let hostname = hostname.unwrap_or_else(|| derive_hostname(&vmid, host.as_deref()));
             setup(&vmid, &hostname, &ip, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
         }
         Cmd::Install { vmid, port, user, helium_tag } => install(&vmid, &port, &user, &helium_tag),
@@ -384,6 +400,53 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
         anyhow::bail!("{fails}개 체크 실패");
     }
     Ok(())
+}
+
+/// VMID 규약 — `AABCC` 5자리.
+///   - AA = 서브넷 3번째 옥텟 (50: pve, 60: ranode-3960x)
+///   - BCC = 마지막 옥텟 (0-255)
+/// 예: 50210 → 10.0.50.210,  60104 → 10.0.60.104.
+fn canonical_ip_for(vmid: &str) -> anyhow::Result<String> {
+    if vmid.len() != 5 || !vmid.chars().all(|c| c.is_ascii_digit()) {
+        anyhow::bail!("VMID 규약 위반: 5자리 숫자 (AABCC) 여야 함. 받은 값: {vmid}");
+    }
+    let subnet: u32 = vmid[..2].parse()?;
+    let tail: u32 = vmid[2..].parse()?;
+    if !matches!(subnet, 50 | 60) {
+        anyhow::bail!(
+            "VMID {vmid}: 서브넷 {subnet} 미지원. 50(pve) 또는 60(ranode)만 자동 유도."
+        );
+    }
+    if tail > 255 {
+        anyhow::bail!(
+            "VMID {vmid}: 마지막 옥텟({tail}) > 255. 규약상 {subnet}000-{subnet}255 만 유효."
+        );
+    }
+    Ok(format!("10.0.{subnet}.{tail}"))
+}
+
+/// 명시적 --ip 가 canonical 과 일치하는지 확인.
+fn validate_ip_matches_vmid(ip_cidr: &str, canonical: &str) -> anyhow::Result<()> {
+    let ip_only = ip_cidr.split('/').next().unwrap_or(ip_cidr).trim();
+    if ip_only != canonical {
+        anyhow::bail!(
+            "--ip {ip_cidr} 가 VMID 규약({canonical}) 과 불일치. \
+             규약 위반 배포 금지 — --ip 생략하거나 {canonical}/16 로 맞추기."
+        );
+    }
+    Ok(())
+}
+
+/// host (예: xdesktop-02.50.internal.kr) 에서 hostname 추출.
+/// host 없으면 xdesktop-<tail> 포맷 (tail = vmid 마지막 3자리).
+fn derive_hostname(vmid: &str, host: Option<&str>) -> String {
+    if let Some(h) = host {
+        if let Some(first) = h.split('.').next() {
+            return first.to_string();
+        }
+    }
+    let tail: &str = if vmid.len() >= 3 { &vmid[vmid.len() - 3..] } else { vmid };
+    format!("xdesktop-{tail}")
 }
 
 fn lxc_ip(vmid: &str) -> anyhow::Result<String> {
