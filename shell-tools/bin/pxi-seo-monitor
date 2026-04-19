@@ -366,6 +366,50 @@ cmd_links_graph() {
     }\""
 }
 
+# ── Competitors ─────────────────────────────────────────────────────────────
+cmd_competitors_list()    { require_up; artisan "seo:competitors list ${1:-}"; }
+cmd_competitors_add() {
+  require_up
+  local parent="${1:-}"; shift || true
+  [[ -n "$parent" ]] || die "사용법: competitors add <parent_site_id> --url <url> [--name <name>]"
+  local url="" name=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --url|--url=*)   [[ "$1" == *=* ]] && url="${1#*=}"  || { url="$2";  shift; }; shift ;;
+      --name|--name=*) [[ "$1" == *=* ]] && name="${1#*=}" || { name="$2"; shift; }; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  [[ -n "$url" ]] || die "--url 필요"
+  # Base64로 안전하게 전달
+  local b64_url b64_name
+  b64_url=$(printf '%s' "$url" | base64 -w0)
+  local wrap="cd $APP_ROOT && URL=\$(echo $b64_url | base64 -d)"
+  local extra=" --url=\"\$URL\""
+  if [[ -n "$name" ]]; then
+    b64_name=$(printf '%s' "$name" | base64 -w0)
+    wrap+=" && NAME=\$(echo $b64_name | base64 -d)"
+    extra+=" --name=\"\$NAME\""
+  fi
+  wrap+=" && php artisan seo:competitors add $parent$extra"
+  in_lxc "$wrap"
+}
+cmd_competitors_remove()  { require_up; artisan "seo:competitors remove ${1:?사용법: competitors remove <competitor_id>}"; }
+cmd_competitors_compare() { require_up; artisan "seo:competitors compare ${1:?사용법: competitors compare <parent_site_id>}"; }
+cmd_competitors_analyze() {
+  require_up
+  local parent="${1:?사용법: competitors analyze <parent_site_id> [--max-pages N] [--depth 0|1]}"; shift || true
+  local max="5" depth="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max-pages|--max-pages=*) [[ "$1" == *=* ]] && max="${1#*=}"   || { max="$2";   shift; }; shift ;;
+      --depth|--depth=*)         [[ "$1" == *=* ]] && depth="${1#*=}" || { depth="$2"; shift; }; shift ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+  artisan "seo:competitors-analyze $parent --max-pages=$max --depth=$depth"
+}
+
 # ── Backlinks (Referer log + CSV import) ───────────────────────────────────
 cmd_backlinks_set_log_source() {
   require_up
@@ -1004,6 +1048,12 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor competitors list [parent_site_id]
+  pxi-seo-monitor competitors add <parent_site_id> --url <url> [--name <name>]
+  pxi-seo-monitor competitors remove <competitor_id>
+  pxi-seo-monitor competitors analyze <parent_site_id> [--max-pages 5] [--depth 0|1]
+  pxi-seo-monitor competitors compare <parent_site_id>                 # 지표 사이드바이사이드 표
+
   pxi-seo-monitor backlinks set-log-source <site_id> --vmid N [--path /var/log/nginx/access.log]
   pxi-seo-monitor backlinks discover <site_id> [--tail N] [--include-rotated]  # nginx log → referer 집계
   pxi-seo-monitor backlinks import <site_id> --csv <파일> [--source gsc|ahrefs|bing|manual]
@@ -1147,6 +1197,17 @@ main() {
         materialize)  cmd_hints_materialize "$@" ;;
         clear)        cmd_hints_clear "$@" ;;
         *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
+      esac
+      ;;
+    competitors|comp)
+      local sub="${1:-list}"; shift || true
+      case "$sub" in
+        list)       cmd_competitors_list "$@" ;;
+        add)        cmd_competitors_add "$@" ;;
+        remove|rm)  cmd_competitors_remove "$@" ;;
+        analyze)    cmd_competitors_analyze "$@" ;;
+        compare)    cmd_competitors_compare "$@" ;;
+        *) usage; die "알 수 없는 competitors 서브커맨드: $sub" ;;
       esac
       ;;
     backlinks|bl)
