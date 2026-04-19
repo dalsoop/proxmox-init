@@ -328,10 +328,10 @@ cmd_links_broken() {
     esac
   done
   [[ -n "$site_id" ]] || die "사용법: links broken <site_id> [--type internal|external|all]"
-  local where="site_id=$site_id AND (status_code IS NULL AND checked_at IS NOT NULL OR status_code >= 400)"
+  local where="pl.site_id=$site_id AND (pl.status_code IS NULL AND pl.checked_at IS NOT NULL OR pl.status_code >= 400)"
   case "$type" in
-    internal) where="$where AND is_internal=1" ;;
-    external) where="$where AND is_internal=0" ;;
+    internal) where="$where AND pl.is_internal=1" ;;
+    external) where="$where AND pl.is_internal=0" ;;
   esac
   in_lxc "mariadb $DB_NAME -e \"
     SELECT pl.id, pl.status_code AS st, IF(pl.is_internal,'int','ext') AS t,
