@@ -390,17 +390,22 @@ systemctl daemon-reload
 systemctl enable xpra-xdesktop.service
 systemctl restart xpra-xdesktop.service
 
-# Xpra HTML5 클라이언트 더블 커서 해결 — 브라우저 커서 + 서버 렌더 커서 동시 표시 방지.
-# div.window 영역만 브라우저 커서 숨김 (connect 대화상자 등 다른 영역은 그대로).
-if [ -f /usr/share/xpra/www/css/client.css ] && ! grep -q "xpra-single-cursor-override" /usr/share/xpra/www/css/client.css; then
-  cat >> /usr/share/xpra/www/css/client.css <<'CURSOR_CSS'
+# Xpra HTML5 CSS 패치 — 2가지 이슈:
+#  1) start-desktop 모드에서 .windowhead (Xpra 자체 타이틀바) 가 루트창 위에 중복 표시됨.
+#     그 헤더 높이만큼 canvas 클릭/드래그 좌표가 offset 되어 **드래그가 실제로 빗나감**.
+#  2) 브라우저 기본 커서 + Xpra 서버 렌더 커서 = 더블 커서.
+if [ -f /usr/share/xpra/www/css/client.css ] && ! grep -q "xpra-pxi-overrides" /usr/share/xpra/www/css/client.css; then
+  cat >> /usr/share/xpra/www/css/client.css <<'XPRA_OVERRIDES'
 
-/* xpra-single-cursor-override (pxi-xdesktop)
- * 브라우저 커서 + 서버-렌더 커서 = 더블 커서. Xpra 창 내부만 브라우저 커서 숨김. */
-div.window, div.window canvas {
-  cursor: none !important;
-}
-CURSOR_CSS
+/* xpra-pxi-overrides (pxi-xdesktop)
+ * start-desktop 모드: Xpra HTML5 의 자체 타이틀바(.windowhead) 는 불필요 + 좌표 offset 유발.
+ * 완전 숨김. 창 border/둥근모서리도 제거해 풀스크린 느낌. */
+.windowhead { display: none !important; }
+.window { border: none !important; border-radius: 0 !important; }
+
+/* 더블 커서 방지 — Xpra 창 내부에선 브라우저 커서 숨김 (서버 Adwaita 커서만 표시) */
+div.window, div.window canvas { cursor: none !important; }
+XPRA_OVERRIDES
 fi
 
 # Xpra HTML5 기본 index.html → 자동접속 리다이렉터.
