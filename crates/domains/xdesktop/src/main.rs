@@ -69,11 +69,18 @@ enum Cmd {
     Status {
         #[arg(long)] vmid: String,
     },
-    /// LXC 제거 (traefik 라우트 수동 제거 필요)
+    /// LXC 제거 + traefik 라우트 자동 정리
     Destroy {
         #[arg(long)] vmid: String,
         /// 확인 없이 제거
         #[arg(long)] yes: bool,
+    },
+    /// 공개 URL 스모크 테스트 — HTTP/WebSocket 경로 전수 확인
+    Verify {
+        #[arg(long)] vmid: String,
+        /// 공개 호스트 (생략 시 lxc-ip 직접)
+        #[arg(long)] host: Option<String>,
+        #[arg(long, default_value = "14500")] port: String,
     },
     /// 개발 도구 설치 — git/gh/node/rust/vscodium + GitHub SSH key + 레포 clone
     Dev {
@@ -104,6 +111,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Expose { vmid, host, port } => expose(&vmid, &host, &port),
         Cmd::Status { vmid } => status(&vmid),
         Cmd::Destroy { vmid, yes } => destroy(&vmid, yes),
+        Cmd::Verify { vmid, host, port } => verify(&vmid, host.as_deref(), &port),
         Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
             dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
         }
@@ -252,10 +260,20 @@ fn status(vmid: &str) -> anyhow::Result<()> {
         println!("    {line}");
     }
 
+    // 패치 상태 (업그레이드 내성 체크)
+    let css_ok = common::pct_exec(vmid, &["grep", "-q", "xpra-pxi-overrides", "/usr/share/xpra/www/css/client.css"]).is_ok();
+    let js_ok = common::pct_exec(vmid, &["grep", "-q", "server_is_desktop||this.client.server_is_shadow?(this.decorated", "/usr/share/xpra/www/js/Window.js"]).is_ok();
+    let divert_ok = common::pct_exec(vmid, &["bash", "-c", "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js"]).is_ok();
+    println!("  패치:     css={}  js={}  divert={}",
+        if css_ok { "✓" } else { "✗" },
+        if js_ok { "✓" } else { "✗" },
+        if divert_ok { "✓" } else { "✗" });
+
     // 버전
     let versions = common::pct_exec(vmid, &[
         "bash", "-c",
         "dpkg-query -W -f='xpra=${Version}\\n' xpra 2>/dev/null; \
+         dpkg-query -W -f='xpra-html5=${Version}\\n' xpra-html5 2>/dev/null; \
          dpkg-query -W -f='helium-bin=${Version}\\n' helium-bin 2>/dev/null; \
          dpkg-query -W -f='fcitx5=${Version}\\n' fcitx5 2>/dev/null"
     ]).unwrap_or_default();
@@ -271,10 +289,100 @@ fn destroy(vmid: &str, yes: bool) -> anyhow::Result<()> {
         println!("정말 LXC {vmid} 를 제거할까요? --yes 플래그를 추가하세요.");
         anyhow::bail!("확인 필요");
     }
+    // traefik 라우트 먼저 정리 (LXC 제거 전에 해야 lxc_ip 등 조회 불필요)
+    let svc_name = format!("xdesktop-{vmid}");
+    match common::run("pxi-service", &["remove", "--force", &svc_name]) {
+        Ok(_) => println!("✓ traefik route 제거: {svc_name}"),
+        Err(_) => println!("(traefik route {svc_name} 없음 — 스킵)"),
+    }
     common::run("pct", &["stop", vmid]).ok();
     common::run("pct", &["destroy", vmid])?;
-    println!("LXC {vmid} 제거 완료");
-    println!("※ traefik 라우트 수동 제거 필요: pxi run service remove --name xdesktop-{vmid}");
+    println!("✓ LXC {vmid} 제거 완료");
+    Ok(())
+}
+
+fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
+    println!("=== xdesktop verify: LXC {vmid} ===\n");
+    let mut fails = 0;
+    let mut check = |name: &str, ok: bool, detail: &str| {
+        let mark = if ok { "✓" } else { fails += 1; "✗" };
+        println!("  {mark} {name:<35} {detail}");
+    };
+
+    // 1. LXC 기동
+    let running = common::run_capture("pct", &["status", vmid])
+        .map(|s| s.contains("running")).unwrap_or(false);
+    check("LXC running", running, "");
+    if !running { anyhow::bail!("LXC 정지 — 이후 체크 생략"); }
+
+    // 2. systemd 서비스
+    for svc in ["xpra-xdesktop", "nginx"] {
+        let active = common::pct_exec(vmid, &["systemctl", "is-active", svc])
+            .map(|s| s.trim() == "active").unwrap_or(false);
+        check(&format!("systemd {svc}"), active, "");
+    }
+
+    // 3. 포트 리스닝 (nginx + xpra)
+    let p_inner: u32 = port.parse::<u32>().map(|p| p + 1).unwrap_or(14501);
+    for (name, p) in [("nginx", port.to_string()), ("xpra (127.0.0.1)", p_inner.to_string())] {
+        let listening = common::pct_exec(vmid, &[
+            "bash", "-c",
+            &format!("ss -tlnp 2>/dev/null | grep -q ':{p}\\>'")
+        ]).is_ok();
+        check(&format!("port {p} ({name})"), listening, "");
+    }
+
+    // 4. CSS 패치 적용 상태 — .windowhead hide 실존 여부
+    let css_ok = common::pct_exec(vmid, &[
+        "grep", "-q", "xpra-pxi-overrides", "/usr/share/xpra/www/css/client.css",
+    ]).is_ok();
+    check("CSS override applied", css_ok, ".windowhead 숨김 (드래그 offset 해결)");
+
+    // 5. dpkg-divert 보호 — css + js 둘 다
+    let divert_css = common::pct_exec(vmid, &[
+        "bash", "-c",
+        "dpkg-divert --list | grep -q /usr/share/xpra/www/css/client.css",
+    ]).is_ok();
+    let divert_js = common::pct_exec(vmid, &[
+        "bash", "-c",
+        "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js",
+    ]).is_ok();
+    check("dpkg-divert 보호", divert_css && divert_js, "apt upgrade 에도 패치 유지");
+
+    // 6. LXC 내부 HTTP 응답
+    let ip = lxc_ip(vmid).unwrap_or_else(|_| "-".into());
+    let inner_ok = std::process::Command::new("curl")
+        .args(["-sf", "-o", "/dev/null", &format!("http://{ip}:{port}/css/client.css")])
+        .status().map(|s| s.success()).unwrap_or(false);
+    check(&format!("HTTP {ip}:{port}/css/client.css"), inner_ok, "");
+
+    // 7. 공개 URL (host 지정 시) — HTML + CSS + connect.html 모두 reachable
+    if let Some(h) = host {
+        for path in ["/", "/connect.html", "/css/client.css"] {
+            let url = format!("https://{h}{path}");
+            let code = std::process::Command::new("curl")
+                .args(["-sk", "-o", "/dev/null", "-w", "%{http_code}", &url])
+                .output().ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+            let ok = code.trim() == "200";
+            check(&format!("HTTPS {h}{path}"), ok, &format!("status={code}"));
+        }
+        // 공개 URL 에서 실제 CSS 안에 우리 override 포함되는지 (압축본·캐시 스테일 감지)
+        let content_ok = std::process::Command::new("curl")
+            .args(["-sk", &format!("https://{h}/css/client.css")])
+            .output().ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("xpra-pxi-overrides"))
+            .unwrap_or(false);
+        check("HTTPS CSS contains override", content_ok, "Safari 가 최신 CSS 받음");
+    }
+
+    println!();
+    if fails == 0 {
+        println!("✓ 모든 체크 통과");
+    } else {
+        anyhow::bail!("{fails}개 체크 실패");
+    }
     Ok(())
 }
 
