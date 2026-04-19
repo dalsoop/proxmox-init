@@ -268,6 +268,104 @@ cmd_hints_clear() {
   fi
 }
 
+# ── Links (broken / internal graph) ─────────────────────────────────────────
+cmd_links_audit() {
+  require_up
+  local site_id="" limit="" ext="" force="" conc="8" timeout="10" days="7"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit)          limit="$2"; shift 2 ;;
+      --limit=*)        limit="${1#*=}"; shift ;;
+      --external-only)  ext="--external-only"; shift ;;
+      --force)          force="--force"; shift ;;
+      --concurrency)    conc="$2"; shift 2 ;;
+      --concurrency=*)  conc="${1#*=}"; shift ;;
+      --timeout)        timeout="$2"; shift 2 ;;
+      --timeout=*)      timeout="${1#*=}"; shift ;;
+      --recheck-days)   days="$2"; shift 2 ;;
+      --recheck-days=*) days="${1#*=}"; shift ;;
+      *)                site_id="$1"; shift ;;
+    esac
+  done
+  local args="$site_id --concurrency=$conc --timeout=$timeout --recheck-days=$days"
+  [[ -n "$limit" ]] && args="$args --limit=$limit"
+  [[ -n "$ext"   ]] && args="$args $ext"
+  [[ -n "$force" ]] && args="$args $force"
+  artisan "seo:link-audit $args"
+}
+
+cmd_links_stats() {
+  require_up
+  local site_id="${1:-}"
+  if [[ -n "$site_id" ]]; then
+    in_lxc "mariadb $DB_NAME -e \"
+      SELECT
+        SUM(is_internal) AS internal_total,
+        SUM(1 - is_internal) AS external_total,
+        SUM(status_code BETWEEN 200 AND 299) AS ok_count,
+        SUM(status_code >= 400) AS broken_count,
+        SUM(checked_at IS NULL) AS unchecked
+      FROM page_links WHERE site_id=$site_id;\""
+  else
+    in_lxc "mariadb $DB_NAME -e \"
+      SELECT site_id,
+        COUNT(*) AS total,
+        SUM(is_internal) AS internal,
+        SUM(status_code >= 400) AS broken,
+        SUM(checked_at IS NULL) AS unchecked
+      FROM page_links GROUP BY site_id ORDER BY site_id;\""
+  fi
+}
+
+cmd_links_broken() {
+  require_up
+  local site_id="" type=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --type)   type="$2"; shift 2 ;;
+      --type=*) type="${1#*=}"; shift ;;
+      *)        site_id="$1"; shift ;;
+    esac
+  done
+  [[ -n "$site_id" ]] || die "사용법: links broken <site_id> [--type internal|external|all]"
+  local where="site_id=$site_id AND (status_code IS NULL AND checked_at IS NOT NULL OR status_code >= 400)"
+  case "$type" in
+    internal) where="$where AND is_internal=1" ;;
+    external) where="$where AND is_internal=0" ;;
+  esac
+  in_lxc "mariadb $DB_NAME -e \"
+    SELECT pl.id, pl.status_code AS st, IF(pl.is_internal,'int','ext') AS t,
+           LEFT(p.url, 55) AS source_url, LEFT(pl.target_url, 80) AS target_url
+    FROM page_links pl JOIN pages p ON p.id = pl.source_page_id
+    WHERE $where ORDER BY pl.is_internal DESC, pl.status_code IS NULL, pl.status_code DESC LIMIT 200;\""
+}
+
+cmd_links_orphans() {
+  require_up
+  local site_id="${1:-}"; [[ -n "$site_id" ]] || die "사용법: links orphans <site_id>"
+  in_lxc "mariadb $DB_NAME -e \"
+    SELECT p.id, p.depth, LEFT(p.url, 90) AS url
+    FROM pages p
+    LEFT JOIN page_links pl ON pl.target_page_id = p.id AND pl.is_internal=1
+    WHERE p.site_id=$site_id AND pl.id IS NULL
+    GROUP BY p.id, p.depth, p.url
+    ORDER BY p.depth, p.id LIMIT 100;\""
+}
+
+cmd_links_graph() {
+  require_up
+  local site_id="${1:-}"; [[ -n "$site_id" ]] || die "사용법: links graph <site_id>"
+  artisan "tinker --execute=\"
+    \\\$s = \\App\\Models\\Site::find($site_id);
+    \\\$r = (new \\App\\Services\\Analyzers\\InternalLinkGraphAnalyzer)->analyze(\\\$s);
+    echo 'score='.(\\\$r['score'] ?? '-').' total='.\\\$r['total_pages'].' orphans='.\\\$r['orphan_count'].' dead_ends='.\\\$r['dead_ends'].PHP_EOL;
+    echo 'avg_inbound='.\\\$r['avg_inbound'].' avg_outbound='.\\\$r['avg_outbound'].PHP_EOL;
+    echo 'top_pagerank:'.PHP_EOL;
+    foreach (\\\$r['top_pagerank'] as \\\$t) {
+        echo sprintf('  pr=%.4f in=%d out=%d %s'.PHP_EOL, \\\$t['pr'], \\\$t['inbound'], \\\$t['outbound'], \\\$t['url']);
+    }\""
+}
+
 # ── GEO Outcome (LLM citation 측정) ────────────────────────────────────────
 cmd_geo_queries_list() {
   require_up
@@ -753,6 +851,12 @@ Usage:
   pxi-seo-monitor tests results [domain]            # NAS 아티팩트 목록
   pxi-seo-monitor tests report <domain>             # html-report 서빙
 
+  pxi-seo-monitor links audit [site_id] [--limit N] [--external-only] [--force]  # HEAD 배치 검증
+  pxi-seo-monitor links stats [site_id]                                  # total/internal/broken/unchecked
+  pxi-seo-monitor links broken <site_id> [--type internal|external]      # 깨진 링크 목록
+  pxi-seo-monitor links orphans <site_id>                                # 내부 inbound=0 페이지
+  pxi-seo-monitor links graph <site_id>                                  # PageRank top10 + orphan/dead-end
+
   pxi-seo-monitor geo-outcome providers                       # 제공자 API key 상태 확인
   pxi-seo-monitor geo-outcome queries list [site_id]
   pxi-seo-monitor geo-outcome queries add <site_id> "<텍스트>"
@@ -882,6 +986,17 @@ main() {
         materialize)  cmd_hints_materialize "$@" ;;
         clear)        cmd_hints_clear "$@" ;;
         *) usage; die "알 수 없는 hints 서브커맨드: $sub" ;;
+      esac
+      ;;
+    links)
+      local sub="${1:-stats}"; shift || true
+      case "$sub" in
+        audit)    cmd_links_audit "$@" ;;
+        stats)    cmd_links_stats "$@" ;;
+        broken)   cmd_links_broken "$@" ;;
+        orphans)  cmd_links_orphans "$@" ;;
+        graph)    cmd_links_graph "$@" ;;
+        *) usage; die "알 수 없는 links 서브커맨드: $sub" ;;
       esac
       ;;
     geo-outcome|geo)
