@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use pxi_core::common;
 
 const INSTALL_SCRIPT: &str = include_str!("../scripts/install-desktop.sh");
+const DEV_SCRIPT: &str = include_str!("../scripts/dev-setup.sh");
 
 /// LXC 내부 경로에 문자열 컨텐츠를 기록 (tempfile → pct push).
 fn write_to_lxc(vmid: &str, lxc_path: &str, content: &str) -> anyhow::Result<()> {
@@ -74,6 +75,18 @@ enum Cmd {
         /// 확인 없이 제거
         #[arg(long)] yes: bool,
     },
+    /// 개발 도구 설치 — git/gh/node/rust/vscodium + GitHub SSH key + 레포 clone
+    Dev {
+        #[arg(long)] vmid: String,
+        /// 데스크톱 유저 (기본 xuser)
+        #[arg(long, default_value = "xuser")] user: String,
+        /// GitHub 유저명 (힌트용 — 실제 auth 는 gh login 수동)
+        #[arg(long)] github_user: Option<String>,
+        /// clone 할 레포 쉼표 구분 (예: "dalsoop/proxmox-init,imputnet/helium-linux")
+        #[arg(long)] repos: Option<String>,
+        /// VSCodium 설치 스킵
+        #[arg(long)] no_vscodium: bool,
+    },
     /// 환경 점검 (pct + pxi-lxc 등 존재 확인)
     Doctor,
 }
@@ -91,8 +104,30 @@ fn main() -> anyhow::Result<()> {
         Cmd::Expose { vmid, host, port } => expose(&vmid, &host, &port),
         Cmd::Status { vmid } => status(&vmid),
         Cmd::Destroy { vmid, yes } => destroy(&vmid, yes),
+        Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
+            dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
+        }
         Cmd::Doctor => { doctor(); Ok(()) }
     }
+}
+
+fn dev(vmid: &str, user: &str, github_user: Option<&str>, repos: Option<&str>, vscodium: bool) -> anyhow::Result<()> {
+    println!("=== xdesktop dev 환경 설치: LXC {vmid} ({user}) ===\n");
+    common::ensure_lxc_running(vmid)?;
+
+    let script_path = "/root/xdesktop-dev.sh";
+    write_to_lxc(vmid, script_path, DEV_SCRIPT)?;
+    common::pct_exec(vmid, &["chmod", "+x", script_path])?;
+
+    let env_prefix = format!(
+        "XDESKTOP_USER={user} GITHUB_USER={gh} REPOS={repos} INSTALL_VSCODIUM={vs}",
+        gh = github_user.unwrap_or(""),
+        repos = repos.unwrap_or(""),
+        vs = if vscodium { "1" } else { "0" },
+    );
+    let cmd = format!("{env_prefix} bash {script_path}");
+    common::pct_exec_passthrough(vmid, &["bash", "-lc", &cmd])?;
+    Ok(())
 }
 
 fn setup(
