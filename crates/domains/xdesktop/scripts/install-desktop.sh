@@ -313,8 +313,9 @@ server {
   location / {
     proxy_pass http://xpra_backend;
     proxy_http_version 1.1;
-    proxy_set_header Connection "";
+    # WebSocket upgrade 지원 — \$http_upgrade 있으면 Connection: upgrade, 없으면 빈값(keep-alive)
     proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -322,6 +323,12 @@ server {
     proxy_send_timeout 3600s;
     proxy_buffering off;
   }
+}
+
+# WebSocket 업그레이드 map — Upgrade 헤더 있으면 "upgrade", 없으면 빈값(일반 HTTP)
+map \$http_upgrade \$connection_upgrade {
+  default upgrade;
+  "" "";
 }
 NGX_EOF
 nginx -t
@@ -390,48 +397,44 @@ systemctl daemon-reload
 systemctl enable xpra-xdesktop.service
 systemctl restart xpra-xdesktop.service
 
-# Xpra HTML5 클라이언트 패치 — 2가지 이슈 해결:
-#  1) start-desktop 모드에서 .windowhead (Xpra 자체 타이틀바) 가 루트창 위에 중복 렌더.
-#     update_offsets() 가 header.css("height") 를 topoffset 에 더함 → canvas 클릭/드래그
-#     좌표가 실제 서버 좌표보다 topoffset 만큼 **밀림**. CSS display:none 만으론 불충분
-#     (jQuery .css("height") 가 "auto" 반환 → NaN). JS 패치 병행 필요.
-#  2) 브라우저 기본 커서 + Xpra 서버 렌더 커서 = 더블 커서.
+# Xpra HTML5 클라이언트 CSS 패치 — start-desktop 모드에서 .windowhead (Xpra 자체
+# 타이틀바) 가 루트창 위에 중복 렌더. update_offsets() 가 header.css("height") 를
+# topoffset 에 더해 canvas 좌표가 밀림 → 드래그가 빗나감. display:none + height:0
+# 로 숨김 (jQuery .css("height") 가 "0px" 반환 → topoffset=0).
+# Note: Window.js JS 패치도 시도했으나 cursor rendering 등에 부작용 → CSS 로만 처리.
 XPRA_CSS=/usr/share/xpra/www/css/client.css
 XPRA_JS=/usr/share/xpra/www/js/Window.js
+
+# dpkg-divert 순서 규약:
+#   1) divert --rename --add → 패키지가 설치한 원본을 .distrib 로 밀어둠
+#   2) 우리 버전을 원위치에 작성
+#   3) 이후 apt upgrade 는 .distrib 만 갱신, 우리 버전 유지
+# 주의: 이미 한 번 패치된 파일에 divert add 하면 our patch 가 .distrib 로 이동함 → 이 경우 .distrib 에서 다시 복원.
+for f in "$XPRA_CSS" "$XPRA_JS"; do
+  if [ -f "$f" ] && ! dpkg-divert --list "$f" 2>/dev/null | grep -q "$f"; then
+    dpkg-divert --local --rename --add "$f" >/dev/null 2>&1 || true
+    # divert 직후에는 원 위치가 비어있음. .distrib 을 원위치로 복원 (우리 편집 기준점).
+    [ -f "$f.distrib" ] && [ ! -f "$f" ] && cp "$f.distrib" "$f"
+  fi
+done
 
 # CSS override (멱등)
 if [ -f "$XPRA_CSS" ] && ! grep -q "xpra-pxi-overrides" "$XPRA_CSS"; then
   cat >> "$XPRA_CSS" <<'XPRA_OVERRIDES'
 
 /* xpra-pxi-overrides (pxi-xdesktop)
- * start-desktop 루트창의 Xpra 자체 타이틀바 숨김 (JS 패치와 병행 — 아래 Window.js 참조). */
+ * start-desktop 루트창의 Xpra 자체 타이틀바 숨김 + 높이 0 으로 고정.
+ * jQuery .css("height") 가 "0px" 반환 → update_offsets() 의 topoffset 계산에서 0 더함. */
 .windowhead { display: none !important; height: 0 !important; min-height: 0 !important; }
 .window { border: none !important; border-radius: 0 !important; }
-
-/* 더블 커서 방지 — Xpra 창 내부에선 브라우저 커서 숨김 (서버 Adwaita 커서만 표시) */
-div.window, div.window canvas { cursor: none !important; }
 XPRA_OVERRIDES
 fi
 
-# Window.js 패치 — server_is_desktop|shadow 인 창에선 add_headerbar() 를 건너뛰고
-# decorated=false 로 고정. update_offsets() 가 topoffset 에 헤더 높이 더하는 경로 차단.
-if [ -f "$XPRA_JS" ] && ! grep -q "server_is_desktop||this.client.server_is_shadow?(this.decorated" "$XPRA_JS"; then
-  python3 - "$XPRA_JS" <<'PY'
-import sys, pathlib
-p = pathlib.Path(sys.argv[1])
-s = p.read_text()
-orig = "this.configure_border_class(),this.add_headerbar(),this.make_draggable()"
-patched = "this.configure_border_class(),(this.client.server_is_desktop||this.client.server_is_shadow?(this.decorated=!1,this.decorations=!1):this.add_headerbar()),this.make_draggable()"
-if orig in s:
-    # 백업
-    if not (p.parent / "Window.js.orig").exists():
-        (p.parent / "Window.js.orig").write_text(s)
-    p.write_text(s.replace(orig, patched, 1))
-    print("Window.js patched")
-else:
-    print("Window.js 원본 시그니처 불일치 — 이미 패치됐거나 xpra-html5 버전 다름 (수동 확인 필요)")
-PY
-fi
+# .gz / .br 압축본 제거 — nginx gzip_static/brotli_static 이 stale 압축본을 우선 서빙할 수 있음.
+# 우리가 CSS 편집했는데 압축본은 원본 그대로면 Safari 가 구 CSS 받게 됨.
+for ext in gz br; do
+  rm -f "$XPRA_CSS.$ext" "$XPRA_JS.$ext" 2>/dev/null
+done
 
 # Xpra HTML5 기본 index.html → 자동접속 리다이렉터.
 # 원본 폼에 비어있는 password 필드가 있어 UX가 혼란 → autoconnect=true 로 바로 연결.
