@@ -25,7 +25,7 @@ enum Cmd {
     /// Mailpit LXC에 설치 (수신 아카이브)
     InstallMailpit {
         #[arg(long)]
-        vmid: String,
+        vmid: pxi_core::types::Vmid,
     },
     /// [DEPRECATED] 호스트 Postfix → Maddy 587 SASL relay. cf-proxy-sync로 대체 권장.
     PostfixRelay {
@@ -41,7 +41,7 @@ enum Cmd {
     /// 메일 서버 초기 세팅 (Maddy LXC 설치 + DNS + NAT)
     Setup {
         #[arg(long)]
-        vmid: String,
+        vmid: pxi_core::types::Vmid,
         #[arg(long)]
         ip: String,
         #[arg(long)]
@@ -84,11 +84,11 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::InstallMailpit { vmid } => install_mailpit(&vmid),
+        Cmd::InstallMailpit { vmid } => install_mailpit(vmid.as_str()),
         Cmd::PostfixRelay { maddy_ip, port } => postfix_relay(&maddy_ip, &port),
         Cmd::Status => { status(); Ok(()) }
         Cmd::Doctor => { doctor(); Ok(()) }
-        Cmd::Setup { vmid, ip, domain, email, password } => mail_setup(&vmid, &ip, &domain, &email, &password),
+        Cmd::Setup { vmid, ip, domain, email, password } => mail_setup(vmid.as_str(), &ip, &domain, &email, &password),
         Cmd::CfProxyInstall { vmid, binary } => cf_proxy_install(&vmid, &binary),
         Cmd::CfProxyQuota => cf_proxy_quota(),
         Cmd::CfProxySync { host, port, dry_run, status, vmid } => cf_proxy_sync(&host, &port, dry_run, status, vmid.as_deref()),
@@ -353,7 +353,8 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
     // 1. LXC 확인/시작
     println!("[1/5] LXC 확인...");
     let status_out = common::run_capture("pct", &["status", vmid]).unwrap_or_default();
-    if status_out.contains("running") {
+    let parsed: pxi_core::types::LxcStatus = status_out.parse().unwrap();
+    if parsed.is_running() {
         println!("  LXC {vmid} 이미 실행 중");
     } else if !status_out.is_empty() {
         println!("  LXC {vmid} 존재 — 시작");

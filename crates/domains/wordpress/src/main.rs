@@ -16,9 +16,9 @@ struct Cli {
 enum Commands {
     /// LXC 생성 + Apache + PHP + MariaDB + WP + WP-CLI + Traefik 라우트
     Install {
-        /// LXC VMID
+        /// LXC VMID (규약 강제 — Vmid newtype)
         #[arg(long)]
-        vmid: String,
+        vmid: pxi_core::types::Vmid,
         /// LXC 호스트명
         #[arg(long)]
         hostname: String,
@@ -124,7 +124,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Install {
             vmid, hostname, domain, db_password, disk, cores, memory,
-        } => cmd_install(&vmid, &hostname, &domain, db_password.as_deref(), &disk, &cores, &memory),
+        } => cmd_install(vmid.as_str(), &hostname, &domain, db_password.as_deref(), &disk, &cores, &memory),
         Commands::Setup {
             vmid, url, title, admin_user, admin_password, admin_email, locale,
         } => cmd_setup(&vmid, &url, &title, &admin_user, &admin_password, &admin_email, &locale),
