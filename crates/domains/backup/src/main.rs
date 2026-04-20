@@ -155,7 +155,7 @@ fn schedule_add(schedule: &str, vmid: Option<&str>, storage: &str, keep: &str) -
 
 fn schedule_list() -> anyhow::Result<()> {
     println!("=== 백업 스케줄 목록 ===");
-    let out = common::run("pvesh", &["get", "/cluster/backup", "--output-format", "yaml"])?;
+    let out = common::run_str("pvesh", &["get", "/cluster/backup", "--output-format", "yaml"])?;
     println!("{out}");
     Ok(())
 }
@@ -169,6 +169,9 @@ fn schedule_remove(id: &str) -> anyhow::Result<()> {
 
 fn restore(file: &str, vmid: &str, storage: &str) -> anyhow::Result<()> {
     println!("=== 복원: {file} → VMID {vmid} (storage: {storage}) ===");
+    // VMID 규약 — 복원 후 IP 는 백업 안의 config 에서 오지만, VMID 자체는
+    // 반드시 규약에 맞아야 함. 형식 검증만 (IP 는 백업 기준이라 강제 불가).
+    pxi_core::convention::canonical_ip(vmid)?;
     if !std::path::Path::new(file).exists() {
         anyhow::bail!("백업 파일 없음: {file}");
     }
