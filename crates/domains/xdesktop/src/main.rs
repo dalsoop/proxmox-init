@@ -8,6 +8,7 @@
 
 use clap::{Parser, Subcommand};
 use pxi_core::{common, convention};
+use pxi_core::types::{Vmid, IpCidr, LxcStatus};
 
 const INSTALL_SCRIPT: &str = include_str!("../scripts/install-desktop.sh");
 const DEV_SCRIPT: &str = include_str!("../scripts/dev-setup.sh");
@@ -44,13 +45,13 @@ enum Cmd {
     /// 명시적으로 주면 규약 일치 검증 후 진행, 불일치면 오류.
     Setup {
         /// VMID — 5XXXX 형태 필수. 마지막 3자리가 IP 마지막 옥텟이 됨 (5YYY → 10.0.50.YYY)
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         /// traefik 공개 호스트 (예: xdesktop-02.50.internal.kr). 지정 시 라우트 등록
         #[arg(long)] host: Option<String>,
         /// 호스트네임 (생략 시 --host 앞부분 또는 xdesktop-<tail> 에서 유도)
         #[arg(long)] hostname: Option<String>,
         /// IP CIDR (생략 시 VMID 규약으로 유도: 5YYY → 10.0.50.YYY/16)
-        #[arg(long)] ip: Option<String>,
+        #[arg(long)] ip: Option<IpCidr>,
         #[arg(long, default_value = "4")] cores: String,
         #[arg(long, default_value = "4096")] memory: String,
         #[arg(long, default_value = "20")] disk: String,
@@ -60,37 +61,37 @@ enum Cmd {
     },
     /// 이미 존재하는 LXC에 데스크톱만 설치 (LXC 재사용)
     Install {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         #[arg(long, default_value = "14500")] port: String,
         #[arg(long, default_value = "xuser")] user: String,
         #[arg(long, default_value = "0.11.2.1")] helium_tag: String,
     },
     /// traefik 라우트만 등록 (이미 설치된 LXC 대상)
     Expose {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         #[arg(long)] host: String,
         #[arg(long, default_value = "14500")] port: String,
     },
     /// 상태 조회 (LXC + Xpra systemd + 포트)
     Status {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
     },
     /// LXC 제거 + traefik 라우트 자동 정리
     Destroy {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         /// 확인 없이 제거
         #[arg(long)] yes: bool,
     },
     /// 공개 URL 스모크 테스트 — HTTP/WebSocket 경로 전수 확인
     Verify {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         /// 공개 호스트 (생략 시 lxc-ip 직접)
         #[arg(long)] host: Option<String>,
         #[arg(long, default_value = "14500")] port: String,
     },
     /// 개발 도구 설치 — git/gh/node/rust/vscodium + GitHub SSH key + 레포 clone
     Dev {
-        #[arg(long)] vmid: String,
+        #[arg(long)] vmid: Vmid,
         /// 데스크톱 유저 (기본 xuser)
         #[arg(long, default_value = "xuser")] user: String,
         /// GitHub 유저명 (힌트용 — 실제 auth 는 gh login 수동)
@@ -120,24 +121,24 @@ fn main() -> anyhow::Result<()> {
     }
     match cli.cmd {
         Cmd::Setup { vmid, hostname, ip, host, cores, memory, disk, port, user, helium_tag } => {
-            // pxi_core::convention 공유 규약 — 위반이면 bail.
-            let ip = match ip {
+            // Vmid 는 clap argparse 에서 이미 convention 검증됨. 여기선 ip 일치만.
+            let ip_str = match ip {
                 Some(explicit) => {
-                    convention::validate_ip(&vmid, &explicit)?;
-                    explicit
+                    convention::validate_ip(vmid.as_str(), &explicit.to_string())?;
+                    explicit.to_string()
                 }
-                None => convention::canonical_cidr(&vmid, 16)?,
+                None => convention::canonical_cidr(vmid.as_str(), 16)?,
             };
-            let hostname = hostname.unwrap_or_else(|| derive_hostname(&vmid, host.as_deref()));
-            setup(&vmid, &hostname, &ip, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
+            let hostname = hostname.unwrap_or_else(|| derive_hostname(vmid.as_str(), host.as_deref()));
+            setup(vmid.as_str(), &hostname, &ip_str, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
         }
-        Cmd::Install { vmid, port, user, helium_tag } => install(&vmid, &port, &user, &helium_tag),
-        Cmd::Expose { vmid, host, port } => expose(&vmid, &host, &port),
-        Cmd::Status { vmid } => status(&vmid),
-        Cmd::Destroy { vmid, yes } => destroy(&vmid, yes),
-        Cmd::Verify { vmid, host, port } => verify(&vmid, host.as_deref(), &port),
+        Cmd::Install { vmid, port, user, helium_tag } => install(vmid.as_str(), &port, &user, &helium_tag),
+        Cmd::Expose { vmid, host, port } => expose(vmid.as_str(), &host, &port),
+        Cmd::Status { vmid } => status(vmid.as_str()),
+        Cmd::Destroy { vmid, yes } => destroy(vmid.as_str(), yes),
+        Cmd::Verify { vmid, host, port } => verify(vmid.as_str(), host.as_deref(), &port),
         Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
-            dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
+            dev(vmid.as_str(), &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
         }
         Cmd::AuditAll => audit_all(),
         Cmd::AuditInstallTimer { time } => audit_install_timer(&time),
@@ -366,13 +367,13 @@ fn expose(vmid: &str, host: &str, port: &str) -> anyhow::Result<()> {
 fn status(vmid: &str) -> anyhow::Result<()> {
     println!("=== xdesktop 상태: LXC {vmid} ===");
 
-    // LXC
-    let lxc_status = common::run_capture("pct", &["status", vmid])
-        .unwrap_or_else(|_| "unknown".into());
-    println!("  LXC:      {}", lxc_status.trim());
+    // LXC — LxcStatus enum 으로 파싱 (문자열 matching 대신).
+    let raw = common::run_capture("pct", &["status", vmid]).unwrap_or_else(|_| "unknown".into());
+    let status: LxcStatus = raw.parse().unwrap();  // FromStr::Err == Infallible
+    println!("  LXC:      {} ({:?})", raw.trim(), status);
 
-    if !lxc_status.contains("running") {
-        println!("  (LXC 정지 — 이후 체크 스킵)");
+    if !status.is_running() {
+        println!("  (LXC 미실행 — 이후 체크 스킵)");
         return Ok(());
     }
 
@@ -440,9 +441,10 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
         println!("  {mark} {name:<35} {detail}");
     };
 
-    // 1. LXC 기동
+    // 1. LXC 기동 — LxcStatus enum 으로 판정
     let running = common::run_capture("pct", &["status", vmid])
-        .map(|s| s.contains("running")).unwrap_or(false);
+        .map(|s| s.parse::<LxcStatus>().unwrap().is_running())
+        .unwrap_or(false);
     check("LXC running", running, "");
     if !running { anyhow::bail!("LXC 정지 — 이후 체크 생략"); }
 

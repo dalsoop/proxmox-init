@@ -5,5 +5,6 @@ pub mod convention;
 pub mod os;
 pub mod registry;
 pub mod services;
+pub mod types;
 
 pub use brand::paths;
