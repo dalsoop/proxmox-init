@@ -18,6 +18,7 @@ let { Domain } = import "../../../ncl/contracts/domain.ncl" in
     "vaultwarden install-env",
     "vaultwarden install-binary",
     "vaultwarden install-web-vault",
-    "vaultwarden bootstrap"
+    "vaultwarden bootstrap",
+    "vaultwarden upgrade"
   ],
 } | Domain

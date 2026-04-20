@@ -98,6 +98,18 @@ enum Cmd {
         /// 바이너리 빌드 step 건너뜀 (이미 /opt/vaultwarden/bin/vaultwarden 있을 때)
         #[arg(long)] skip_binary: bool,
     },
+    /// 기존 설치를 새 릴리스로 업그레이드:
+    ///   1) db.sqlite3 스냅샷 백업
+    ///   2) install-binary --force (새 태그 or latest)
+    ///   3) install-web-vault --force (새 태그 or latest)
+    ///   4) systemctl restart vaultwarden
+    /// --dry-run 이면 현재 / 목표 태그만 비교 출력.
+    Upgrade {
+        #[arg(long, default_value_t = DEFAULT_VMID)] vmid: u32,
+        #[arg(long)] version: Option<String>,
+        #[arg(long)] web_vault_version: Option<String>,
+        #[arg(long)] dry_run: bool,
+    },
 }
 
 fn pct(vmid: u32, args: &[&str]) -> Result<String> {
@@ -149,6 +161,8 @@ fn main() -> Result<()> {
         Cmd::Bootstrap { vmid, url, admin_token, version, web_vault_version, skip_binary } =>
             bootstrap(vmid, &url, admin_token.as_deref(), version.as_deref(),
                       web_vault_version.as_deref(), skip_binary),
+        Cmd::Upgrade { vmid, version, web_vault_version, dry_run } =>
+            upgrade(vmid, version.as_deref(), web_vault_version.as_deref(), dry_run),
     }
 }
 
@@ -469,9 +483,75 @@ fn resolve_latest(repo: &str) -> Result<String> {
         return Err(anyhow!("latest release 조회 실패: {}", String::from_utf8_lossy(&out.stderr)));
     }
     let body = String::from_utf8_lossy(&out.stdout);
-    let start = body.find("\"tag_name\":\"")
+    // GitHub pretty-prints JSON → `"tag_name": "v..."` (공백/탭 허용). 가볍게 파싱.
+    let key_idx = body.find("\"tag_name\"")
         .ok_or_else(|| anyhow!("tag_name 파싱 실패: {}", &body.chars().take(160).collect::<String>()))?;
-    let rest = &body[start + 12..];
-    let end = rest.find('"').ok_or_else(|| anyhow!("tag_name 끝 따옴표 찾기 실패"))?;
-    Ok(rest[..end].to_string())
+    let after_colon = body[key_idx..].find(':')
+        .map(|p| key_idx + p + 1)
+        .ok_or_else(|| anyhow!("tag_name 콜론 없음"))?;
+    let rest = body[after_colon..].trim_start();
+    let quote_open = rest.find('"').ok_or_else(|| anyhow!("tag_name 값 시작 따옴표 없음"))?;
+    let after_quote = &rest[quote_open + 1..];
+    let quote_close = after_quote.find('"').ok_or_else(|| anyhow!("tag_name 끝 따옴표 찾기 실패"))?;
+    Ok(after_quote[..quote_close].to_string())
+}
+
+// ── upgrade ──
+
+fn upgrade(
+    vmid: u32,
+    target: Option<&str>,
+    web_target: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    let current_vw = pct(vmid, &["sh", "-c",
+        "/opt/vaultwarden/bin/vaultwarden --version 2>/dev/null | head -1 || echo unknown"]
+    ).unwrap_or_default();
+    let latest_vw = resolve_latest("dani-garcia/vaultwarden").unwrap_or_else(|_| "?".into());
+    let latest_web = resolve_latest("dani-garcia/bw_web_builds").unwrap_or_else(|_| "?".into());
+
+    let vw_tag = target.map(str::to_string).unwrap_or(latest_vw.clone());
+    let web_tag = web_target.map(str::to_string).unwrap_or(latest_web.clone());
+
+    println!("=== Vaultwarden upgrade plan (LXC {vmid}) ===");
+    println!("  current  : {}", current_vw.trim());
+    println!("  target   : vaultwarden {vw_tag} / web-vault {web_tag}");
+
+    if dry_run {
+        println!("  dry-run — 실제 변경 없음");
+        return Ok(());
+    }
+
+    // 1) DB snapshot (backup.sh 가 있으면 그걸 호출, 없으면 직접 sqlite backup)
+    println!("\n[1/4] db snapshot…");
+    let snap = pct(vmid, &["sh", "-c", r#"
+if [ -x /opt/vaultwarden/backup.sh ]; then
+    sudo -u vaultwarden /opt/vaultwarden/backup.sh 2>&1 | tail -1
+else
+    TS=$(date +%Y%m%d%H%M%S)
+    sqlite3 /opt/vaultwarden/data/db.sqlite3 ".backup /opt/vaultwarden/data/db.sqlite3.backup.$TS"
+    chown vaultwarden:vaultwarden /opt/vaultwarden/data/db.sqlite3.backup.$TS
+    echo "snapshot db.sqlite3.backup.$TS"
+fi
+"#])?;
+    println!("  {}", snap.trim());
+
+    // 2) binary rebuild
+    println!("\n[2/4] binary rebuild (수분 소요)…");
+    install_binary(vmid, Some(&vw_tag), "sqlite", true)?;
+
+    // 3) web-vault
+    println!("\n[3/4] web-vault…");
+    install_web_vault(vmid, Some(&web_tag), true)?;
+
+    // 4) restart + verify
+    println!("\n[4/4] restart + verify…");
+    pct(vmid, &["systemctl", "restart", "vaultwarden"])?;
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let active = pct(vmid, &["systemctl", "is-active", "vaultwarden"]).unwrap_or_default();
+    let new_ver = pct(vmid, &["sh", "-c",
+        "/opt/vaultwarden/bin/vaultwarden --version 2>/dev/null | head -1 || echo unknown"]
+    ).unwrap_or_default();
+    println!("  service: {} / version: {}", active.trim(), new_ver.trim());
+    Ok(())
 }
