@@ -42,16 +42,18 @@ jobs:
           exit $fail
 
   control-plane-validate:
-    # control-plane 레포 체크아웃 해서 validate-all.sh --ci 돌림.
-    # config.toml / roles.toml / services/*.toml / services_registry.toml 전수 검증.
+    # control-plane 은 private repo 라 GH_READ_TOKEN (repo: read) secret 등록돼야 실행.
+    # 미등록 상태에선 skip. 로컬에서는 control-plane 디렉토리에서 직접:
+    #   cd /root/control-plane && bash nickel/validate-all.sh --ci
     runs-on: ubuntu-latest
+    if: ${{ secrets.GH_READ_TOKEN != '' }}
     steps:
       - name: Checkout control-plane
         uses: actions/checkout@v4
         with:
           repository: dalsoop/control-plane
           path: control-plane
-          token: ${{ secrets.GH_READ_TOKEN || github.token }}
+          token: ${{ secrets.GH_READ_TOKEN }}
 
       - name: Install Nickel
         run: |
