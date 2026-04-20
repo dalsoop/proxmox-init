@@ -110,6 +110,13 @@ enum Cmd {
         #[arg(long)] web_vault_version: Option<String>,
         #[arg(long)] dry_run: bool,
     },
+    /// bw CLI 로 로그인/언락/동기화까지 end-to-end 검증.
+    /// control-plane/.env 의 VAULTWARDEN_URL / _EMAIL / _MASTER_PASSWORD 사용.
+    /// Vaultwarden 서버와 bw 버전 호환성을 즉시 감지.
+    BwVerify {
+        /// BITWARDENCLI_APPDATA_DIR (세션 보존용 고정 경로)
+        #[arg(long, default_value = "/root/.config/vaultwarden-cli")] appdata: String,
+    },
 }
 
 fn pct(vmid: u32, args: &[&str]) -> Result<String> {
@@ -163,6 +170,7 @@ fn main() -> Result<()> {
                       web_vault_version.as_deref(), skip_binary),
         Cmd::Upgrade { vmid, version, web_vault_version, dry_run } =>
             upgrade(vmid, version.as_deref(), web_vault_version.as_deref(), dry_run),
+        Cmd::BwVerify { appdata } => bw_verify(&appdata),
     }
 }
 
@@ -555,5 +563,95 @@ fi
         "/opt/vaultwarden/bin/vaultwarden --version 2>/dev/null | head -1 || echo unknown"]
     ).unwrap_or_default();
     println!("  service: {} / version: {}", active.trim(), new_ver.trim());
+    Ok(())
+}
+
+// ── bw-verify ──
+
+fn read_env(key: &str) -> Option<String> {
+    let content = std::fs::read_to_string("/root/control-plane/.env").ok()?;
+    content.lines()
+        .map(|l| l.trim_start_matches('#').trim())
+        .find_map(|l| l.strip_prefix(&format!("{key}=")).map(|v| v.trim().trim_matches('"').to_string()))
+        .filter(|v| !v.is_empty())
+}
+
+fn bw_cmd(appdata: &str, password: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    Command::new("bw")
+        .env("BITWARDENCLI_APPDATA_DIR", appdata)
+        .env("BW_PASSWORD", password)
+        .args(args)
+        .output()
+}
+
+fn bw_verify(appdata: &str) -> Result<()> {
+    let url = read_env("VAULTWARDEN_URL")
+        .ok_or_else(|| anyhow!("VAULTWARDEN_URL 가 control-plane/.env 에 없음"))?;
+    let email = read_env("VAULTWARDEN_EMAIL")
+        .ok_or_else(|| anyhow!("VAULTWARDEN_EMAIL 가 control-plane/.env 에 없음"))?;
+    let password = read_env("VAULTWARDEN_MASTER_PASSWORD")
+        .ok_or_else(|| anyhow!("VAULTWARDEN_MASTER_PASSWORD 가 control-plane/.env 에 없음"))?;
+
+    println!("=== bw-verify ({email}) ===");
+    std::fs::create_dir_all(appdata)?;
+
+    // bw --version
+    let ver = Command::new("bw").arg("--version").output()?;
+    let ver_s = String::from_utf8_lossy(&ver.stdout);
+    println!("  bw     : {}", ver_s.trim().split('\n').next().unwrap_or("?"));
+
+    // config server
+    let _ = Command::new("bw")
+        .env("BITWARDENCLI_APPDATA_DIR", appdata)
+        .args(["config", "server", &url])
+        .output()?;
+
+    // 혹시 이전 세션 남아있으면 logout (조용히)
+    let _ = Command::new("bw")
+        .env("BITWARDENCLI_APPDATA_DIR", appdata)
+        .arg("logout").output();
+
+    // login (raw: session key or 에러)
+    let login = bw_cmd(appdata, &password,
+        &["login", &email, "--passwordenv", "BW_PASSWORD", "--raw"])?;
+    let login_out = String::from_utf8_lossy(&login.stdout);
+    let login_err = String::from_utf8_lossy(&login.stderr);
+    let session: String = login_out.lines()
+        .chain(login_err.lines())
+        .rev()
+        .find(|l| {
+            let t = l.trim();
+            t.len() >= 40 && t.chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c))
+        })
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    if session.is_empty() {
+        println!("  login  : ❌");
+        let msg = login_err.lines().rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("(no stderr)");
+        println!("           → {}", msg.trim());
+        return Err(anyhow!("bw login 실패"));
+    }
+    println!("  login  : ✅ (session {} chars)", session.len());
+
+    // sync
+    let sync = Command::new("bw")
+        .env("BITWARDENCLI_APPDATA_DIR", appdata)
+        .env("BW_SESSION", &session)
+        .args(["sync", "--session", &session])
+        .output()?;
+    println!("  sync   : {}", String::from_utf8_lossy(&sync.stdout).trim());
+
+    // list items
+    let list = Command::new("bw")
+        .env("BITWARDENCLI_APPDATA_DIR", appdata)
+        .args(["list", "items", "--session", &session])
+        .output()?;
+    let items_json = String::from_utf8_lossy(&list.stdout);
+    let count = items_json.matches("\"id\":").count();
+    println!("  items  : {count}");
+
     Ok(())
 }
