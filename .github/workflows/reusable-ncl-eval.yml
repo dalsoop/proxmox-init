@@ -1,0 +1,54 @@
+name: Reusable — Nickel pxi eval
+
+# pxi 쪽 Nickel 검증 공통 로직. ncl-validate.yml (PR 게이트) + release.yml (태그 게이트)
+# 둘 다에서 호출되어 드리프트 방지.
+#
+# Nickel 버전은 여기서 pin. 업스트림 latest 가 깨져서 릴리스 게이트가 비재현적으로
+# 실패하지 않게 (codex #45 P2).
+
+on:
+  workflow_call:
+    inputs:
+      nickel-version:
+        description: "Nickel CLI 버전 (예: 1.16.0)"
+        type: string
+        default: "1.16.0"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nickel ${{ inputs.nickel-version }}
+        run: |
+          set -e
+          VER="${{ inputs.nickel-version }}"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL \
+            "https://github.com/tweag/nickel/releases/download/${VER}/nickel-x86_64-linux" \
+            -o "$HOME/.local/bin/nickel"
+          chmod +x "$HOME/.local/bin/nickel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nickel" --version
+
+      - name: Eval pxi ncl
+        run: |
+          set -e
+          shopt -s nullglob
+          fail=0
+          files=(ncl/*.ncl crates/domains/*/domain.ncl)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::검증할 .ncl 파일이 없음 — skip"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "→ nickel eval $f"
+            if ! nickel eval "$f" > /dev/null; then
+              echo "::error file=$f::Nickel eval 실패"
+              fail=1
+            fi
+          done
+          exit $fail

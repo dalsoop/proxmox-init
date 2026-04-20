@@ -5,12 +5,24 @@ on:
     tags:
       - "v*"
 
+# workflow 최상단은 최소권한. release job 만 contents: write 로 override (codex #45 P2).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ncl-gate:
+    # Nickel contract 통과 안 한 태그는 릴리스로 못 나감.
+    # ncl-validate.yml 과 동일한 검증 로직을 재사용 workflow 로 공유 — 드리프트 방지 (codex #45 P2).
+    uses: ./.github/workflows/reusable-ncl-eval.yml
+
   build:
+    needs: ncl-gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         target: [x86_64-unknown-linux-gnu]

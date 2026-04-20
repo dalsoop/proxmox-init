@@ -6,42 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   pxi-ncl-eval:
-    # pxi repo 안의 ncl/ 파일들이 syntax + contract 통과하는지
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Nickel
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -L https://github.com/tweag/nickel/releases/latest/download/nickel-x86_64-linux \
-            -o "$HOME/.local/bin/nickel"
-          chmod +x "$HOME/.local/bin/nickel"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/nickel" --version
-
-      - name: Eval pxi ncl/*.ncl
-        run: |
-          set -e
-          fail=0
-          for f in ncl/*.ncl; do
-            echo "→ nickel eval $f"
-            if ! nickel eval "$f" > /dev/null; then
-              echo "::error file=$f::Nickel eval 실패"
-              fail=1
-            fi
-          done
-          # 각 도메인의 domain.ncl 도 syntax 체크
-          for f in crates/domains/*/domain.ncl; do
-            echo "→ nickel eval $f"
-            if ! nickel eval "$f" > /dev/null; then
-              echo "::error file=$f::Nickel eval 실패"
-              fail=1
-            fi
-          done
-          exit $fail
+    # pxi repo 안의 ncl/ 파일들이 syntax + contract 통과하는지 (재사용 workflow 사용).
+    # release.yml 과 동일한 검증 파이프라인 공유 — 드리프트 방지 (codex #45 P2).
+    uses: ./.github/workflows/reusable-ncl-eval.yml
 
   control-plane-validate:
     # control-plane 은 private repo. GH_READ_TOKEN (repo: read PAT) secret
@@ -50,8 +22,11 @@ jobs:
     # 로컬에서는 직접:
     #   cd /root/control-plane && bash nickel/validate-all.sh --ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       GH_READ_TOKEN: ${{ secrets.GH_READ_TOKEN }}
+      NICKEL_VERSION: "1.16.0"
     steps:
       - name: Guard — skip if no PAT
         id: guard
@@ -74,11 +49,13 @@ jobs:
           path: control-plane
           token: ${{ secrets.GH_READ_TOKEN }}
 
-      - name: Install Nickel
+      - name: Install Nickel ${{ env.NICKEL_VERSION }}
         if: steps.guard.outputs.has_token == 'true'
         run: |
+          set -e
           mkdir -p "$HOME/.local/bin"
-          curl -L https://github.com/tweag/nickel/releases/latest/download/nickel-x86_64-linux \
+          curl -fsSL \
+            "https://github.com/tweag/nickel/releases/download/${NICKEL_VERSION}/nickel-x86_64-linux" \
             -o "$HOME/.local/bin/nickel"
           chmod +x "$HOME/.local/bin/nickel"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
