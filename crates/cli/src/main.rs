@@ -65,6 +65,8 @@ enum Cmd {
     },
     /// 상태 점검
     Doctor,
+    /// SSOT 정합성 전수 점검 — locale.json ↔ 설치된 바이너리 drift 보고
+    Validate,
     /// 프로젝트 이름 변경 (Cargo.toml, 소스, 바이너리, 시스템 경로 일괄)
     Rebrand {
         /// 새 이름 (예: pxi → mytools)
@@ -99,6 +101,7 @@ fn main() -> anyhow::Result<()> {
             doctor();
             Ok(())
         }
+        Cmd::Validate => validate(),
         Cmd::Rebrand { new_name, apply } => rebrand(&new_name, apply),
     }
 }
@@ -762,5 +765,101 @@ fn rebrand(new_name: &str, apply: bool) -> anyhow::Result<()> {
     }
 
     println!("\n✓ 완료. 소스 코드는 scripts/rebrand.sh 또는 brand.rs 수정 후 재빌드.");
+    Ok(())
+}
+
+// ========== validate ==========
+
+/// SSOT 정합성 전수 점검.
+/// 목적: locale.json ↔ 설치된 바이너리 ↔ `pxi-<name>` 실행 가능 여부 drift 조기 발견.
+///
+/// 단계:
+///   1) Registry::load() — locale.json tier 1/2 중 하나는 로드
+///   2) 각 SSOT 도메인마다 설치 여부 + `--help` 실행 성공 여부
+///   3) 설치됐지만 SSOT 에 없는 바이너리 (orphan) 보고
+fn validate() -> anyhow::Result<()> {
+    use pxi_core::{paths, registry::Registry};
+    use std::process::Command;
+
+    println!("=== pxi validate ===\n");
+    let mut errors: usize = 0;
+    let mut warnings: usize = 0;
+
+    // 1. Registry 로드
+    let reg = match Registry::load() {
+        Ok(r) => {
+            println!("✓ locale.json 로드 — 도메인 {}개, format_version={}",
+                r.domains.len(), r.format_version);
+            r
+        }
+        Err(e) => {
+            println!("✗ Registry 로드 실패: {e}");
+            anyhow::bail!("locale.json 미로드 — 다른 체크 스킵");
+        }
+    };
+
+    // 2. 각 도메인별 바이너리 존재 + --help
+    let bin_dir = paths::bin_dir()?;
+    println!("\n[도메인 바이너리 점검] bin_dir={}", bin_dir.display());
+    let mut missing_bins: Vec<String> = Vec::new();
+    for (name, _domain) in reg.domains.iter() {
+        let bin_path = bin_dir.join(format!("pxi-{name}"));
+        if !bin_path.exists() {
+            warnings += 1;
+            missing_bins.push(name.clone());
+            continue;
+        }
+        // --help 실행
+        match Command::new(&bin_path).arg("--help").output() {
+            Ok(out) if out.status.success() => {
+                println!("  ✓ pxi-{name}");
+            }
+            Ok(out) => {
+                errors += 1;
+                println!("  ✗ pxi-{name} --help exit {}", out.status.code().unwrap_or(-1));
+            }
+            Err(e) => {
+                errors += 1;
+                println!("  ✗ pxi-{name} 실행 실패: {e}");
+            }
+        }
+    }
+    if !missing_bins.is_empty() {
+        println!("\n  ⚠ 미설치 도메인 ({}): {}", missing_bins.len(), missing_bins.join(", "));
+        println!("    (설치: pxi install <name>)");
+    }
+
+    // 3. orphan 바이너리 — 설치됐는데 SSOT 에 없음
+    println!("\n[orphan 바이너리 점검]");
+    let mut orphans: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&bin_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(stripped) = name.strip_prefix("pxi-") {
+                if stripped == "init" || stripped.starts_with('.') {
+                    continue;
+                }
+                if !reg.domains.contains_key(stripped) {
+                    orphans.push(stripped.to_string());
+                }
+            }
+        }
+    }
+    if orphans.is_empty() {
+        println!("  ✓ orphan 없음");
+    } else {
+        warnings += orphans.len();
+        for o in &orphans {
+            println!("  ⚠ pxi-{o} — 설치됐지만 SSOT 에 없음 (삭제 또는 domain.ncl 추가)");
+        }
+    }
+
+    // 4. 요약 + exit code
+    println!("\n=== 요약 ===");
+    println!("  errors:   {errors}");
+    println!("  warnings: {warnings}");
+    if errors > 0 {
+        anyhow::bail!("validate 실패 — errors={errors}");
+    }
     Ok(())
 }
