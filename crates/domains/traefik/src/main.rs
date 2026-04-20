@@ -261,7 +261,7 @@ fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) ->
     let local = local_node_name();
     let is_local = node.is_none() || node == Some(&local);
 
-    let out = common::run("mktemp", &["-t", "pxi.XXXXXXXX"])?;
+    let out = common::run_str("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let tmp = out.trim();
     let tmp_path = std::path::PathBuf::from(tmp);
     struct Cleanup<'a>(&'a std::path::Path);
@@ -406,6 +406,9 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
         }
     }
     let is_remote = node.is_some() && node != Some(&local);
+
+    // VMID↔IP 규약 — pct create 직접 호출 경로도 차단.
+    pxi_core::convention::validate_ip(vmid, ip)?;
 
     // 1. LXC 생성
     println!("[1/4] LXC 생성...");
@@ -602,7 +605,7 @@ fn recreate(vmid: &str) -> anyhow::Result<()> {
         "mkdir -p /opt/traefik/acme /opt/traefik/dynamic && touch /opt/traefik/acme/acme.json && chmod 600 /opt/traefik/acme/acme.json"
     ])?;
 
-    let out = common::run("pct", &[
+    let out = common::run_str("pct", &[
         "exec", vmid, "--", "bash", "-c",
         "docker rm -f traefik 2>/dev/null; cd /opt/traefik && docker compose up -d 2>&1"
     ])?;
@@ -931,7 +934,7 @@ fn cloudflare_sync(vmid: &str) -> anyhow::Result<()> {
     ])?;
 
     // Compose recreate
-    let out = common::run("pct", &["exec", vmid, "--", "bash", "-c",
+    let out = common::run_str("pct", &["exec", vmid, "--", "bash", "-c",
         r#"set -e
 if docker compose version >/dev/null 2>&1; then
   docker rm -f traefik >/dev/null 2>&1 || true
