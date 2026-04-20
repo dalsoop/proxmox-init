@@ -400,13 +400,15 @@ fi
 
 SRC=/opt/vaultwarden/src
 mkdir -p /opt/vaultwarden/bin /opt/vaultwarden/data
-if [ ! -d "$SRC/.git" ]; then
-    git clone --depth 1 --branch {tag} {upstream} "$SRC"
-else
-    git -C "$SRC" fetch --depth 1 origin {tag} && git -C "$SRC" checkout {tag}
-fi
+
+# shallow clone + tag 체크아웃이 기존 .git 에서 꼬이면 --version metadata 가
+# 예전 값 embed 되므로, 매번 src 를 새로 clone 하는 편이 안전.
+rm -rf "$SRC"
+git clone --depth 1 --branch {tag} {upstream} "$SRC"
 
 cd "$SRC"
+HEAD_TAG=$(git describe --tags --always)
+echo "src HEAD = $HEAD_TAG"
 cargo build --release --features {features} --no-default-features
 install -m 0755 target/release/vaultwarden /opt/vaultwarden/bin/vaultwarden
 chown -R vaultwarden:vaultwarden /opt/vaultwarden/bin /opt/vaultwarden/data
