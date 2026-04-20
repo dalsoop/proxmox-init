@@ -2,6 +2,29 @@
 
 Semantic Versioning (https://semver.org/)
 
+## Nickel SSOT enforcement — 2026-04-20/21
+
+mac-app-init 수준의 SSOT 엔포스먼트 달성 (7-PR + 문서).
+
+- **#44** CI `ncl-validate.yml` — PR 마다 `ncl/*.ncl` + `crates/domains/*/domain.ncl` 계약 검증
+- **#45** release `ncl-gate` + reusable workflow — 태그 릴리스 전 Nickel 통과 필수. 1.16.0 pin, `shopt -s nullglob`, 권한 최소화
+- **#46** 29→30 도메인 전수 SSOT — `ncl/contracts/domain.ncl` Domain 계약 (NameStr regex + Product/Layer/Platform enum), `ncl/domains.ncl` import 인덱스 + requires 교차검증, domain inventory check
+- **#47** `scripts/install-local.sh` 신규 — 로컬 빌드 전 `nickel export` 게이트. 같이 발견된 선재 버그 4개 (pxi-core 미완성 리팩터 + `common::run` 시맨틱 flip + deny schema + license 필드) 일괄 정리. 11개 깨진 crate 복구
+- **#53** runtime `locale.json` 3-tier — 파일시스템 → 바이너리 embed → hard-fail. build.rs 가 nickel export 로 embed. 5 unit test 로 "silent degrade 금지" 계약 고정. tier 1 parse 실패 시 tier 2 우회 안 함
+- **#57** `scripts/new-domain.sh` 스캐폴더 — name/product/layer/platform/desc 입력만으로 4개 파일 원자적 생성 + 자동 nickel eval + cargo check
+- **#58** `pxi validate` 서브커맨드 — SSOT ↔ 설치 바이너리 drift 전수 점검. 미설치 도메인 + orphan 바이너리 보고
+- **#60** README 섹션 추가 (SSOT / 새 도메인 추가 / 로컬 개발 흐름)
+
+정리된 선재 버그:
+- `pxi-core` 의 paths/dotenvx/github/systemd 모듈이 `lib.rs` 에 미등록 (orphan)
+- `common::run` 시그니처가 capture → interactive 로 뒤집혔지만 229 호출처 미반영
+- `Registry` struct 삭제 상태에서 `pxi available`/`pxi init` 가 참조 (v0.2.0 기반 복원)
+- `deny.toml` cargo-deny 0.19 schema 미대응 (main #49/#50 과 병렬 수정)
+- 모든 crate Cargo.toml 에 license 필드 누락 (main #51 과 병렬 수정)
+
+신규 도메인:
+- `vaultwarden` (#48) — 패스워드 매니저 LXC reconcile
+
 ## scripts/tmux-topbar — 2026-04-20
 
 신규 보조 스크립트 번들 (PR #27). pxi 도메인이나 버전 bump는 아니며,

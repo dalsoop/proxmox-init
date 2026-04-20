@@ -2,27 +2,38 @@
 
 ## 새 도메인 추가
 
-1. `crates/domains/<name>/` 생성
-   - `Cargo.toml` — `pxi-<name>` 바이너리 + `pxi-core` 의존
-   - `src/main.rs` — `clap` CLI + `Doctor` 서브커맨드 (graceful, exit 0)
+**`scripts/new-domain.sh` 스캐폴더가 정본**. 4개 파일을 원자적으로 생성 + Nickel 검증 + `cargo check` 를 한 번에 돌려 SSOT 일관성을 깨지 않음.
 
-2. `ncl/domains.ncl` 레지스트리에 메타데이터:
-```nickel
-<name> = {
-  name = "<name>",
-  description = "...",
-  tags = { product = 'infra, layer = 'remote, platform = 'debian },
-  provides = ["<name> cmd1", "<name> cmd2"],
-} | Domain,
+```bash
+scripts/new-domain.sh <name> <product> <layer> <platform> "<설명>"
+
+# 예시
+scripts/new-domain.sh vaultwarden service remote proxmox \
+  "Vaultwarden 패스워드 매니저 LXC"
 ```
 
-3. `crates/core/src/registry.rs` fallback에 한 줄 추가 (nickel 없는 환경 대비)
+허용 값 (Nickel `domain_contract.ncl` 와 동일):
+- `product`: `infra | desktop | ai | devops | service | monitor | tool | media | network`
+- `layer`: `host | remote | tool`
+- `platform`: `proxmox | linux | any`
 
-4. `tests/smoke.sh`의 도메인 리스트에 추가 (알파벳 순)
+생성되는 파일:
 
-5. `.github/workflows/release.yml`의 `for bin in ...` 목록에 `pxi-<name>` 추가
+| 파일 | 역할 |
+|---|---|
+| `crates/domains/<name>/Cargo.toml` | workspace version/edition/license inherit |
+| `crates/domains/<name>/src/main.rs` | clap skeleton (doctor/status) |
+| `crates/domains/<name>/domain.ncl` | Domain contract 적용 인스턴스 |
+| `ncl/domains.ncl` | 알파벳 순 import 라인 삽입 |
 
-6. PR 생성
+스캐폴더는 Nickel eval 과 cargo check 까지 자동 실행. 통과하면 이후 할 일:
+
+1. `src/main.rs` TODO 구현
+2. `scripts/install-local.sh <name>` 로 로컬 빌드 + locale.json 재생성
+3. `pxi validate` 로 drift 없음 확인
+4. 커밋 + PR
+
+**수동 편집이 필요한 레거시 절차는 없음.** `crates/core/src/registry.rs` 에 손댈 일 없음 (Registry 가 locale.json 을 직접 읽음). `release.yml` 수정도 불필요 (`locale-export` job 이 자동). `tests/smoke.sh` 는 대표 crate 두 개만 검사 — 전수 빌드는 `cargo check --workspace` 가 담당.
 
 ## 새 deploy 레시피 추가
 
@@ -103,9 +114,13 @@ read-only 명령(list/status 등)에 `--json` 글로벌 플래그:
 
 - `clap` derive 매크로
 - 에러: `anyhow::Result`
-- 외부 명령: `pxi_core::common::run()` (비밀 포함 시 `run_secret()`)
+- 외부 명령:
+  - `pxi_core::common::run()` — stdout **캡처**, 반환 `Result<String>` (기본)
+  - `pxi_core::common::run_passthrough()` — 진행상태 실시간 상속 (예: `pct enter`)
+  - `pxi_core::common::run_secret()` — argv 에 자격증명 포함 시. 실패 메시지에 argv 노출 안 함
 - 명령 존재 확인: `common::has_cmd()` (외부 `which` 바이너리 의존 금지)
 - 호스트 경로: `pxi_core::paths::*`
+- 도메인 메타 로딩: `pxi_core::registry::Registry::load()` (locale.json 3-tier)
 - doctor: 누락 의존성은 **보고만**, exit 0 (CI smoke 호환)
 
 ## 보안 원칙

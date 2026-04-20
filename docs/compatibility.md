@@ -34,6 +34,15 @@
 | **telegram** | ✓ | ✓ | ✓ | ✓ | curl + Telegram API |
 | **ai** | ✓ | ✓ | ✓ | ✗ | npm -g 필요 |
 | **comfyui** | ✓ | ✗ | ✓ | ✗ | GPU passthrough + LXC |
+| **code-server** | ✓ | ✗ | ✓ | ✗ | code-server LXC (pct 필요) |
+| **elk** | ✓ | ✗ | ✓ | ✗ | ES + Kibana + Logstash LXC |
+| **infisical** | ✓ | ✗ | ✓ | ✗ | Infisical 시크릿 플랫폼 LXC |
+| **license** | ✓ | ✗ | ✓ | ✗ | Keygen CE LXC |
+| **ministack** | ✓ | ✗ | ✓ | ✗ | LocalStack AWS 에뮬레이터 LXC |
+| **service** | ✓ | ✓ | ✓ | ✗ | /opt/services 레지스트리 — Traefik 동기화는 PVE |
+| **vaultwarden** | ✓ | ✗ | ✓ | ✗ | Vaultwarden 패스워드 매니저 LXC |
+| **wordpress** | ✓ | ✗ | ✓ | ✗ | WordPress LXC (pct + dotenvx) |
+| **xdesktop** | ✓ | ✗ | ✓ | ✗ | Xpra HTML5 + 한글 locale LXC |
 
 ## 아키텍처
 
