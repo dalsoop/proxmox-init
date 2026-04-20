@@ -32,6 +32,12 @@ fn main() {
         println!("cargo:rustc-cfg=domain=\"{name}\"");
     }
     println!("cargo:rerun-if-changed={}", domains_root.display());
+    // 개별 domain.ncl 내용 변경까지 watch — 디렉토리 수준 rerun-if-changed 는 파일 추가/삭제만
+    // 감지, 내용 변경 미감지 (codex #53 P3). 각 domain.ncl 을 explicit 등록.
+    for name in &names {
+        let ncl_file = domains_root.join(name).join("domain.ncl");
+        println!("cargo:rerun-if-changed={}", ncl_file.display());
+    }
 
     // ─── ncl/domains.ncl → OUT_DIR/locale.json embed ───
     // 빌드 머신에 nickel 이 있으면 export 해서 embed. 없으면 empty JSON 을 기록 —
@@ -71,12 +77,9 @@ fn main() {
         }
     }
 
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace.join("ncl").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        workspace.join("ncl/contracts").display()
-    );
+    // ncl/ 하위 개별 파일 rerun-if-changed (내용 변경 감지). domains.ncl / presets.ncl /
+    // contracts/domain.ncl 까지 모두 포함.
+    for f in ["ncl/domains.ncl", "ncl/presets.ncl", "ncl/contracts/domain.ncl"] {
+        println!("cargo:rerun-if-changed={}", workspace.join(f).display());
+    }
 }

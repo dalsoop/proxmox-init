@@ -58,38 +58,49 @@ fn default_true() -> bool { true }
 
 impl Registry {
     pub fn load() -> anyhow::Result<Self> {
-        // Tier 1: 파일시스템 locale.json
-        if let Ok(path) = crate::paths::locale_json() {
-            if path.exists() {
-                let raw = std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {e}", path.display()))?;
-                return Self::parse_with_version(&raw, &path.display().to_string());
-            }
+        Self::load_from_sources(
+            crate::paths::locale_json().ok().filter(|p| p.exists()),
+            EMBEDDED_LOCALE_JSON,
+        )
+    }
+
+    /// 실질 로드 로직 — 테스트에서 path/embedded 직접 주입하기 위한 내부 함수.
+    fn load_from_sources(
+        fs_path: Option<std::path::PathBuf>,
+        embedded: &str,
+    ) -> anyhow::Result<Self> {
+        // Tier 1: 파일시스템 locale.json. 있으면 여기서 hard-fail 여부 결정 —
+        // 파싱·버전 실패가 tier 2 로 silent downgrade 되지 않게 (codex #47 P1).
+        if let Some(path) = fs_path {
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {e}", path.display()))?;
+            return Self::parse_with_version(&raw, &path.display().to_string())
+                .map_err(|e| anyhow::anyhow!(
+                    "{e}\n\
+                     복구: locale.json 재생성이 필요하면 'scripts/install-local.sh'. \
+                     tier-1 invalid 는 embedded fallback 을 자동 우회하지 않음."
+                ));
         }
-        // Tier 2: 바이너리에 embed 된 locale.json (build.rs 가 생성).
-        // nickel 미설치 빌드면 빈 `{}` 가 embed 되어 여기서 format_version 검사 실패 →
-        // tier 3 hard-fail 로 진행.
-        if let Ok(reg) = Self::parse_with_version(EMBEDDED_LOCALE_JSON, "<embedded>") {
-            return Ok(reg);
+        // Tier 2: 바이너리 embed. 실패 원인을 tier-3 에러에 포함해 디버그 가능 (codex #53 P2).
+        match Self::parse_with_version(embedded, "<embedded>") {
+            Ok(reg) => Ok(reg),
+            Err(embed_err) => anyhow::bail!(
+                "locale.json 없음 (fs tier). embedded tier 도 로드 실패:\n  {embed_err}\n\
+                 복구:\n  \
+                 - fresh clone: 'scripts/install-local.sh' 실행 (nickel 필요)\n  \
+                 - release tarball: install.sh 가 자동 배치해야 함 — 누락이면 버그\n  \
+                 - 소스 빌드: nickel 설치 후 'cargo build' 재실행"
+            ),
         }
-        // Tier 3: hard-fail
-        anyhow::bail!(
-            "locale.json 이 없음. fresh clone 이면 다음을 먼저 실행:\n  \
-             scripts/install-local.sh\n\
-             릴리스 tarball 사용 시 install.sh 가 자동 배치해야 함. \
-             소스에서 빌드했지만 nickel 이 미설치면 embedded locale 도 없음 — \
-             'pxi run bootstrap nickel' 후 재빌드."
-        );
     }
 
     fn parse_with_version(raw: &str, source: &str) -> anyhow::Result<Self> {
         let reg: Registry = serde_json::from_str(raw)
-            .map_err(|e| anyhow::anyhow!("{} JSON 파싱 실패: {e}", source))?;
+            .map_err(|e| anyhow::anyhow!("{source} JSON 파싱 실패: {e}"))?;
         if reg.format_version != SUPPORTED_FORMAT_VERSION {
             anyhow::bail!(
-                "{} format_version={} 은 runtime 이 지원하지 않음 (supported={}). \
+                "{source} format_version={} 은 runtime 이 지원하지 않음 (supported={}). \
                  Nickel SSOT 업그레이드 또는 pxi 바이너리 업그레이드 필요.",
-                source,
                 reg.format_version,
                 SUPPORTED_FORMAT_VERSION
             );
@@ -121,4 +132,84 @@ pub fn known_domains() -> Vec<(&'static str, &'static str)> {
 
 pub fn binary_name(domain: &str) -> String {
     crate::brand::domain_bin(domain)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    const VALID_V1: &str = r#"{
+        "format_version": 1,
+        "domains": {
+            "lxc": {
+                "name": "lxc",
+                "description": "LXC 관리",
+                "tags": {"product": "infra", "layer": "remote", "platform": "proxmox"},
+                "provides": ["lxc create"]
+            }
+        }
+    }"#;
+
+    const EMPTY: &str = "{}";
+    const WRONG_VERSION: &str = r#"{"format_version": 99, "domains": {}}"#;
+    const BROKEN_JSON: &str = r#"not valid json"#;
+
+    fn write_tmp(contents: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pxi-registry-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "locale-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn tier1_valid_hit_returns_fs() {
+        let path = write_tmp(VALID_V1);
+        let reg = Registry::load_from_sources(Some(path.clone()), EMPTY).unwrap();
+        assert_eq!(reg.format_version, 1);
+        assert!(reg.domains.contains_key("lxc"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn tier1_invalid_hard_fails_no_embedded_downgrade() {
+        // codex #47 P1: tier 1 가 존재하는데 format_version 틀리면 절대 tier 2 로 내려가선 안 됨.
+        let path = write_tmp(WRONG_VERSION);
+        let err = Registry::load_from_sources(Some(path.clone()), VALID_V1).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("format_version=99"), "unexpected: {msg}");
+        // embedded 가 valid 였어도 tier 2 로 넘어가지 않았음을 확인
+        assert!(!msg.contains("<embedded>"), "should not mention embedded: {msg}");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn tier1_broken_json_hard_fails() {
+        let path = write_tmp(BROKEN_JSON);
+        let err = Registry::load_from_sources(Some(path.clone()), VALID_V1).unwrap_err();
+        assert!(format!("{err}").contains("JSON 파싱 실패"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn tier2_embedded_hit_when_fs_absent() {
+        let reg = Registry::load_from_sources(None, VALID_V1).unwrap();
+        assert_eq!(reg.format_version, 1);
+    }
+
+    #[test]
+    fn tier3_fails_when_neither() {
+        // codex #53 P2: tier 2 실패 원인이 최종 에러에 포함돼야 디버그 가능.
+        let err = Registry::load_from_sources(None, EMPTY).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("<embedded>"), "tier-2 원인 누락: {msg}");
+    }
 }

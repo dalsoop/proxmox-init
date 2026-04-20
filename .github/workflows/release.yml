@@ -52,6 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NICKEL_VERSION: "1.16.0"
     strategy:
       matrix:
         target: [x86_64-unknown-linux-gnu]
@@ -64,6 +66,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # build.rs 가 nickel 로 ncl/domains.ncl 을 export 해 binary 에 embed —
+      # nickel 미설치면 empty `{}` 가 구워져 runtime tier-2 가 무용지물이 됨 (codex #53 P1).
+      - name: Install Nickel ${{ env.NICKEL_VERSION }}
+        run: |
+          set -e
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL \
+            "https://github.com/tweag/nickel/releases/download/${NICKEL_VERSION}/nickel-x86_64-linux" \
+            -o "$HOME/.local/bin/nickel"
+          chmod +x "$HOME/.local/bin/nickel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nickel" --version
 
       - name: Build ${{ matrix.binary }}
         run: cargo build --release -p ${{ matrix.binary }} --target ${{ matrix.target }}
