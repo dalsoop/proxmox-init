@@ -102,6 +102,13 @@ enum Cmd {
     },
     /// 전체 LXC 규약 감사 — VMID↔IP 일치성 스캔 (pxi_core::convention)
     AuditAll,
+    /// 매일 자동 감사 systemd timer 설치
+    AuditInstallTimer {
+        /// 실행 시각 HH:MM (기본 09:00)
+        #[arg(long, default_value = "09:00")] time: String,
+    },
+    /// 자동 감사 timer 제거
+    AuditUninstallTimer,
     /// 환경 점검 (pct + pxi-lxc 등 존재 확인)
     Doctor,
 }
@@ -133,8 +140,63 @@ fn main() -> anyhow::Result<()> {
             dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
         }
         Cmd::AuditAll => audit_all(),
+        Cmd::AuditInstallTimer { time } => audit_install_timer(&time),
+        Cmd::AuditUninstallTimer => audit_uninstall_timer(),
         Cmd::Doctor => { doctor(); Ok(()) }
     }
+}
+
+fn audit_install_timer(time: &str) -> anyhow::Result<()> {
+    // HH:MM 형식 검증
+    if !time.len() == 5 || !time.contains(':') {
+        anyhow::bail!("--time 형식 HH:MM (예: 09:00)");
+    }
+    let service = r#"[Unit]
+Description=pxi VMID-IP 규약 감사
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pxi run xdesktop audit-all
+StandardOutput=journal
+StandardError=journal
+# 실패 시 hook: /etc/pxi/audit-alert.sh 가 있으면 실행 (telegram 등 사용자 재량)
+ExecStopPost=/bin/sh -c '[ "$EXIT_STATUS" = "0" ] || [ ! -x /etc/pxi/audit-alert.sh ] || /etc/pxi/audit-alert.sh "$SERVICE_RESULT"'
+"#;
+    let timer = format!(r#"[Unit]
+Description=pxi VMID-IP 규약 감사 (매일 {time})
+
+[Timer]
+OnCalendar=*-*-* {time}:00
+Persistent=true
+Unit=pxi-convention-audit.service
+
+[Install]
+WantedBy=timers.target
+"#);
+
+    std::fs::write("/etc/systemd/system/pxi-convention-audit.service", service)?;
+    std::fs::write("/etc/systemd/system/pxi-convention-audit.timer", timer)?;
+    common::run("systemctl", &["daemon-reload"])?;
+    common::run("systemctl", &["enable", "--now", "pxi-convention-audit.timer"])?;
+    println!("✓ pxi-convention-audit.timer 설치 (매일 {time})");
+    println!("  즉시 실행:   systemctl start pxi-convention-audit.service");
+    println!("  다음 실행:   systemctl list-timers pxi-convention-audit.timer");
+    println!("  실패 알림:   /etc/pxi/audit-alert.sh 에 스크립트 두면 exit status 전달");
+    Ok(())
+}
+
+fn audit_uninstall_timer() -> anyhow::Result<()> {
+    common::run("systemctl", &["disable", "--now", "pxi-convention-audit.timer"]).ok();
+    for f in ["pxi-convention-audit.service", "pxi-convention-audit.timer"] {
+        let path = format!("/etc/systemd/system/{f}");
+        if std::path::Path::new(&path).exists() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    common::run("systemctl", &["daemon-reload"])?;
+    println!("✓ pxi-convention-audit.timer 제거");
+    Ok(())
 }
 
 /// `pct list` 스캔 → 각 LXC 의 VMID↔IP 규약 일치성 검사. 위반 있으면 exit 1.
