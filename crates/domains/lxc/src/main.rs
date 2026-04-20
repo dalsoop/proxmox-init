@@ -41,7 +41,9 @@ enum Cmd {
     List,
     /// LXC 상태
     Status { vmid: String },
-    /// LXC 생성 (VMID 규약 강제 — Vmid newtype)
+    /// LXC 생성 (VMID 규약 강제 — Vmid newtype).
+    /// 리소스 기본값은 config.toml `[lxc]` 에서 로드. 생략 시 built-in default
+    /// (debian-13 / local-lvm / 8G / 2core / 2048MB / vmbr1).
     Create {
         #[arg(long)]
         vmid: pxi_core::types::Vmid,
@@ -50,21 +52,21 @@ enum Cmd {
         /// IP (CIDR 포함 가능, 예: 10.0.50.181/16)
         #[arg(long)]
         ip: String,
-        #[arg(long, default_value = "debian-13")]
-        template: String,
-        #[arg(long, default_value = "local-lvm")]
-        storage: String,
-        #[arg(long, default_value = "8")]
-        disk: String,
-        #[arg(long, default_value = "2")]
-        cores: String,
-        #[arg(long, default_value = "2048")]
-        memory: String,
+        #[arg(long)]
+        template: Option<String>,
+        #[arg(long)]
+        storage: Option<String>,
+        #[arg(long)]
+        disk: Option<String>,
+        #[arg(long)]
+        cores: Option<String>,
+        #[arg(long)]
+        memory: Option<String>,
         /// 게이트웨이 (기본: config.toml의 network.gateway)
         #[arg(long)]
         gateway: Option<String>,
-        #[arg(long, default_value = "vmbr1")]
-        bridge: String,
+        #[arg(long)]
+        bridge: Option<String>,
     },
     /// LXC 시작
     Start { vmid: String },
@@ -239,7 +241,22 @@ fn main() -> anyhow::Result<()> {
             memory,
             gateway,
             bridge,
-        } => create(vmid.as_str(), &hostname, &ip, &template, &storage, &disk, &cores, &memory, gateway.as_deref(), &bridge),
+        } => {
+            // config.toml [lxc] 에서 기본값 로드. 파싱 실패면 bail (codex #41 규약).
+            let cfg = pxi_core::config::Config::load()?;
+            create(
+                vmid.as_str(),
+                &hostname,
+                &ip,
+                &template.unwrap_or(cfg.lxc.template),
+                &storage.unwrap_or(cfg.lxc.storage),
+                &disk.unwrap_or(cfg.lxc.disk),
+                &cores.unwrap_or(cfg.lxc.cores),
+                &memory.unwrap_or(cfg.lxc.memory),
+                gateway.as_deref(),
+                &bridge.unwrap_or(cfg.lxc.bridge),
+            )
+        }
         Cmd::Start { vmid } => start(&vmid),
         Cmd::Stop { vmid } => stop(&vmid),
         Cmd::Restart { vmid } => restart(&vmid),
