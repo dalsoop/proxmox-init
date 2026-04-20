@@ -1,0 +1,64 @@
+name: Nickel Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pxi-ncl-eval:
+    # pxi repo 안의 ncl/ 파일들이 syntax + contract 통과하는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nickel
+        run: |
+          curl -L https://github.com/tweag/nickel/releases/latest/download/nickel-x86_64-linux \
+            -o /usr/local/bin/nickel
+          chmod +x /usr/local/bin/nickel
+          nickel --version
+
+      - name: Eval pxi ncl/*.ncl
+        run: |
+          set -e
+          fail=0
+          for f in ncl/*.ncl; do
+            echo "→ nickel eval $f"
+            if ! nickel eval "$f" > /dev/null; then
+              echo "::error file=$f::Nickel eval 실패"
+              fail=1
+            fi
+          done
+          # 각 도메인의 domain.ncl 도 syntax 체크
+          for f in crates/domains/*/domain.ncl; do
+            echo "→ nickel eval $f"
+            if ! nickel eval "$f" > /dev/null; then
+              echo "::error file=$f::Nickel eval 실패"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  control-plane-validate:
+    # control-plane 레포 체크아웃 해서 validate-all.sh --ci 돌림.
+    # config.toml / roles.toml / services/*.toml / services_registry.toml 전수 검증.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout control-plane
+        uses: actions/checkout@v4
+        with:
+          repository: dalsoop/control-plane
+          path: control-plane
+          token: ${{ secrets.GH_READ_TOKEN || github.token }}
+
+      - name: Install Nickel
+        run: |
+          curl -L https://github.com/tweag/nickel/releases/latest/download/nickel-x86_64-linux \
+            -o /usr/local/bin/nickel
+          chmod +x /usr/local/bin/nickel
+
+      - name: Run validate-all.sh (CI mode)
+        working-directory: control-plane
+        run: bash nickel/validate-all.sh --ci
