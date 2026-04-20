@@ -1,15 +1,23 @@
 //! 서비스 alias → VMID 레지스트리 로더.
 //!
-//! 정본 TOML: `/root/control-plane/config/services_registry.toml` 또는
-//! `/etc/pxi/services_registry.toml`. 두 곳 없으면 내장 기본값 사용.
+//! 로드 우선순위:
+//!   1) `/root/control-plane/config/services_registry.toml` (개발/운영 호스트 — 정본)
+//!   2) `/etc/pxi/services_registry.toml` (설치 후 시스템 배치)
+//!   3) **내장 TOML** (crate `assets/services_registry.toml` — include_str)
+//!
+//! 3단계 fallback 이라 fresh 설치에서도 hard-fail 하지 않음. 외부 파일이 정본이고
+//! 내장 사본은 control-plane 싱크 전까지의 안전망.
 //!
 //! Nickel contract: `control-plane/nickel/services_registry_contract.ncl`.
-//! 런타임 (여기) 에선 TOML 파싱만 하고 contract 검증은 CI 로 밀어둠 —
-//! control-plane 의 `validate-all.sh` 가 Nickel 엔진으로 schema 체크.
+//! 런타임 (여기) 에선 TOML 파싱만. contract 검증은 CI 에 위임.
 
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// 빌드 시점에 crate 에 동봉된 레지스트리 사본 (외부 파일 없을 때 fallback).
+/// control-plane/config/services_registry.toml 과 sync 필요 — CI 에서 drift 체크 권장.
+const EMBEDDED_REGISTRY: &str = include_str!("../assets/services_registry.toml");
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceEntry {
@@ -24,10 +32,13 @@ pub struct ServicesRegistry {
 }
 
 impl ServicesRegistry {
-    /// 정본 경로 우선순위:
-    ///   1) `/root/control-plane/config/services_registry.toml` (개발/운영 호스트)
-    ///   2) `/etc/pxi/services_registry.toml` (설치 후 시스템)
-    /// 둘 다 없으면 Err.
+    /// 3단계 fallback:
+    ///   1) `/root/control-plane/config/services_registry.toml`
+    ///   2) `/etc/pxi/services_registry.toml`
+    ///   3) crate 에 embed 된 TOML (최후 안전망)
+    ///
+    /// 외부 파일이 있으면 embed 된 것은 무시. embed 도 실패하면 빌드가 깨진다
+    /// (include_str!). 런타임에서는 항상 Ok 를 반환한다고 사실상 가정 가능.
     pub fn load() -> anyhow::Result<Self> {
         for path in [
             PathBuf::from("/root/control-plane/config/services_registry.toml"),
@@ -38,10 +49,8 @@ impl ServicesRegistry {
                 return Ok(toml::from_str(&raw)?);
             }
         }
-        anyhow::bail!(
-            "services_registry.toml 못 찾음 — \
-             /root/control-plane/config/ 또는 /etc/pxi/ 에 배치"
-        )
+        // 두 외부 경로 모두 없으면 embed 사용
+        Ok(toml::from_str(EMBEDDED_REGISTRY)?)
     }
 
     /// alias 로 VMID 조회. 없으면 Err (도메인은 bail 으로 처리).
