@@ -70,7 +70,7 @@ Usage:
 예:
   pxi-laravel install \
     --vmid 50183 --hostname ranode-seo --domain ranode-seo.50.internal.kr \
-    --repo http://gitlab.50.internal.kr/dalsoop/legacy/ranode-seo.git \
+    --repo http://gitlab.internal.kr/dalsoop/legacy/ranode-seo.git \
     --db-name ranode_seo --db-user ranode_seo
 EOF
 }

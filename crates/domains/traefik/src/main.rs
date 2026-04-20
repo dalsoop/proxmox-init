@@ -1056,7 +1056,7 @@ mod tests {
     #[test]
     fn test_route_roundtrip() {
         let routes = vec![
-            Route { name: "gitlab".into(), domain: "gitlab.50.internal.kr".into(), backend: "http://10.0.50.101:443".into() },
+            Route { name: "gitlab".into(), domain: "gitlab.internal.kr".into(), backend: "http://10.0.50.101:443".into() },
             Route { name: "comfyui".into(), domain: "comfyui.60.internal.kr".into(), backend: "http://10.0.60.105:8188".into() },
         ];
         let json = serde_json::to_string(&routes).unwrap();

@@ -22,7 +22,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Mailpit LXC에 설치 (수신 아카이브)
+    /// Mailpit LXC에 설치 (수신 아카이브). 기존 LXC 에 바이너리 설치 — String 으로 유지
+    /// (convention 외 VMID 호환 위함, codex #40).
     InstallMailpit {
         #[arg(long)]
         vmid: String,
@@ -38,7 +39,8 @@ enum Cmd {
     /// 메일 스택 상태 점검
     Status,
     Doctor,
-    /// 메일 서버 초기 세팅 (Maddy LXC 설치 + DNS + NAT)
+    /// 메일 서버 초기 세팅 (기존 LXC 에 Maddy 설치 + DNS + NAT).
+    /// LXC 자체는 먼저 `pxi-lxc create` 로 생성. vmid 는 `pct` 식별자로만 쓰이므로 String.
     Setup {
         #[arg(long)]
         vmid: String,
@@ -353,7 +355,8 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
     // 1. LXC 확인/시작
     println!("[1/5] LXC 확인...");
     let status_out = common::run_capture("pct", &["status", vmid]).unwrap_or_default();
-    if status_out.contains("running") {
+    let parsed: pxi_core::types::LxcStatus = status_out.parse().unwrap();
+    if parsed.is_running() {
         println!("  LXC {vmid} 이미 실행 중");
     } else if !status_out.is_empty() {
         println!("  LXC {vmid} 존재 — 시작");
