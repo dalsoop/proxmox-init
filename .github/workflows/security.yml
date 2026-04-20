@@ -7,12 +7,15 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**/Cargo.toml"
+      - "deny.toml"
       - ".github/workflows/security.yml"
   pull_request:
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**/Cargo.toml"
+      - "deny.toml"
+      - ".github/workflows/security.yml"
   schedule:
     # 매주 월요일 09:00 UTC — 새 CVE가 advisory-db에 올라올 수 있음
     - cron: "0 9 * * 1"
