@@ -1,14 +1,14 @@
 [package]
-name = "pxi-wordpress"
+name = "pxi-vaultwarden"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "pxi-wordpress"
+name = "pxi-vaultwarden"
 path = "src/main.rs"
 
 [dependencies]
-pxi-core = { workspace = true }
 clap = { workspace = true }
+pxi-core = { workspace = true }
 anyhow = { workspace = true }

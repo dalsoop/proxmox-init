@@ -32,6 +32,7 @@ let domains = {
   service     = import "../crates/domains/service/domain.ncl",
   telegram    = import "../crates/domains/telegram/domain.ncl",
   traefik     = import "../crates/domains/traefik/domain.ncl",
+  vaultwarden = import "../crates/domains/vaultwarden/domain.ncl",
   vm          = import "../crates/domains/vm/domain.ncl",
   wordpress   = import "../crates/domains/wordpress/domain.ncl",
   workspace   = import "../crates/domains/workspace/domain.ncl",
