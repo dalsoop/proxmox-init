@@ -18,6 +18,35 @@ jobs:
     # ncl-validate.yml 과 동일한 검증 로직을 재사용 workflow 로 공유 — 드리프트 방지 (codex #45 P2).
     uses: ./.github/workflows/reusable-ncl-eval.yml
 
+  locale-export:
+    # ncl/domains.ncl 을 JSON 으로 렌더해 locale.json artifact 로 업로드.
+    # 릴리스 tarball 에 포함되어 런타임 consumer (PR 5) 가 읽는 SSOT 가 됨.
+    # mac-app-init install-local.sh:15-23 의 nickel export 패턴을 CI 에 반영.
+    needs: ncl-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NICKEL_VERSION: "1.16.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nickel ${{ env.NICKEL_VERSION }}
+        run: |
+          set -e
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL \
+            "https://github.com/tweag/nickel/releases/download/${NICKEL_VERSION}/nickel-x86_64-linux" \
+            -o "$HOME/.local/bin/nickel"
+          chmod +x "$HOME/.local/bin/nickel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Render locale.json
+        run: nickel export --format json ncl/domains.ncl > locale.json
+      - name: Upload locale.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: locale-json
+          path: locale.json
+
   build:
     needs: ncl-gate
     runs-on: ubuntu-latest
@@ -49,7 +78,7 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
 
   release:
-    needs: build
+    needs: [build, locale-export]
     runs-on: ubuntu-latest
     permissions:
       contents: write

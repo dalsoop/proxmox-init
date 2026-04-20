@@ -53,6 +53,13 @@ pub fn env_keys() -> Result<PathBuf> {
     Ok(config_dir()?.join(".env.keys"))
 }
 
+/// ncl/domains.ncl 을 `nickel export` 로 렌더한 런타임 SSOT.
+/// 작성: install-local.sh / release 빌드. 읽기: pxi runtime (pxi available, help 등).
+/// root → /var/lib/pxi/locale.json, user → ~/.local/share/pxi/locale.json.
+pub fn locale_json() -> Result<PathBuf> {
+    Ok(data_dir()?.join("locale.json"))
+}
+
 pub fn is_root() -> bool {
     unsafe { geteuid() == 0 }
 }
