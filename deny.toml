@@ -1,11 +1,14 @@
 # cargo-deny 설정 — https://embarkstudios.github.io/cargo-deny/
+# 스펙 버전 2 (cargo-deny >= 0.14). 옛 필드(vulnerability/unmaintained 문자열) 는
+# enum 으로 바뀌어 "deny" 를 거부 → 제거하고 기본값(deny/warn) 에 맡김.
+
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+version = 2
 yanked = "warn"
+# ignore = [ ] # CVE ID 무시 필요 시
 
 [licenses]
-# 허용 라이선스 (pxi은 MIT)
+version = 2
 allow = [
     "MIT",
     "Apache-2.0",
