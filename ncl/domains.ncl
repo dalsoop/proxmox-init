@@ -6,7 +6,7 @@
 #   - requires 에 적힌 도메인이 실제로 존재하는 이름인지 확인 (codex #46 P1)
 # 검증을 수행한다. 누락되면 nickel eval 이 명시적으로 실패 → CI 게이트.
 
-let domains = {
+let domains_map = {
   account     = import "../crates/domains/account/domain.ncl",
   ai          = import "../crates/domains/ai/domain.ncl",
   backup      = import "../crates/domains/backup/domain.ncl",
@@ -40,11 +40,11 @@ let domains = {
 }
 in
 
-let all_names = std.record.fields domains in
+let all_names = std.record.fields domains_map in
 
 # 모든 도메인의 requires 를 flat 하게 모아 존재하지 않는 이름 추출.
 let all_requires = std.array.flat_map (fun d =>
-  let r = domains."%{d}" in
+  let r = domains_map."%{d}" in
   if std.record.has_field "requires" r then r.requires else []
 ) all_names in
 
@@ -54,4 +54,10 @@ let unknown = std.array.filter (fun r =>
 
 if std.array.length unknown > 0 then
   std.fail_with "requires references unknown domain(s): %{std.string.join ", " unknown}"
-else domains
+else
+  # codex #47 P2: locale.json 포맷 버전 명시 — 향후 스키마 변경 시 Registry::load 가
+  # graceful migration 판단 가능. runtime consumer 가 모르는 버전이면 hard-fail.
+  {
+    format_version = 1,
+    domains = domains_map,
+  }

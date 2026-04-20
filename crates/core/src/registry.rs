@@ -1,18 +1,21 @@
-//! 도메인 레지스트리 — ncl/domains.ncl → locale.json → runtime 2-tier.
+//! 도메인 레지스트리 — ncl/domains.ncl → locale.json → runtime.
 //!
-//! 로드 우선순위:
-//!   1) paths::locale_json() — install-local.sh 또는 release tarball 이 설치한 JSON SSOT
-//!   2) 컴파일 타임 embedded fallback — locale.json 없는 fresh 환경 (emergency)
+//! locale.json 이 유일한 SSOT 소스. 없거나 format_version 미지원이면 **hard-fail**
+//! (codex #47 P1): silent degrade 방지. fresh clone 이면 `scripts/install-local.sh`
+//! 를 먼저 실행해 locale.json 을 생성.
 //!
-//! Runtime 에 nickel CLI 의존성 없음. ncl/domains.ncl 의 실시간 반영이 필요하면
-//! `scripts/install-local.sh` 로 재생성.
+//! Runtime 에 nickel CLI 의존성 없음.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+/// Registry 가 이해하는 locale.json 포맷 버전. 여기를 벗어나면 load() 가 hard-fail.
+/// 새 버전 추가 시 `match` 암(arm) 로 graceful migration 작성.
+const SUPPORTED_FORMAT_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
 pub struct Registry {
+    pub format_version: u32,
     pub domains: BTreeMap<String, Domain>,
 }
 
@@ -46,47 +49,29 @@ fn default_true() -> bool { true }
 
 impl Registry {
     pub fn load() -> anyhow::Result<Self> {
-        // Tier 1: locale.json (install-local.sh / release 가 배치)
-        if let Ok(path) = crate::paths::locale_json() {
-            if path.exists() {
-                let raw = std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {e}", path.display()))?;
-                let domains: BTreeMap<String, Domain> = serde_json::from_str(&raw)
-                    .map_err(|e| anyhow::anyhow!("{} JSON 파싱 실패: {e}", path.display()))?;
-                return Ok(Registry { domains });
-            }
-        }
-        // Tier 2: fallback (locale.json 없는 fresh 환경 대응).
-        // SSOT 아님 — install-local.sh / release 가 locale.json 을 덮어쓰면 이 경로 탈출.
-        Ok(Self::fallback())
-    }
-
-    fn fallback() -> Self {
-        let mut domains = BTreeMap::new();
-        let seed: &[(&str, &str)] = &[
-            ("bootstrap",   "의존성 설치 (apt/rust/gh/dotenvx/nickel)"),
-            ("lxc",         "LXC 수명 관리 (Proxmox pct 래퍼)"),
-            ("traefik",     "Traefik 리버스 프록시"),
-            ("cloudflare",  "Cloudflare DNS + Email Routing + SSL"),
-            ("ai",          "Claude/Codex CLI + 플러그인"),
-            ("mail",        "Maddy + Mailpit + Postfix relay"),
-            ("connect",     "외부 서비스 연결 관리 (.env + dotenvx)"),
-            ("service",     "/opt/services/ 레지스트리"),
-        ];
-        for (name, desc) in seed {
-            domains.insert(
-                name.to_string(),
-                Domain {
-                    name: (*name).into(),
-                    description: (*desc).into(),
-                    tags: Tags::default(),
-                    requires: vec![],
-                    provides: vec![],
-                    enabled: true,
-                },
+        let path = crate::paths::locale_json()?;
+        if !path.exists() {
+            anyhow::bail!(
+                "locale.json 이 없음 ({}). fresh clone 이면 다음을 먼저 실행:\n  \
+                 scripts/install-local.sh\n\
+                 릴리스 tarball 사용 시 install.sh 가 자동 배치해야 함 — 누락이면 버그.",
+                path.display()
             );
         }
-        Registry { domains }
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {e}", path.display()))?;
+        let reg: Registry = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("{} JSON 파싱 실패: {e}", path.display()))?;
+        if reg.format_version != SUPPORTED_FORMAT_VERSION {
+            anyhow::bail!(
+                "{} format_version={} 은 runtime 이 지원하지 않음 (supported={}). \
+                 Nickel SSOT 업그레이드 또는 pxi 바이너리 업그레이드 필요.",
+                path.display(),
+                reg.format_version,
+                SUPPORTED_FORMAT_VERSION
+            );
+        }
+        Ok(reg)
     }
 
     pub fn available(&self) -> Vec<&Domain> {
