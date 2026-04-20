@@ -242,8 +242,16 @@ fn main() -> anyhow::Result<()> {
             gateway,
             bridge,
         } => {
-            // config.toml [lxc] 에서 기본값 로드. 파싱 실패면 bail (codex #41 규약).
-            let cfg = pxi_core::config::Config::load()?;
+            // config.toml [lxc] 는 **lazy load** — 명시 안 된 필드가 있을 때만.
+            // 모든 플래그 explicit 이면 config 건드리지 않음 (codex #42 P2: 깨진 config 가
+            // explicit 호출도 깨뜨리는 regression 방지).
+            let need_config = template.is_none() || storage.is_none() || disk.is_none()
+                || cores.is_none() || memory.is_none() || bridge.is_none();
+            let cfg = if need_config {
+                pxi_core::config::Config::load()?
+            } else {
+                pxi_core::config::Config::default()
+            };
             create(
                 vmid.as_str(),
                 &hostname,
