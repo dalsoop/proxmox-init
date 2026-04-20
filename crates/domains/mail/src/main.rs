@@ -22,10 +22,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Mailpit LXC에 설치 (수신 아카이브)
+    /// Mailpit LXC에 설치 (수신 아카이브). 기존 LXC 에 바이너리 설치 — String 으로 유지
+    /// (convention 외 VMID 호환 위함, codex #40).
     InstallMailpit {
         #[arg(long)]
-        vmid: pxi_core::types::Vmid,
+        vmid: String,
     },
     /// [DEPRECATED] 호스트 Postfix → Maddy 587 SASL relay. cf-proxy-sync로 대체 권장.
     PostfixRelay {
@@ -84,7 +85,7 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::InstallMailpit { vmid } => install_mailpit(vmid.as_str()),
+        Cmd::InstallMailpit { vmid } => install_mailpit(&vmid),
         Cmd::PostfixRelay { maddy_ip, port } => postfix_relay(&maddy_ip, &port),
         Cmd::Status => { status(); Ok(()) }
         Cmd::Doctor => { doctor(); Ok(()) }
