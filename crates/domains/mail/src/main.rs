@@ -82,6 +82,27 @@ enum Cmd {
         #[arg(long)]
         vmid: Option<String>,
     },
+    /// Mailgun API SMTP shim 설치 (LXC 50122:2526) — cf-mail-proxy 가 거절하는
+    /// 같은-zone 수신자(prelik.com / ranode.net) 대체 경로.
+    /// REST API 기반이라 SMTP user/pass 이슈 없음.
+    MailgunShimInstall {
+        #[arg(long, default_value = "50122")] vmid: String,
+        #[arg(long, default_value_t = 2526)] port: u16,
+        /// Mailgun API key (비어있으면 /root/control-plane/.env 의 MAILGUN_API_KEY 참조)
+        #[arg(long)] api_key: Option<String>,
+        #[arg(long, default_value = "ranode.net")] mailgun_domain: String,
+        #[arg(long, default_value = "devops@ranode.net")] default_from: String,
+    },
+    /// Mailgun shim systemd 서비스 상태
+    MailgunShimStatus {
+        #[arg(long, default_value = "50122")] vmid: String,
+    },
+    /// Mailgun shim 로그 조회
+    MailgunShimLogs {
+        #[arg(long, default_value = "50122")] vmid: String,
+        #[arg(long)] follow: bool,
+        #[arg(long, default_value_t = 50)] tail: u32,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -94,6 +115,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::CfProxyInstall { vmid, binary } => cf_proxy_install(&vmid, &binary),
         Cmd::CfProxyQuota => cf_proxy_quota(),
         Cmd::CfProxySync { host, port, dry_run, status, vmid } => cf_proxy_sync(&host, &port, dry_run, status, vmid.as_deref()),
+        Cmd::MailgunShimInstall { vmid, port, api_key, mailgun_domain, default_from } =>
+            mailgun_shim_install(&vmid, port, api_key.as_deref(), &mailgun_domain, &default_from),
+        Cmd::MailgunShimStatus { vmid } => mailgun_shim_status(&vmid),
+        Cmd::MailgunShimLogs { vmid, follow, tail } => mailgun_shim_logs(&vmid, follow, tail),
     }
 }
 
@@ -736,3 +761,152 @@ fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
     common::run("pct", &["push", vmid, &tmp, path])?;
     Ok(())
 }
+
+// ── Mailgun SMTP shim ──
+// cf-mail-proxy 가 같은 CF zone 수신자(prelik/ranode) 를 403 email_sending_disabled
+// 로 거절하므로, Mailgun REST API 로 보내는 별도 SMTP shim 을 동일 LXC(50122) 에
+// 포트 2526 으로 얹어 둔다. aiosmtpd(py) 기반 ~60줄.
+
+const MAILGUN_SHIM_PY: &str = r#"#!/usr/bin/env python3
+"""SMTP(2526) → Mailgun REST API. cf-mail-proxy 와 같은 역할, 다른 경로."""
+import asyncio, os, sys, email.parser
+from aiosmtpd.controller import Controller
+import requests
+
+API_KEY = os.environ["MAILGUN_API_KEY"]
+DOMAIN  = os.environ.get("MAILGUN_DOMAIN", "ranode.net")
+DEFAULT_FROM = os.environ.get("DEFAULT_FROM", "devops@ranode.net")
+
+class Handler:
+    async def handle_DATA(self, server, session, envelope):
+        try:
+            msg = email.parser.BytesParser().parsebytes(envelope.content)
+            sender = envelope.mail_from or DEFAULT_FROM
+            if "@ranode.net" not in sender and "@prelik.com" not in sender:
+                sender = DEFAULT_FROM
+            subj = msg.get("Subject", "(no subject)")
+            body_text, body_html = "", None
+            if msg.is_multipart():
+                for part in msg.walk():
+                    ct = part.get_content_type()
+                    if ct == "text/plain" and not body_text:
+                        body_text = part.get_payload(decode=True).decode("utf-8","replace")
+                    elif ct == "text/html" and not body_html:
+                        body_html = part.get_payload(decode=True).decode("utf-8","replace")
+            else:
+                body_text = msg.get_payload(decode=True).decode("utf-8","replace") if msg.get_payload() else ""
+            data = {"from": sender, "to": list(envelope.rcpt_tos), "subject": subj, "text": body_text or "(empty)"}
+            if body_html: data["html"] = body_html
+            r = requests.post(
+                f"https://api.mailgun.net/v3/{DOMAIN}/messages",
+                auth=("api", API_KEY), data=data, timeout=10,
+            )
+            if r.status_code >= 300:
+                print(f"[ERR] mailgun {r.status_code}: {r.text}", file=sys.stderr, flush=True)
+                return f"554 Mailgun {r.status_code}: {r.text[:200]}"
+            print(f"[OK] to={envelope.rcpt_tos} subj={subj!r}", flush=True)
+            return "250 Message accepted"
+        except Exception as e:
+            print(f"[EXC] {e}", file=sys.stderr, flush=True)
+            return f"554 internal: {e}"
+
+def main():
+    port = int(os.environ.get("PORT", "2526"))
+    ctrl = Controller(Handler(), hostname="0.0.0.0", port=port)
+    ctrl.start()
+    print(f"mailgun-smtp-proxy listening on :{port}", flush=True)
+    asyncio.get_event_loop().run_forever()
+
+if __name__ == "__main__":
+    main()
+"#;
+
+const MAILGUN_SHIM_UNIT: &str = r#"[Unit]
+Description=SMTP-to-Mailgun API proxy
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/mailgun-smtp-proxy.env
+ExecStart=/usr/local/bin/mailgun-smtp-proxy
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+fn mailgun_shim_install(
+    vmid: &str,
+    port: u16,
+    api_key: Option<&str>,
+    domain: &str,
+    default_from: &str,
+) -> anyhow::Result<()> {
+    if !common::command_exists("pct") {
+        anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
+    }
+    let key = match api_key {
+        Some(k) => k.to_string(),
+        None => {
+            let content = std::fs::read_to_string("/root/control-plane/.env")
+                .map_err(|e| anyhow::anyhow!("control-plane/.env 읽기 실패: {e}"))?;
+            // `MAILGUN_API_KEY=...` 또는 주석 처리된 `# MAILGUN_API_KEY=...` 둘 다 허용
+            // (현재 control-plane/.env 에서 deprecate 되어 주석으로만 남은 상태 때문).
+            content.lines()
+                .map(|l| l.trim_start_matches('#').trim())
+                .find_map(|l| l.strip_prefix("MAILGUN_API_KEY=").map(|v| v.trim().to_string()))
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("MAILGUN_API_KEY 가 control-plane/.env 에 없습니다. --api-key 로 넘기세요."))?
+        }
+    };
+
+    println!("=== Mailgun SMTP shim 설치 (LXC {vmid} :{port}) ===");
+
+    // 1. deps
+    common::run("pct", &["exec", vmid, "--", "bash", "-c",
+        "apt-get install -y python3-aiosmtpd python3-requests >/dev/null 2>&1 || \
+         pip3 install --break-system-packages aiosmtpd requests >/dev/null 2>&1"
+    ])?;
+
+    // 2. script
+    write_to_lxc(vmid, "/usr/local/bin/mailgun-smtp-proxy", MAILGUN_SHIM_PY)?;
+    common::run("pct", &["exec", vmid, "--", "chmod", "+x", "/usr/local/bin/mailgun-smtp-proxy"])?;
+
+    // 3. env file (600)
+    let env_content = format!(
+        "MAILGUN_API_KEY={key}\nMAILGUN_DOMAIN={domain}\nDEFAULT_FROM={default_from}\nPORT={port}\n"
+    );
+    write_to_lxc(vmid, "/etc/mailgun-smtp-proxy.env", &env_content)?;
+    common::run("pct", &["exec", vmid, "--", "chmod", "600", "/etc/mailgun-smtp-proxy.env"])?;
+
+    // 4. systemd unit
+    write_to_lxc(vmid, "/etc/systemd/system/mailgun-smtp-proxy.service", MAILGUN_SHIM_UNIT)?;
+
+    // 5. enable + start
+    common::run("pct", &["exec", vmid, "--", "systemctl", "daemon-reload"])?;
+    common::run("pct", &["exec", vmid, "--", "systemctl", "enable", "--now", "mailgun-smtp-proxy"])?;
+
+    // 6. verify
+    let out = common::run_capture("pct", &["exec", vmid, "--", "systemctl", "is-active", "mailgun-smtp-proxy"])
+        .unwrap_or_default();
+    println!("  status: {}", out.trim());
+
+    Ok(())
+}
+
+fn mailgun_shim_status(vmid: &str) -> anyhow::Result<()> {
+    if !common::command_exists("pct") { anyhow::bail!("pct 없음"); }
+    common::run("pct", &["exec", vmid, "--", "systemctl", "status", "mailgun-smtp-proxy", "--no-pager"])?;
+    Ok(())
+}
+
+fn mailgun_shim_logs(vmid: &str, follow: bool, tail: u32) -> anyhow::Result<()> {
+    if !common::command_exists("pct") { anyhow::bail!("pct 없음"); }
+    let tail_s = tail.to_string();
+    let mut args: Vec<&str> = vec!["exec", vmid, "--", "journalctl", "-u", "mailgun-smtp-proxy",
+                                    "-n", &tail_s, "--no-pager"];
+    if follow { args.push("-f"); }
+    common::run("pct", &args)?;
+    Ok(())
+}
+
