@@ -2,6 +2,7 @@
 name = "pxi-vm"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "pxi-vm"

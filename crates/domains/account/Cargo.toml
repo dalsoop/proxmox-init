@@ -2,6 +2,7 @@
 name = "pxi-account"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "pxi-account"
