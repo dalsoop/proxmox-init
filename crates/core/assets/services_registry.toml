@@ -25,6 +25,11 @@ description = "Sentry 에러 추적"
 vmid = "50106"
 description = "중앙 git 서버 (soft-serve)"
 
+# alias: dalcenter (legacy) → dalcenter-rs
+[services.dalcenter]
+vmid = "50106"
+description = "dalcenter-rs alias (legacy 이름 호환)"
+
 [services.vaultwarden]
 vmid = "50118"
 description = "Bitwarden 호환 비밀번호 관리"

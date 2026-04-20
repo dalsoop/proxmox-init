@@ -40,16 +40,30 @@ impl ServicesRegistry {
     /// 외부 파일이 있으면 embed 된 것은 무시. embed 도 실패하면 빌드가 깨진다
     /// (include_str!). 런타임에서는 항상 Ok 를 반환한다고 사실상 가정 가능.
     pub fn load() -> anyhow::Result<Self> {
-        for path in [
+        // 각 tier 를 시도, 읽기/파싱 실패 시 stderr warn 하고 다음 tier.
+        // 모든 외부 tier 실패하면 embed. embed 파싱 실패는 build 타임에 걸릴 일이라
+        // 런타임에 에러 나면 빌드 깨진 상태 — bail.
+        let tiers = [
             PathBuf::from("/root/control-plane/config/services_registry.toml"),
             PathBuf::from("/etc/pxi/services_registry.toml"),
-        ] {
-            if path.exists() {
-                let raw = std::fs::read_to_string(&path)?;
-                return Ok(toml::from_str(&raw)?);
+        ];
+        for path in &tiers {
+            if !path.exists() {
+                continue;
+            }
+            match std::fs::read_to_string(path).and_then(|s| {
+                toml::from_str::<Self>(&s)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            }) {
+                Ok(reg) => return Ok(reg),
+                Err(e) => {
+                    eprintln!(
+                        "[pxi-core::services] {} 로드 실패 → 하위 tier 로: {e}",
+                        path.display()
+                    );
+                }
             }
         }
-        // 두 외부 경로 모두 없으면 embed 사용
         Ok(toml::from_str(EMBEDDED_REGISTRY)?)
     }
 
