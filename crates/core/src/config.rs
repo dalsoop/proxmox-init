@@ -22,7 +22,7 @@ pub struct ProxmoxConfig {
     pub node: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     #[serde(default)]
     pub bridge: String,
@@ -34,6 +34,17 @@ pub struct NetworkConfig {
     /// 공개 호스트는 관례상 `{subnet_number}.{internal_suffix}` = `50.internal.kr`.
     #[serde(default = "default_internal_suffix")]
     pub internal_suffix: String,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            bridge: String::new(),
+            gateway: String::new(),
+            subnet: default_subnet(),
+            internal_suffix: default_internal_suffix(),
+        }
+    }
 }
 
 fn default_subnet() -> u8 { 16 }
@@ -151,5 +162,14 @@ mod tests {
         assert_eq!(c.lxc.memory, "2048");
         assert_eq!(c.lxc.disk, "8");
         assert_eq!(c.lxc.template, "debian-13");
+    }
+
+    #[test]
+    fn network_config_default_has_internal_suffix() {
+        // codex #42-followup P1: Config::default() 경로가 empty suffix 로 빠지지 않게.
+        let c = Config::default();
+        assert_eq!(c.network.internal_suffix, "internal.kr");
+        assert_eq!(c.network.internal_zone_pve(), "50.internal.kr");
+        assert_eq!(c.network.internal_zone(60), "60.internal.kr");
     }
 }

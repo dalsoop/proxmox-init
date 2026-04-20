@@ -644,13 +644,15 @@ fn ingress_audit() -> anyhow::Result<()> {
         issues += 1;
     }
 
-    // DNS — config.toml 의 network.internal_suffix 기준 (fallback: 50.internal.kr)
+    // DNS — config.toml 의 network.internal_suffix 기준.
+    // resolver: 로컬/시스템 resolver (/etc/resolv.conf) — private suffix override 호환 위해
+    // @1.1.1.1 하드코딩 금지 (codex #42-followup P2).
     print!("  [4/4] DNS: ");
     if common::has_cmd("dig") {
         let zone = pxi_core::config::Config::load()
             .map(|c| c.network.internal_zone_pve())
             .unwrap_or_else(|_| "50.internal.kr".into());
-        let dns_ip = cmd_output("dig", &["+short", &zone, "@1.1.1.1"]);
+        let dns_ip = cmd_output("dig", &["+short", &zone]);
         if !dns_ip.trim().is_empty() {
             println!("✓ {zone} -> {}", dns_ip.trim());
         } else {
