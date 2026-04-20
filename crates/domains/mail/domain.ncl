@@ -13,6 +13,9 @@ let { Domain } = import "../../../ncl/contracts/domain.ncl" in
     "mail setup",
     "mail cf-proxy-install",
     "mail cf-proxy-quota",
-    "mail cf-proxy-sync"
+    "mail cf-proxy-sync",
+    "mail mailgun-shim-install",
+    "mail mailgun-shim-status",
+    "mail mailgun-shim-logs"
   ],
 } | Domain
