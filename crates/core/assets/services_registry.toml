@@ -1,0 +1,156 @@
+# pxi 서비스 레지스트리 — 정본 VMID/alias 매핑
+# 정본: /root/control-plane/config/services_registry.toml
+# 검증: /root/control-plane/nickel/services_registry_contract.ncl
+# 로더:  pxi_core::registry::services
+#
+# 새 LXC 추가 시 여기 등록. VMID↔IP 는 convention 으로 자동 유도되므로 기록 불필요.
+
+[services.traefik]
+vmid = "50100"
+description = "Traefik v3 리버스 프록시 + ACME"
+
+[services.proxmox-host-ops]
+vmid = "50101"
+description = "Proxmox 호스트 관리 API"
+
+[services.infra-control]
+vmid = "50104"
+description = "인프라 제어 LXC"
+
+[services.sentry]
+vmid = "50105"
+description = "Sentry 에러 추적"
+
+[services.dalcenter-rs]
+vmid = "50106"
+description = "중앙 git 서버 (soft-serve)"
+
+# alias: dalcenter (legacy) → dalcenter-rs
+[services.dalcenter]
+vmid = "50106"
+description = "dalcenter-rs alias (legacy 이름 호환)"
+
+[services.vaultwarden]
+vmid = "50118"
+description = "Bitwarden 호환 비밀번호 관리"
+
+[services.maddy]
+vmid = "50122"
+description = "Maddy SMTP + cf-mail-proxy"
+
+# alias: mail → maddy (도메인 코드가 'mail' 로 조회하는 경우 대응)
+[services.mail]
+vmid = "50122"
+description = "Maddy SMTP alias"
+
+[services.mailpit]
+vmid = "50124"
+description = "Mailpit 개발용 SMTP"
+
+[services.homelable]
+vmid = "50125"
+description = "Homelab 인프라 대시보드"
+
+[services.gaya-ai]
+vmid = "50131"
+description = "Gaya AI 서비스"
+
+[services.paperclip]
+vmid = "50140"
+description = "Paperclip 문서 관리"
+
+[services.host-ops]
+vmid = "50150"
+description = "Host 오퍼레이션"
+
+[services.agent-orchestrator]
+vmid = "50160"
+description = "AI 에이전트 오케스트레이터"
+
+[services.openclaw]
+vmid = "50161"
+description = "OpenClaw AI 게이트웨이"
+
+[services.searxng]
+vmid = "50162"
+description = "SearXNG 프라이빗 검색"
+
+[services.obsidian-bot]
+vmid = "50163"
+description = "Obsidian Flatnotes 웹 에디터"
+
+[services.outline]
+vmid = "50165"
+description = "Outline 위키"
+
+[services.android-dev]
+vmid = "50170"
+description = "Android/hackerskeyboard 개발환경"
+
+[services.immich]
+vmid = "50171"
+description = "Immich 사진 관리"
+
+[services.medusa]
+vmid = "50172"
+description = "MedusaJS 이커머스"
+
+[services.minio]
+vmid = "50173"
+description = "MinIO 오브젝트 스토리지"
+
+[services.hi-events]
+vmid = "50174"
+description = "Hi.events 티켓팅"
+
+[services.ainovel]
+vmid = "50176"
+description = "Ai-Novel 번역 플랫폼"
+
+[services.optio]
+vmid = "50180"
+description = "Optio 실험 서비스"
+
+[services.formbricks]
+vmid = "50181"
+description = "Medas Survey (Formbricks 포크)"
+
+[services.keygen]
+vmid = "50182"
+description = "Keygen 라이선스 서버"
+
+[services.prelik-seo-monitor]
+vmid = "50183"
+description = "Laravel SEO 모니터링"
+
+[services.elk]
+vmid = "50190"
+description = "Elastic Stack (로그 수집)"
+
+[services.wordpress]
+vmid = "50200"
+description = "WordPress 메인"
+
+[services.wp-sites]
+vmid = "50201"
+description = "WordPress 멀티사이트"
+
+[services.mattermost]
+vmid = "50202"
+description = "Mattermost 팀 채팅"
+
+[services.xdesktop-01]
+vmid = "50210"
+description = "X11 원격 데스크톱 (Xpra+Helium)"
+
+[services.gitlab]
+vmid = "50063"
+description = "GitLab 셀프호스트 (legacy, github 로 전환 중)"
+
+[services.autocut]
+vmid = "50064"
+description = "Autocut 동영상 편집"
+
+[services.posthog-nvme]
+vmid = "50099"
+description = "PostHog 분석"
