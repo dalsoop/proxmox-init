@@ -7,7 +7,7 @@
 //!   - 원격: Xpra start-desktop + HTML5 클라이언트 내장 (bind-tcp, 인증 없음)
 
 use clap::{Parser, Subcommand};
-use pxi_core::common;
+use pxi_core::{common, convention};
 
 const INSTALL_SCRIPT: &str = include_str!("../scripts/install-desktop.sh");
 const DEV_SCRIPT: &str = include_str!("../scripts/dev-setup.sh");
@@ -100,6 +100,8 @@ enum Cmd {
         /// VSCodium 설치 스킵
         #[arg(long)] no_vscodium: bool,
     },
+    /// 전체 LXC 규약 감사 — VMID↔IP 일치성 스캔 (pxi_core::convention)
+    AuditAll,
     /// 환경 점검 (pct + pxi-lxc 등 존재 확인)
     Doctor,
 }
@@ -111,14 +113,13 @@ fn main() -> anyhow::Result<()> {
     }
     match cli.cmd {
         Cmd::Setup { vmid, hostname, ip, host, cores, memory, disk, port, user, helium_tag } => {
-            // VMID 규약으로 ip/hostname 유도 + 검증
-            let canonical_ip = canonical_ip_for(&vmid)?;
+            // pxi_core::convention 공유 규약 — 위반이면 bail.
             let ip = match ip {
                 Some(explicit) => {
-                    validate_ip_matches_vmid(&explicit, &canonical_ip)?;
+                    convention::validate_ip(&vmid, &explicit)?;
                     explicit
                 }
-                None => format!("{canonical_ip}/16"),
+                None => convention::canonical_cidr(&vmid, 16)?,
             };
             let hostname = hostname.unwrap_or_else(|| derive_hostname(&vmid, host.as_deref()));
             setup(&vmid, &hostname, &ip, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
@@ -131,7 +132,51 @@ fn main() -> anyhow::Result<()> {
         Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
             dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
         }
+        Cmd::AuditAll => audit_all(),
         Cmd::Doctor => { doctor(); Ok(()) }
+    }
+}
+
+/// `pct list` 스캔 → 각 LXC 의 VMID↔IP 규약 일치성 검사. 위반 있으면 exit 1.
+fn audit_all() -> anyhow::Result<()> {
+    let list = common::run_capture("pct", &["list"])?;
+    let mut ok_count = 0;
+    let mut violations: Vec<(String, String, String)> = Vec::new();
+    for line in list.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 3 { continue; }
+        let vmid = cols[0];
+        let name = cols.get(2).copied().unwrap_or("-");
+        let cfg = match common::run_capture("pct", &["config", vmid]) {
+            Ok(c) => c, Err(_) => continue,
+        };
+        let ip_opt = cfg.lines().find_map(|l| {
+            l.strip_prefix("net0:").and_then(|rest| {
+                rest.split(',').find_map(|kv| {
+                    kv.trim().strip_prefix("ip=").map(|v| {
+                        v.split('/').next().unwrap_or(v).trim().to_string()
+                    })
+                })
+            })
+        });
+        let Some(ip) = ip_opt else { continue };
+        if ip == "dhcp" { continue; }
+        match convention::validate_ip(vmid, &ip) {
+            Ok(_) => ok_count += 1,
+            Err(e) => violations.push((vmid.to_string(), name.to_string(), format!("{e}"))),
+        }
+    }
+    println!("=== VMID↔IP 규약 감사 ===");
+    println!("  ✓ 준수 {ok_count}개");
+    if violations.is_empty() {
+        println!("  ✗ 위반 0개");
+        Ok(())
+    } else {
+        println!("  ✗ 위반 {}개:", violations.len());
+        for (v, n, r) in &violations {
+            println!("    {v}  {n:<22}  {r}");
+        }
+        anyhow::bail!("{}개 LXC 가 규약 위반", violations.len())
     }
 }
 
@@ -402,40 +447,7 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// VMID 규약 — `AABCC` 5자리.
-///   - AA = 서브넷 3번째 옥텟 (50: pve, 60: ranode-3960x)
-///   - BCC = 마지막 옥텟 (0-255)
-/// 예: 50210 → 10.0.50.210,  60104 → 10.0.60.104.
-fn canonical_ip_for(vmid: &str) -> anyhow::Result<String> {
-    if vmid.len() != 5 || !vmid.chars().all(|c| c.is_ascii_digit()) {
-        anyhow::bail!("VMID 규약 위반: 5자리 숫자 (AABCC) 여야 함. 받은 값: {vmid}");
-    }
-    let subnet: u32 = vmid[..2].parse()?;
-    let tail: u32 = vmid[2..].parse()?;
-    if !matches!(subnet, 50 | 60) {
-        anyhow::bail!(
-            "VMID {vmid}: 서브넷 {subnet} 미지원. 50(pve) 또는 60(ranode)만 자동 유도."
-        );
-    }
-    if tail > 255 {
-        anyhow::bail!(
-            "VMID {vmid}: 마지막 옥텟({tail}) > 255. 규약상 {subnet}000-{subnet}255 만 유효."
-        );
-    }
-    Ok(format!("10.0.{subnet}.{tail}"))
-}
-
-/// 명시적 --ip 가 canonical 과 일치하는지 확인.
-fn validate_ip_matches_vmid(ip_cidr: &str, canonical: &str) -> anyhow::Result<()> {
-    let ip_only = ip_cidr.split('/').next().unwrap_or(ip_cidr).trim();
-    if ip_only != canonical {
-        anyhow::bail!(
-            "--ip {ip_cidr} 가 VMID 규약({canonical}) 과 불일치. \
-             규약 위반 배포 금지 — --ip 생략하거나 {canonical}/16 로 맞추기."
-        );
-    }
-    Ok(())
-}
+// NOTE: VMID↔IP 규약은 pxi_core::convention 으로 이관 (모든 도메인 공유).
 
 /// host (예: xdesktop-02.50.internal.kr) 에서 hostname 추출.
 /// host 없으면 xdesktop-<tail> 포맷 (tail = vmid 마지막 3자리).
