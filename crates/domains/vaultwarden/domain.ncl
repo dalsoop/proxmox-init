@@ -15,6 +15,9 @@ let { Domain } = import "../../../ncl/contracts/domain.ncl" in
     "vaultwarden bw-install",
     "vaultwarden install-systemd",
     "vaultwarden install-backup-timer",
-    "vaultwarden install-env"
+    "vaultwarden install-env",
+    "vaultwarden install-binary",
+    "vaultwarden install-web-vault",
+    "vaultwarden bootstrap"
   ],
 } | Domain

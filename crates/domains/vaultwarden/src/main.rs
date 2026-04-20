@@ -67,6 +67,37 @@ enum Cmd {
         #[arg(long, default_value = DEFAULT_DOMAIN)] url: String,
         #[arg(long)] admin_token: Option<String>,
     },
+    /// LXC 내부에서 Vaultwarden 소스 빌드 → /opt/vaultwarden/bin/vaultwarden 배치.
+    /// rustup + apt deps + git clone + cargo build --release 로 수분 소요.
+    /// 이미 있으면 --force 없이 skip.
+    InstallBinary {
+        #[arg(long, default_value_t = DEFAULT_VMID)] vmid: u32,
+        /// vaultwarden git tag 또는 branch (기본: latest 릴리스 태그)
+        #[arg(long)] version: Option<String>,
+        /// cargo features (sqlite / mysql / postgresql). 기본 sqlite
+        #[arg(long, default_value = "sqlite")] features: String,
+        /// 이미 있어도 재빌드
+        #[arg(long)] force: bool,
+    },
+    /// bw_web_builds 의 pre-built web-vault tarball 을 /opt/vaultwarden/web-vault 로 배치.
+    InstallWebVault {
+        #[arg(long, default_value_t = DEFAULT_VMID)] vmid: u32,
+        /// git tag (예: v2026.2.0). 기본: latest
+        #[arg(long)] version: Option<String>,
+        #[arg(long)] force: bool,
+    },
+    /// 신규 LXC 에 원샷으로: install-env + install-systemd + install-backup-timer
+    /// + install-web-vault + install-binary (필요 시) → start.
+    /// 이미 있는 단계는 각자 멱등 처리.
+    Bootstrap {
+        #[arg(long, default_value_t = DEFAULT_VMID)] vmid: u32,
+        #[arg(long, default_value = DEFAULT_DOMAIN)] url: String,
+        #[arg(long)] admin_token: Option<String>,
+        #[arg(long)] version: Option<String>,
+        #[arg(long)] web_vault_version: Option<String>,
+        /// 바이너리 빌드 step 건너뜀 (이미 /opt/vaultwarden/bin/vaultwarden 있을 때)
+        #[arg(long)] skip_binary: bool,
+    },
 }
 
 fn pct(vmid: u32, args: &[&str]) -> Result<String> {
@@ -111,6 +142,13 @@ fn main() -> Result<()> {
         Cmd::InstallSystemd { vmid } => install_systemd(vmid),
         Cmd::InstallBackupTimer { vmid } => install_backup_timer(vmid),
         Cmd::InstallEnv { vmid, url, admin_token } => install_env(vmid, &url, admin_token.as_deref()),
+        Cmd::InstallBinary { vmid, version, features, force } =>
+            install_binary(vmid, version.as_deref(), &features, force),
+        Cmd::InstallWebVault { vmid, version, force } =>
+            install_web_vault(vmid, version.as_deref(), force),
+        Cmd::Bootstrap { vmid, url, admin_token, version, web_vault_version, skip_binary } =>
+            bootstrap(vmid, &url, admin_token.as_deref(), version.as_deref(),
+                      web_vault_version.as_deref(), skip_binary),
     }
 }
 
@@ -305,4 +343,135 @@ fn install_env(vmid: u32, url: &str, admin_token: Option<&str>) -> Result<()> {
     pct(vmid, &["chmod", "640", "/opt/vaultwarden/.env"])?;
     println!("  ok — /opt/vaultwarden/.env (DOMAIN={url}, SMTP mailgun-shim)");
     Ok(())
+}
+
+// ── install-binary / install-web-vault / bootstrap ──
+
+const VW_UPSTREAM: &str = "https://github.com/dani-garcia/vaultwarden.git";
+const WEB_VAULT_RELEASE_BASE: &str =
+    "https://github.com/dani-garcia/bw_web_builds/releases/download";
+
+fn install_binary(
+    vmid: u32, version: Option<&str>, features: &str, force: bool,
+) -> Result<()> {
+    // 이미 있고 force 아니면 skip
+    let exists = pct(vmid, &["sh", "-c", "test -x /opt/vaultwarden/bin/vaultwarden && echo yes || echo no"])
+        .unwrap_or_default();
+    if exists.trim() == "yes" && !force {
+        println!("  /opt/vaultwarden/bin/vaultwarden 이미 존재 — skip (--force 로 재빌드)");
+        return Ok(());
+    }
+
+    // 태그 결정: 지정 or latest
+    let tag = match version {
+        Some(v) => v.to_string(),
+        None => resolve_latest("dani-garcia/vaultwarden")?,
+    };
+    println!("=== vaultwarden {tag} 빌드 (LXC {vmid}, features={features}) ===");
+    println!("  rustup + apt deps + git clone + cargo build (수분 소요)");
+
+    // apt deps + rustup + build 를 한 스크립트에
+    let script = format!(
+        r#"set -e
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+    git curl ca-certificates build-essential pkg-config \
+    libssl-dev libsqlite3-dev libpq-dev libmariadb-dev-compat >/dev/null
+
+# rustup (per-run, minimal)
+if ! command -v cargo >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable >/dev/null
+fi
+. "$HOME/.cargo/env"
+
+SRC=/opt/vaultwarden/src
+mkdir -p /opt/vaultwarden/bin /opt/vaultwarden/data
+if [ ! -d "$SRC/.git" ]; then
+    git clone --depth 1 --branch {tag} {upstream} "$SRC"
+else
+    git -C "$SRC" fetch --depth 1 origin {tag} && git -C "$SRC" checkout {tag}
+fi
+
+cd "$SRC"
+cargo build --release --features {features} --no-default-features
+install -m 0755 target/release/vaultwarden /opt/vaultwarden/bin/vaultwarden
+chown -R vaultwarden:vaultwarden /opt/vaultwarden/bin /opt/vaultwarden/data
+echo "binary_sha=$(sha256sum /opt/vaultwarden/bin/vaultwarden | awk '{{print $1}}')"
+"#,
+        tag = tag, upstream = VW_UPSTREAM, features = features
+    );
+    let out = pct(vmid, &["sh", "-c", &script])?;
+    print!("{out}");
+    Ok(())
+}
+
+fn install_web_vault(vmid: u32, version: Option<&str>, force: bool) -> Result<()> {
+    let exists = pct(vmid, &["sh", "-c",
+        "test -f /opt/vaultwarden/web-vault/index.html && echo yes || echo no"]
+    ).unwrap_or_default();
+    if exists.trim() == "yes" && !force {
+        println!("  /opt/vaultwarden/web-vault 이미 존재 — skip (--force 로 재설치)");
+        return Ok(());
+    }
+    let tag = match version {
+        Some(v) => v.to_string(),
+        None => resolve_latest("dani-garcia/bw_web_builds")?,
+    };
+    println!("=== web-vault {tag} 배치 (LXC {vmid}) ===");
+    let url = format!("{WEB_VAULT_RELEASE_BASE}/{tag}/bw_web_{tag}.tar.gz");
+    let script = format!(
+        r#"set -e
+apt-get install -y --no-install-recommends curl ca-certificates tar >/dev/null
+mkdir -p /opt/vaultwarden
+rm -rf /opt/vaultwarden/web-vault.new
+mkdir -p /opt/vaultwarden/web-vault.new
+curl -fsSL "{url}" | tar -xz -C /opt/vaultwarden/web-vault.new --strip-components=1
+[ -f /opt/vaultwarden/web-vault.new/index.html ] || {{ echo "web-vault tarball missing index.html"; exit 1; }}
+rm -rf /opt/vaultwarden/web-vault
+mv /opt/vaultwarden/web-vault.new /opt/vaultwarden/web-vault
+chown -R vaultwarden:vaultwarden /opt/vaultwarden/web-vault
+echo ok
+"#, url = url);
+    let out = pct(vmid, &["sh", "-c", &script])?;
+    print!("{out}");
+    Ok(())
+}
+
+fn bootstrap(
+    vmid: u32, url: &str, admin_token: Option<&str>,
+    vw_version: Option<&str>, web_vault_version: Option<&str>,
+    skip_binary: bool,
+) -> Result<()> {
+    println!("=== Vaultwarden bootstrap (LXC {vmid}) ===");
+    install_env(vmid, url, admin_token)?;
+    install_systemd(vmid)?;
+    install_backup_timer(vmid)?;
+    install_web_vault(vmid, web_vault_version, false)?;
+    if !skip_binary {
+        install_binary(vmid, vw_version, "sqlite", false)?;
+    } else {
+        println!("  --skip-binary 지정, 바이너리 설치 skip");
+    }
+    // start
+    pct(vmid, &["systemctl", "restart", "vaultwarden"])?;
+    let st = pct(vmid, &["systemctl", "is-active", "vaultwarden"]).unwrap_or_default();
+    println!("  service: {}", st.trim());
+    Ok(())
+}
+
+/// GitHub API 로 owner/repo 의 latest release tag 조회.
+fn resolve_latest(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let out = Command::new("curl")
+        .args(["-sSL", "-H", "Accept: application/vnd.github+json", &url])
+        .output()?;
+    if !out.status.success() {
+        return Err(anyhow!("latest release 조회 실패: {}", String::from_utf8_lossy(&out.stderr)));
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    let start = body.find("\"tag_name\":\"")
+        .ok_or_else(|| anyhow!("tag_name 파싱 실패: {}", &body.chars().take(160).collect::<String>()))?;
+    let rest = &body[start + 12..];
+    let end = rest.find('"').ok_or_else(|| anyhow!("tag_name 끝 따옴표 찾기 실패"))?;
+    Ok(rest[..end].to_string())
 }
