@@ -4,7 +4,8 @@ use crate::common;
 use std::path::Path;
 
 pub fn latest_tag(repo: &str) -> anyhow::Result<String> {
-    let out = common::run(
+    // run 은 Result<()> — stdout 캡처에는 run_capture 를 써야 한다.
+    let out = common::run_capture(
         "curl",
         &[
             "-sSL",

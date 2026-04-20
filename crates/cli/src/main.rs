@@ -563,7 +563,7 @@ fn doctor() {
 }
 
 fn detect_target() -> anyhow::Result<String> {
-    let arch = common::run("uname", &["-m"])?;
+    let arch = common::run_capture("uname", &["-m"])?;
     match arch.as_str() {
         "x86_64" => Ok("x86_64-linux".into()),
         "aarch64" | "arm64" => Ok("aarch64-linux".into()),

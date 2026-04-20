@@ -1,8 +1,16 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-/// 외부 명령 실행 — stdout/stderr 상속 (interactive)
-pub fn run(cmd: &str, args: &[&str]) -> Result<()> {
+/// 외부 명령 실행 — stdout 캡처. **기본 호출 시맨틱** (레거시 229 호출처 전부가
+/// capture 를 기대). 반환값을 무시하면 interactive 대신 silent 가 됨 — 진행상태를
+/// 사용자에게 보여야 하는 경우 `run_passthrough` 사용.
+pub fn run(cmd: &str, args: &[&str]) -> Result<String> {
+    run_capture(cmd, args)
+}
+
+/// stdout/stderr 상속 — 진행상태를 사용자에게 실시간 보여줘야 할 때.
+/// (예: `qm start`, `pct enter`). 반환값 없음.
+pub fn run_passthrough(cmd: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(cmd)
         .args(args)
         .stdin(std::process::Stdio::inherit())
@@ -16,7 +24,7 @@ pub fn run(cmd: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// 외부 명령 실행 — stdout 캡처
+/// 외부 명령 실행 — stdout 캡처. `run` 의 명시적 별칭 (레거시 호환).
 pub fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(cmd)
         .args(args)
@@ -60,14 +68,14 @@ pub fn pct_exec(vmid: &str, cmd_args: &[&str]) -> Result<String> {
 pub fn pct_exec_passthrough(vmid: &str, cmd_args: &[&str]) -> Result<()> {
     let mut args = vec!["exec", vmid, "--"];
     args.extend_from_slice(cmd_args);
-    run("pct", &args)
+    run_passthrough("pct", &args)
 }
 
 /// LXC 실행 상태 확인 + 미실행 시 시작
 pub fn ensure_lxc_running(vmid: &str) -> Result<()> {
     let status = run_capture("pct", &["status", vmid])?;
     if !status.contains("running") {
-        run("pct", &["start", vmid])?;
+        run_passthrough("pct", &["start", vmid])?;
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
     Ok(())
@@ -77,4 +85,20 @@ pub fn ensure_lxc_running(vmid: &str) -> Result<()> {
 #[inline]
 pub fn run_str(cmd: &str, args: &[&str]) -> Result<String> {
     run_capture(cmd, args)
+}
+
+/// 자격증명·시크릿을 argv 로 넘기는 명령 전용. 실패 시 argv 를 에러 메시지에
+/// 포함하지 않음 (유출 방지). stdout 은 캡처하지 않음.
+pub fn run_secret(cmd: &str, args: &[&str], context: &str) -> Result<()> {
+    let status = Command::new(cmd)
+        .args(args)
+        .status()
+        .map_err(|e| anyhow::anyhow!("{cmd} spawn 실패: {e}"))?;
+    if !status.success() {
+        anyhow::bail!(
+            "{context} 실패 (exit {}). 자격증명 보호를 위해 argv 는 메시지에 포함하지 않음.",
+            status.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
 }
