@@ -41,8 +41,8 @@ enum Cmd {
     /// 전체 배포: LXC 생성 → 데스크톱 설치 → (선택) traefik 라우트 등록
     ///
     /// 규약: VMID 5XXXX → IP 10.0.50.XXX (XXX = 마지막 3자리).
-    /// --ip 와 --hostname 은 생략 가능 (vmid/host 로부터 유도).
-    /// 명시적으로 주면 규약 일치 검증 후 진행, 불일치면 오류.
+    /// setup 은 신규 LXC 생성이므로 convention Vmid 강제. 기존 LXC 조작 서브커맨드
+    /// (install/expose/status/destroy/verify/dev) 는 호환성 위해 String 유지.
     Setup {
         /// VMID — 5XXXX 형태 필수. 마지막 3자리가 IP 마지막 옥텟이 됨 (5YYY → 10.0.50.YYY)
         #[arg(long)] vmid: Vmid,
@@ -61,37 +61,37 @@ enum Cmd {
     },
     /// 이미 존재하는 LXC에 데스크톱만 설치 (LXC 재사용)
     Install {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
         #[arg(long, default_value = "14500")] port: String,
         #[arg(long, default_value = "xuser")] user: String,
         #[arg(long, default_value = "0.11.2.1")] helium_tag: String,
     },
     /// traefik 라우트만 등록 (이미 설치된 LXC 대상)
     Expose {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
         #[arg(long)] host: String,
         #[arg(long, default_value = "14500")] port: String,
     },
     /// 상태 조회 (LXC + Xpra systemd + 포트)
     Status {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
     },
     /// LXC 제거 + traefik 라우트 자동 정리
     Destroy {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
         /// 확인 없이 제거
         #[arg(long)] yes: bool,
     },
     /// 공개 URL 스모크 테스트 — HTTP/WebSocket 경로 전수 확인
     Verify {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
         /// 공개 호스트 (생략 시 lxc-ip 직접)
         #[arg(long)] host: Option<String>,
         #[arg(long, default_value = "14500")] port: String,
     },
     /// 개발 도구 설치 — git/gh/node/rust/vscodium + GitHub SSH key + 레포 clone
     Dev {
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)] vmid: String,
         /// 데스크톱 유저 (기본 xuser)
         #[arg(long, default_value = "xuser")] user: String,
         /// GitHub 유저명 (힌트용 — 실제 auth 는 gh login 수동)
@@ -132,13 +132,13 @@ fn main() -> anyhow::Result<()> {
             let hostname = hostname.unwrap_or_else(|| derive_hostname(vmid.as_str(), host.as_deref()));
             setup(vmid.as_str(), &hostname, &ip_str, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
         }
-        Cmd::Install { vmid, port, user, helium_tag } => install(vmid.as_str(), &port, &user, &helium_tag),
-        Cmd::Expose { vmid, host, port } => expose(vmid.as_str(), &host, &port),
-        Cmd::Status { vmid } => status(vmid.as_str()),
-        Cmd::Destroy { vmid, yes } => destroy(vmid.as_str(), yes),
-        Cmd::Verify { vmid, host, port } => verify(vmid.as_str(), host.as_deref(), &port),
+        Cmd::Install { vmid, port, user, helium_tag } => install(&vmid, &port, &user, &helium_tag),
+        Cmd::Expose { vmid, host, port } => expose(&vmid, &host, &port),
+        Cmd::Status { vmid } => status(&vmid),
+        Cmd::Destroy { vmid, yes } => destroy(&vmid, yes),
+        Cmd::Verify { vmid, host, port } => verify(&vmid, host.as_deref(), &port),
         Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
-            dev(vmid.as_str(), &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
+            dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
         }
         Cmd::AuditAll => audit_all(),
         Cmd::AuditInstallTimer { time } => audit_install_timer(&time),
@@ -367,8 +367,10 @@ fn expose(vmid: &str, host: &str, port: &str) -> anyhow::Result<()> {
 fn status(vmid: &str) -> anyhow::Result<()> {
     println!("=== xdesktop 상태: LXC {vmid} ===");
 
-    // LXC — LxcStatus enum 으로 파싱 (문자열 matching 대신).
-    let raw = common::run_capture("pct", &["status", vmid]).unwrap_or_else(|_| "unknown".into());
+    // LXC — LxcStatus enum 으로 파싱. run_capture 가 non-zero exit 에서 Err 반환하면
+    // 에러 메시지 안에 stderr ("...does not exist") 가 포함돼 NotFound 감지 가능.
+    let raw = common::run_capture("pct", &["status", vmid])
+        .unwrap_or_else(|e| e.to_string());
     let status: LxcStatus = raw.parse().unwrap();  // FromStr::Err == Infallible
     println!("  LXC:      {} ({:?})", raw.trim(), status);
 
