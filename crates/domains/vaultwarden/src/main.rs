@@ -1,7 +1,16 @@
-//! pxi-vaultwarden — 이미 배포된 Vaultwarden(LXC 50118) reconcile 도구.
+//! pxi-vaultwarden — Vaultwarden(self-hosted Bitwarden) 전체 라이프사이클 도메인.
 //!
-//! 설치 자체 (LXC 생성 + 바이너리 빌드) 는 과거 수동/phs 로 이뤄져
-//! 여기선 "이미 있는 인스턴스의 설정을 올바른 상태로 맞춘다" 를 주 책임으로 둔다.
+//! 지원 범위:
+//!   - 설치         : install-systemd / install-backup-timer / install-env
+//!                    / install-binary / install-web-vault / bootstrap
+//!   - reconcile    : domain-set / smtp-mailgun
+//!   - 운영         : status / logs / restart / doctor / backup
+//!   - 업그레이드   : upgrade (db 스냅샷 + 재빌드 + 재시작)
+//!   - 클라이언트   : bw-install (버전 고정) / bw-verify (E2E 검증)
+//!
+//! LXC 는 사전에 `pxi run lxc create` 로 생성돼 있어야 하며, vmid 기본값은 50118.
+//! 기본 설정은 CF Email Sending same-zone 제한을 피해 Mailgun API SMTP shim
+//! (`pxi run mail mailgun-shim-install`) 을 SMTP relay 로 사용.
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
@@ -47,8 +56,9 @@ enum Cmd {
         #[arg(long, default_value_t = MAILGUN_SHIM_PORT)] port: u16,
         #[arg(long, default_value = MAILGUN_FROM)] from: String,
     },
-    /// Bitwarden CLI 설치 — 2026.x 는 Vaultwarden 1.34 와 호환 이슈라
-    /// 기본값으로 2024.7.2 를 깐다. `--rbw` 면 rust 구현체.
+    /// Bitwarden CLI 설치. Vaultwarden 1.35.7+ 는 2026.x 와 호환 확인됨
+    /// (이전 1.34 에서는 userDecryptionOptions 누락으로 실패했음).
+    /// 기본 2024.7.2 는 하위 호환 안전판. `--rbw` 면 Rust 구현체.
     BwInstall {
         #[arg(long)] rbw: bool,
         #[arg(long, default_value = "2024.7.2")] version: String,
