@@ -8,7 +8,7 @@
 
 use clap::{Parser, Subcommand};
 use pxi_core::{common, convention};
-use pxi_core::types::{Vmid, IpCidr, LxcStatus};
+use pxi_core::types::{Vmid, LxcStatus};
 
 const INSTALL_SCRIPT: &str = include_str!("../scripts/install-desktop.sh");
 const DEV_SCRIPT: &str = include_str!("../scripts/dev-setup.sh");
