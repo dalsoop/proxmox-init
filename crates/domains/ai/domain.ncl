@@ -41,6 +41,7 @@ let { Domain } = import "../../../ncl/contracts/domain.ncl" in
     "ai claude-status",
     "ai claude-doctor",
     "ai codex-doctor",
+    "ai menu",
     "ai cluster-files-setup",
     "ai cluster-files-sync",
     "ai cluster-files-reset",

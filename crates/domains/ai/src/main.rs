@@ -439,6 +439,8 @@ enum Cmd {
     ClaudeDoctor,
     /// OpenAI Codex CLI 환경 진단 — 바이너리/버전/config/인증/MCP.
     CodexDoctor,
+    /// 인터랙티브 관리 TUI — Claude/Codex/MCP 메뉴 (dialoguer).
+    Menu,
 
     // ── OpenClaw ──
 
@@ -672,6 +674,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::ClaudeStatus => claude_status(),
         Cmd::ClaudeDoctor => claude_doctor(),
         Cmd::CodexDoctor => codex_doctor(),
+        Cmd::Menu => ai_menu(),
 
         // OpenClaw
         Cmd::OpenclawSetup { vmid } => {
@@ -4058,4 +4061,127 @@ fn walk_size(dir: &std::path::Path, total: &mut u64, files: &mut u64) {
             }
         }
     }
+}
+
+// ========== Interactive AI Menu (TUI) ==========
+
+fn ai_menu() -> anyhow::Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    use std::io::IsTerminal;
+
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        anyhow::bail!("pxi run ai menu 는 TTY 전용. 직접 호출:\n  \
+            pxi run ai claude-status\n  \
+            pxi run ai claude-doctor\n  \
+            pxi run ai codex-doctor");
+    }
+
+    loop {
+        let items = &[
+            "🤖 Claude Code — 진단·튜닝·복원",
+            "🧠 OpenAI Codex CLI — 진단",
+            "🔌 MCP 서버 — 현재 연결 상태",
+            "📊 전체 status (claude-status)",
+            "❌ 종료",
+        ];
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("AI 관리 메뉴")
+            .items(items)
+            .default(0)
+            .interact()?;
+
+        match selection {
+            0 => claude_submenu()?,
+            1 => codex_submenu()?,
+            2 => mcp_view()?,
+            3 => { let _ = claude_status(); pause(); },
+            4 => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn claude_submenu() -> anyhow::Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    let items = &[
+        "claude-doctor   — 환경 진단",
+        "claude-status   — 설정·MCP·플러그인 상세",
+        "claude-tune --dry-run — 변경 미리보기",
+        "claude-tune     — 권장 프로파일 적용 (백업 자동)",
+        "claude-tune --revert — 최신 백업으로 복원",
+        "← 뒤로",
+    ];
+    let sel = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Claude Code")
+        .items(items)
+        .default(0)
+        .interact()?;
+    match sel {
+        0 => { let _ = claude_doctor(); pause(); },
+        1 => { let _ = claude_status(); pause(); },
+        2 => { let _ = claude_tune(true, false); pause(); },
+        3 => {
+            if confirm("권장 프로파일을 적용합니다. 진행?") {
+                let _ = claude_tune(false, false);
+            }
+            pause();
+        },
+        4 => {
+            if confirm("최신 백업으로 복원합니다. 현재 변경사항 유실. 진행?") {
+                let _ = claude_tune(false, true);
+            }
+            pause();
+        },
+        _ => {}
+    }
+    Ok(())
+}
+
+fn codex_submenu() -> anyhow::Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    let items = &[
+        "codex-doctor — 환경 진단",
+        "codex --version — 버전 확인",
+        "← 뒤로",
+    ];
+    let sel = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("OpenAI Codex CLI")
+        .items(items)
+        .default(0)
+        .interact()?;
+    match sel {
+        0 => { let _ = codex_doctor(); pause(); },
+        1 => {
+            let _ = std::process::Command::new("codex").arg("--version").status();
+            pause();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn mcp_view() -> anyhow::Result<()> {
+    println!("\n=== claude mcp list ===");
+    let _ = std::process::Command::new("claude").args(["mcp", "list"]).status();
+    println!();
+    pause();
+    Ok(())
+}
+
+fn confirm(msg: &str) -> bool {
+    use dialoguer::{theme::ColorfulTheme, Confirm};
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(msg)
+        .default(false)
+        .interact()
+        .unwrap_or(false)
+}
+
+fn pause() {
+    use std::io::Write;
+    print!("\n[Enter 로 메뉴 복귀]");
+    let _ = std::io::stdout().flush();
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
 }
