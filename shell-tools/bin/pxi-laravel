@@ -466,16 +466,24 @@ cmd_artisan() {
   local vmid="${1:-}"; shift || true
   [[ -n "$vmid" ]] || die "사용법: pxi-laravel artisan <vmid> <artisan args...>"
   require_laravel "$vmid"
+
+  # 각 arg 를 printf %q 로 쉘 안전 quote (공백·세미콜론·백틱 방어)
+  local quoted_args=""
+  local a
+  for a in "$@"; do
+    quoted_args+=" $(printf '%q' "$a")"
+  done
+
   if _env_is_encrypted "$vmid"; then
     # 암호화 상태 — decrypt 서비스가 생성한 /run/pxi-laravel-<vmid>.env 를 source
     # (FPM 과 동일한 env 를 CLI 에도 주입)
     in_lxc "$vmid" "
       RUN_ENV=/run/pxi-laravel-$vmid.env
       [[ -f \$RUN_ENV ]] || { systemctl start pxi-laravel-decrypt@$vmid.service; sleep 1; }
-      cd $APP_ROOT && set -a && . \$RUN_ENV && set +a && php artisan $*
+      cd $APP_ROOT && set -a && . \$RUN_ENV && set +a && php artisan$quoted_args
     "
   else
-    in_lxc "$vmid" "cd $APP_ROOT && php artisan $*"
+    in_lxc "$vmid" "cd $APP_ROOT && php artisan$quoted_args"
   fi
 }
 
@@ -576,12 +584,29 @@ cmd_env_edit() {
   ok ".env 저장 + config 캐시 재생성"
 }
 
-# ── dotenvx 초기화: .env 암호화 + systemd override + .env.keys 호스트 백업 ──
 # ── dotenvx 정본 키 저장소 (호스트) ──────────────────────────────────────────
 # 피드백 feedback_not_root_only.md 준수: /root/control-plane 이 정본,
 # /etc/pxi (proxmox-init) 는 동기화 대상. 개별 /root/.secrets 는 root 단독
 # 금지라 쓰지 않음.
 PXI_LARAVEL_SECRETS_DIR="/root/control-plane/.secrets/pxi-laravel"
+
+# dotenvx 버전 고정 (W3: supply chain 방어). 업그레이드 시 이 값만 수정.
+DOTENVX_VERSION="1.61.1"
+DOTENVX_INSTALL_URL="https://dotenvx.sh/${DOTENVX_VERSION}"
+
+# LXC 안에 dotenvx 설치 (이미 해당 버전이면 skip)
+_install_dotenvx() {
+  local vmid="$1"
+  in_lxc "$vmid" "
+    if command -v dotenvx >/dev/null 2>&1; then
+      INSTALLED=\$(/usr/local/bin/dotenvx --version 2>/dev/null || echo unknown)
+      if [[ \"\$INSTALLED\" == \"$DOTENVX_VERSION\" ]]; then
+        exit 0
+      fi
+    fi
+    curl -fsSL $DOTENVX_INSTALL_URL | VERSION=$DOTENVX_VERSION sh
+  " >&2
+}
 
 _keys_path() { echo "$PXI_LARAVEL_SECRETS_DIR/${1}.env.keys"; }
 
@@ -624,7 +649,7 @@ cmd_env_encrypt() {
   fi
 
   log "dotenvx 바이너리 LXC 에 설치"
-  in_lxc "$vmid" "command -v dotenvx >/dev/null 2>&1 || curl -fsSL https://dotenvx.sh | sh" >&2
+  _install_dotenvx "$vmid"
 
   log ".env 암호화 (dotenvx encrypt)"
   in_lxc "$vmid" "cd $APP_ROOT && dotenvx encrypt -f .env" >&2
@@ -641,6 +666,8 @@ cmd_env_encrypt() {
 }
 
 # ── env-keys-install: 정본 키 + systemd override 설치 ────────────────────
+# W1: 기존 설치 감지 시 skip / key drift 시만 갱신
+# W2: 실패 시 자동 rollback (override·drop-in 제거 후 원래 서비스 복구)
 cmd_env_keys_install() {
   local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-keys-install <vmid>"
   require_laravel "$vmid"
@@ -658,8 +685,17 @@ cmd_env_keys_install() {
   local fpm_ver; fpm_ver="$(_fpm_version "$vmid")" || die "php-fpm 활성 버전 감지 실패"
   log "감지된 php-fpm 버전: $fpm_ver"
 
-  in_lxc "$vmid" "command -v dotenvx >/dev/null 2>&1 || curl -fsSL https://dotenvx.sh | sh" >&2
+  # W1: idempotent — 기존 설치 + 동일 key 이면 skip
+  local installed_pkey
+  installed_pkey="$(in_lxc "$vmid" "grep -h '^Environment=' /etc/systemd/system/pxi-laravel-decrypt@$vmid.service.d/*.conf 2>/dev/null | sed 's/.*DOTENV_PRIVATE_KEY=//; s/\"//g' | head -1" || true)"
+  if [[ "$installed_pkey" == "$pkey" ]] \
+     && in_lxc "$vmid" "test -f /etc/systemd/system/php$fpm_ver-fpm.service.d/dotenvx.conf" \
+     && in_lxc "$vmid" "systemctl is-active php$fpm_ver-fpm" | grep -q active; then
+    ok "이미 동일 키로 설치됨. skip. (fingerprint $(sha256sum "$kpath" | cut -c1-8))"
+    return 0
+  fi
 
+  _install_dotenvx "$vmid"
   _install_decrypt_infra "$vmid"
 
   log "php-fpm pool: clear_env = no"
@@ -670,10 +706,28 @@ cmd_env_keys_install() {
       || echo 'clear_env = no' >> \"\$POOL\"
   " >&2
 
-  # systemd override: decrypt service dependency + EnvironmentFile
-  # (oneshot + Before= 체인으로 ExecStartPre 의 env 로드 순서 문제 회피)
-  log "systemd override: php$fpm_ver-fpm → decrypt@$vmid dependency + EnvironmentFile"
+  # W2: rollback 스냅샷 (이전 override·drop-in 백업)
+  local backup_tag; backup_tag="/tmp/pxi-laravel-rb-$$-$(date +%s)"
   in_lxc "$vmid" "
+    mkdir -p $backup_tag
+    cp -a /etc/systemd/system/php$fpm_ver-fpm.service.d $backup_tag/fpm-drop-in 2>/dev/null || :
+    cp -a /etc/systemd/system/pxi-laravel-decrypt@$vmid.service.d $backup_tag/decrypt-drop-in 2>/dev/null || :
+  " >&2
+
+  _env_keys_install_rollback() {
+    warn "rollback 실행 중… (백업: $backup_tag)"
+    in_lxc "$vmid" "
+      rm -rf /etc/systemd/system/php$fpm_ver-fpm.service.d /etc/systemd/system/pxi-laravel-decrypt@$vmid.service.d
+      [ -d $backup_tag/fpm-drop-in ] && cp -a $backup_tag/fpm-drop-in /etc/systemd/system/php$fpm_ver-fpm.service.d
+      [ -d $backup_tag/decrypt-drop-in ] && cp -a $backup_tag/decrypt-drop-in /etc/systemd/system/pxi-laravel-decrypt@$vmid.service.d
+      systemctl daemon-reload
+      systemctl restart php$fpm_ver-fpm
+    " >&2 || warn "rollback 도 실패 — 수동 확인 필요: journalctl -u php$fpm_ver-fpm"
+  }
+
+  # systemd override: decrypt service dependency + EnvironmentFile
+  log "systemd override: php$fpm_ver-fpm → decrypt@$vmid dependency + EnvironmentFile"
+  if ! in_lxc "$vmid" "
     OVERRIDE_DIR=/etc/systemd/system/php$fpm_ver-fpm.service.d
     mkdir -p \"\$OVERRIDE_DIR\"
     cat > \"\$OVERRIDE_DIR/dotenvx.conf\" <<EOF
@@ -699,11 +753,19 @@ EOF
     systemctl enable pxi-laravel-decrypt@$vmid.service >/dev/null 2>&1 || true
     systemctl restart pxi-laravel-decrypt@$vmid.service
     systemctl restart php$fpm_ver-fpm
-  " >&2
+  " >&2; then
+    _env_keys_install_rollback
+    die "systemd 적용 실패 — rollback 완료"
+  fi
 
   sleep 2
-  in_lxc "$vmid" "systemctl is-active php$fpm_ver-fpm" | grep -q active \
-    || die "php$fpm_ver-fpm 재시작 실패 — journalctl -u php$fpm_ver-fpm 확인"
+  if ! in_lxc "$vmid" "systemctl is-active php$fpm_ver-fpm" | grep -q active; then
+    _env_keys_install_rollback
+    die "php$fpm_ver-fpm 재시작 실패 — rollback 완료. journalctl -u php$fpm_ver-fpm 확인"
+  fi
+
+  # 성공 — 백업 정리
+  in_lxc "$vmid" "rm -rf $backup_tag" >&2 || :
 
   ok "env-keys-install 완료"
   log "fingerprint: $(sha256sum "$kpath" | cut -c1-8)"
