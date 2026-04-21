@@ -2,6 +2,28 @@
 
 Semantic Versioning (https://semver.org/)
 
+## pxi-laravel dotenvx 지원 — 2026-04-21
+
+shell-tools/bin/pxi-laravel 에 dotenvx 네이티브 지원 추가. LXC .env
+파일을 dotenvx 로 암호화 후 git 커밋 가능하게.
+
+- **`env-init <vmid>`** — .env 암호화 풀 플로우:
+  1. `curl -fsSL https://dotenvx.sh | sh` 로 LXC 안에 바이너리 설치
+  2. `dotenvx encrypt -f .env` in-place 암호화 → `.env.keys` 생성
+  3. php-fpm pool.d/www.conf 에 `clear_env = no` 설정 (자식에 env 상속)
+  4. `/etc/systemd/system/php{ver}-fpm.service.d/dotenvx.conf` override:
+     `Environment=DOTENV_PRIVATE_KEY=xxx` + `ExecStart=dotenvx run ...`
+  5. 호스트 `/root/.secrets/pxi-laravel/{vmid}.env.keys` 에 chmod 600 백업
+- **`env-show <vmid> [--decrypt]`** — 암호화 감지 시 `--decrypt` 로 복호화
+  출력. 기본은 encrypted 원본.
+- **`env-edit`** — 암호화 상태면 편집 차단 + 안전한 플로우 안내 (키 깨짐 방지)
+- **`artisan`** — 암호화 감지 시 `dotenvx run --` 으로 자동 wrap
+- **`_env_is_encrypted`** / **`_fpm_version`** 공통 헬퍼
+
+Why: 피드백 `feedback_dotenvx.md` — LXC .env 는 dotenvx 로 AES-256 암호화,
+systemd `DOTENV_PRIVATE_KEY` 로 런타임 복호화. 이제까지 pxi-laravel 은
+평문 .env 만 지원했는데, 이번에 네이티브화.
+
 ## Nickel SSOT enforcement — 2026-04-20/21
 
 mac-app-init 수준의 SSOT 엔포스먼트 달성 (7-PR + 문서).

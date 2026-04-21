@@ -10,8 +10,9 @@
 #   pxi-laravel logs     <vmid> [app|nginx|php|error]
 #   pxi-laravel status   <vmid>
 #   pxi-laravel doctor   <vmid>
-#   pxi-laravel env-show <vmid>
+#   pxi-laravel env-show <vmid> [--decrypt]
 #   pxi-laravel env-edit <vmid>
+#   pxi-laravel env-init <vmid>           # dotenvx 초기화 (.env 암호화 + systemd override)
 #   pxi-laravel db       <vmid> [client|dump|psql…]
 #   pxi-laravel delete   <vmid>
 #   pxi-laravel list
@@ -465,7 +466,12 @@ cmd_artisan() {
   local vmid="${1:-}"; shift || true
   [[ -n "$vmid" ]] || die "사용법: pxi-laravel artisan <vmid> <artisan args...>"
   require_laravel "$vmid"
-  in_lxc "$vmid" "cd $APP_ROOT && php artisan $*"
+  if _env_is_encrypted "$vmid"; then
+    # 암호화 상태 — dotenvx run 으로 wrap (private key 는 .env.keys 에서 자동 로드)
+    in_lxc "$vmid" "cd $APP_ROOT && dotenvx run --quiet -- php artisan $*"
+  else
+    in_lxc "$vmid" "cd $APP_ROOT && php artisan $*"
+  fi
 }
 
 cmd_logs() {
@@ -507,18 +513,129 @@ cmd_doctor() {
   in_lxc "$vmid" "stat -c '%a %U:%G %n' $APP_ROOT/storage $APP_ROOT/bootstrap/cache 2>/dev/null"
 }
 
+# ── dotenvx 감지/헬퍼 ────────────────────────────────────────────────────────
+# .env 가 dotenvx 로 암호화된 상태인지 판정 (첫 줄에 DOTENV_PUBLIC_KEY 가 있으면 암호화)
+_env_is_encrypted() {
+  local vmid="$1"
+  in_lxc "$vmid" "head -5 $APP_ROOT/.env 2>/dev/null | grep -q '^DOTENV_PUBLIC_KEY='"
+}
+
+# php-fpm 버전 (8.4/8.3/8.2 중 활성) 감지
+_fpm_version() {
+  local vmid="$1"
+  in_lxc "$vmid" "for v in 8.4 8.3 8.2; do
+    systemctl is-active php\$v-fpm >/dev/null 2>&1 && { echo \$v; exit 0; }
+  done; exit 1"
+}
+
 cmd_env_show() {
-  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-show <vmid>"
+  local vmid="${1:-}"; shift || true
+  [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-show <vmid> [--decrypt]"
   require_laravel "$vmid"
-  in_lxc "$vmid" "cat $APP_ROOT/.env"
+  local decrypt="no"
+  [[ "${1:-}" == "--decrypt" ]] && decrypt="yes"
+
+  if _env_is_encrypted "$vmid"; then
+    if [[ "$decrypt" == "yes" ]]; then
+      in_lxc "$vmid" "cd $APP_ROOT && dotenvx decrypt -fo 2>/dev/null | tee /dev/null"
+    else
+      warn ".env 는 dotenvx 로 암호화되어 있습니다 (--decrypt 로 복호화 보기)"
+      in_lxc "$vmid" "cat $APP_ROOT/.env"
+    fi
+  else
+    in_lxc "$vmid" "cat $APP_ROOT/.env"
+  fi
 }
 
 cmd_env_edit() {
   local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-edit <vmid>"
   require_laravel "$vmid"
+
+  if _env_is_encrypted "$vmid"; then
+    warn ".env 가 암호화 상태입니다."
+    warn "  - 값 1개만 추가/수정하려면: pxi-laravel env-set <vmid> KEY VALUE (다음 PR)"
+    warn "  - 지금은 일시 복호화 후 편집 → 재암호화 플로우를 수동으로:"
+    warn "    pxi-laravel env-show $vmid --decrypt > /tmp/.env.$vmid"
+    warn "    편집 후:  pct push $vmid /tmp/.env.$vmid $APP_ROOT/.env && pxi-laravel env-reencrypt $vmid"
+    die "편집 차단 — 암호화된 파일을 직접 편집하면 키가 깨집니다"
+  fi
+
   pct exec "$vmid" -- ${EDITOR:-nano} "$APP_ROOT/.env"
   in_lxc "$vmid" "cd $APP_ROOT && php artisan config:clear && php artisan config:cache" >&2
   ok ".env 저장 + config 캐시 재생성"
+}
+
+# ── dotenvx 초기화: .env 암호화 + systemd override + .env.keys 호스트 백업 ──
+cmd_env_init() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-init <vmid>"
+  require_laravel "$vmid"
+
+  if _env_is_encrypted "$vmid"; then
+    ok ".env 가 이미 암호화 상태입니다. skip."
+    return 0
+  fi
+
+  local fpm_ver; fpm_ver="$(_fpm_version "$vmid")" \
+    || die "php-fpm 활성 버전을 감지 못함 (doctor 로 확인)"
+  log "감지된 php-fpm 버전: $fpm_ver"
+
+  # 1) dotenvx 바이너리 LXC 에 설치 (공식 install script)
+  log "dotenvx 바이너리 설치"
+  in_lxc "$vmid" "command -v dotenvx >/dev/null 2>&1 || curl -fsSL https://dotenvx.sh | sh" >&2
+
+  # 2) .env 암호화 (in-place)
+  log ".env 암호화 (dotenvx encrypt)"
+  in_lxc "$vmid" "cd $APP_ROOT && dotenvx encrypt -f .env" >&2
+
+  # 3) .env.keys 에서 private key 추출
+  local pkey
+  pkey="$(in_lxc "$vmid" "grep '^DOTENV_PRIVATE_KEY=' $APP_ROOT/.env.keys 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\"'")" \
+    || die ".env.keys 에서 DOTENV_PRIVATE_KEY 를 찾지 못함"
+  [[ -n "$pkey" ]] || die "DOTENV_PRIVATE_KEY 가 비어있음"
+
+  # 4) php-fpm pool 에 clear_env=no (자식 프로세스에 env 상속)
+  log "php-fpm pool: clear_env = no"
+  in_lxc "$vmid" "
+    POOL=/etc/php/$fpm_ver/fpm/pool.d/www.conf
+    grep -q '^clear_env' \"\$POOL\" \
+      && sed -i 's|^;\\?clear_env.*|clear_env = no|' \"\$POOL\" \
+      || echo 'clear_env = no' >> \"\$POOL\"
+  " >&2
+
+  # 5) systemd override — ExecStart 를 dotenvx run wrap 으로 교체
+  log "systemd override: php$fpm_ver-fpm → dotenvx run wrap"
+  in_lxc "$vmid" "
+    OVERRIDE_DIR=/etc/systemd/system/php$fpm_ver-fpm.service.d
+    mkdir -p \"\$OVERRIDE_DIR\"
+    cat > \"\$OVERRIDE_DIR/dotenvx.conf\" <<EOF
+[Service]
+Environment=\"DOTENV_PRIVATE_KEY=$pkey\"
+ExecStart=
+ExecStart=/usr/local/bin/dotenvx run --env-file=$APP_ROOT/.env --quiet -- /usr/sbin/php-fpm$fpm_ver --nodaemonize --fpm-config /etc/php/$fpm_ver/fpm/php-fpm.conf
+EOF
+    chmod 600 \"\$OVERRIDE_DIR/dotenvx.conf\"
+    systemctl daemon-reload
+    systemctl restart php$fpm_ver-fpm
+  " >&2
+
+  # 6) 호스트에 키 백업 (root 전용)
+  local host_keyfile="/root/.secrets/pxi-laravel/${vmid}.env.keys"
+  mkdir -p "$(dirname "$host_keyfile")"
+  chmod 700 "$(dirname "$host_keyfile")"
+  pct pull "$vmid" "$APP_ROOT/.env.keys" "$host_keyfile" >&2
+  chmod 600 "$host_keyfile"
+  log "호스트 백업: $host_keyfile"
+
+  # 7) 헬스체크
+  sleep 1
+  in_lxc "$vmid" "systemctl is-active php$fpm_ver-fpm" | grep -q active \
+    || die "php$fpm_ver-fpm 재시작 실패 — journalctl -u php$fpm_ver-fpm 확인"
+
+  ok "env-init 완료"
+  warn "다음 조치 (사용자):"
+  warn "  - 앱 git 레포의 .gitignore 에 .env.keys 추가 확인"
+  warn "  - .env 는 이제 암호화되어 git 커밋 가능"
+  warn "  - CLI artisan 호출은 이제 자동으로 dotenvx run 으로 wrap 됩니다"
 }
 
 cmd_db() {
@@ -582,8 +699,9 @@ Usage:
   pxi-laravel logs     <vmid> [app|nginx|php|error]
   pxi-laravel status   <vmid>
   pxi-laravel doctor   <vmid>
-  pxi-laravel env-show <vmid>
-  pxi-laravel env-edit <vmid>
+  pxi-laravel env-show <vmid> [--decrypt]         # --decrypt: dotenvx 암호화 시 복호화 출력
+  pxi-laravel env-edit <vmid>                     # 평문 .env 편집 (암호화 상태엔 차단)
+  pxi-laravel env-init <vmid>                     # .env → dotenvx 암호화 + systemd override
   pxi-laravel db       <vmid> [client|dump]
   pxi-laravel delete   <vmid>
   pxi-laravel list
@@ -604,6 +722,7 @@ main() {
     doctor)   cmd_doctor "$@" ;;
     env-show) cmd_env_show "$@" ;;
     env-edit) cmd_env_edit "$@" ;;
+    env-init) cmd_env_init "$@" ;;
     db)       cmd_db "$@" ;;
     delete)   cmd_delete "$@" ;;
     list)     cmd_list "$@" ;;
