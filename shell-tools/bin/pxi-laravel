@@ -571,11 +571,8 @@ cmd_env_edit() {
   require_laravel "$vmid"
 
   if _env_is_encrypted "$vmid"; then
-    warn ".env 가 암호화 상태입니다."
-    warn "  - 값 1개만 추가/수정하려면: pxi-laravel env-set <vmid> KEY VALUE (다음 PR)"
-    warn "  - 지금은 일시 복호화 후 편집 → 재암호화 플로우를 수동으로:"
-    warn "    pxi-laravel env-show $vmid --decrypt > /tmp/.env.$vmid"
-    warn "    편집 후:  pct push $vmid /tmp/.env.$vmid $APP_ROOT/.env && pxi-laravel env-reencrypt $vmid"
+    warn ".env 가 암호화 상태입니다. 대신 다음을 사용하세요:"
+    warn "  pxi-laravel env-reencrypt $vmid     # 복호화 → 편집 → 재암호화 원샷"
     die "편집 차단 — 암호화된 파일을 직접 편집하면 키가 깨집니다"
   fi
 
@@ -771,6 +768,75 @@ EOF
   log "fingerprint: $(sha256sum "$kpath" | cut -c1-8)"
 }
 
+# ── env-reencrypt: 복호화 → 편집 → 재암호화 원샷 ─────────────────────────
+# 암호화된 .env 를 안전하게 편집. 키 rotate 가 일어나면 호스트 정본도 갱신.
+cmd_env_reencrypt() {
+  local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-reencrypt <vmid>"
+  require_laravel "$vmid"
+
+  _env_is_encrypted "$vmid" \
+    || die ".env 가 평문 상태. env-edit 를 쓰세요"
+
+  local kpath; kpath="$(_keys_path "$vmid")"
+  [[ -f "$kpath" ]] || die "정본 키 없음: $kpath"
+
+  local pkey
+  pkey="$(grep '^DOTENV_PRIVATE_KEY=' "$kpath" | head -1 | cut -d= -f2- | tr -d '"')"
+  [[ -n "$pkey" ]] || die "DOTENV_PRIVATE_KEY 비어있음"
+
+  local tmp="/tmp/pxi-laravel-edit-${vmid}-$$.env"
+
+  # LXC 에 임시 평문 준비 (cleanup trap)
+  in_lxc "$vmid" "
+    cp $APP_ROOT/.env $tmp
+    DOTENV_PRIVATE_KEY=$(printf '%q' "$pkey") /usr/local/bin/dotenvx decrypt -f $tmp >/dev/null
+    chmod 600 $tmp
+  " >&2
+
+  # 편집자 열기 (블로킹)
+  log "편집자 열림: $tmp"
+  pct exec "$vmid" -- "${EDITOR:-nano}" "$tmp"
+
+  # 편집본 검증 — dotenvx 가 파싱 가능한지
+  in_lxc "$vmid" "/usr/local/bin/dotenvx run --env-file=$tmp -- true >/dev/null 2>&1" \
+    || { in_lxc "$vmid" "rm -f $tmp" >&2; die "편집본 파싱 실패 — 편집 취소됨"; }
+
+  # 기존 암호화본 백업 → 재암호화 → 성공 시 덮어쓰기
+  local old_fingerprint="$(sha256sum "$kpath" | cut -c1-8)"
+  in_lxc "$vmid" "
+    cp $APP_ROOT/.env $APP_ROOT/.env.pre-reencrypt
+    cp $tmp $APP_ROOT/.env
+    rm -f $APP_ROOT/.env.keys
+    /usr/local/bin/dotenvx encrypt -f $APP_ROOT/.env >/dev/null
+    rm -f $tmp
+  " >&2 || die "재암호화 실패"
+
+  # 키 rotate 감지 (dotenvx 는 기존 public key 가 있으면 유지, 없으면 새로 생성)
+  local new_pkey
+  new_pkey="$(in_lxc "$vmid" "grep '^DOTENV_PRIVATE_KEY=' $APP_ROOT/.env.keys 2>/dev/null | cut -d= -f2- | tr -d '\"'")"
+
+  if [[ "$new_pkey" != "$pkey" ]]; then
+    warn "키가 rotate 되었습니다 (이전 $old_fingerprint → 신규)"
+    pct pull "$vmid" "$APP_ROOT/.env.keys" "$kpath" >&2
+    chmod 600 "$kpath"
+    in_lxc "$vmid" "rm -f $APP_ROOT/.env.keys" >&2
+    warn "systemd drop-in 갱신 필요: pxi-laravel env-keys-install $vmid"
+  else
+    # 키 동일 — LXC 의 .env.keys 는 보안상 제거
+    in_lxc "$vmid" "rm -f $APP_ROOT/.env.keys" >&2
+  fi
+
+  # decrypt 서비스 재시작 → /run tmpfs 갱신 → php-fpm reload
+  local fpm_ver; fpm_ver="$(_fpm_version "$vmid")"
+  in_lxc "$vmid" "
+    systemctl restart pxi-laravel-decrypt@$vmid.service
+    systemctl reload php$fpm_ver-fpm
+    rm -f $APP_ROOT/.env.pre-reencrypt
+  " >&2
+
+  ok "env-reencrypt 완료"
+}
+
 # ── env-keys-backup: LXC → 호스트 정본 (긴급 복구) ──────────────────────
 cmd_env_keys_backup() {
   local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel env-keys-backup <vmid>"
@@ -862,6 +928,7 @@ Usage:
   pxi-laravel env-keys-install <vmid>             # 정본 keys 로 systemd override 설치
   pxi-laravel env-keys-backup <vmid>              # LXC → 호스트 정본 긴급 복구
   pxi-laravel env-keys-fingerprint <vmid>         # 정본 keys 의 sha256 (8자) 지문
+  pxi-laravel env-reencrypt <vmid>                # 복호화 → 편집 → 재암호화 원샷
   pxi-laravel db       <vmid> [client|dump]
   pxi-laravel delete   <vmid>
   pxi-laravel list
@@ -886,6 +953,7 @@ main() {
     env-keys-install)     cmd_env_keys_install "$@" ;;
     env-keys-backup)      cmd_env_keys_backup "$@" ;;
     env-keys-fingerprint) cmd_env_keys_fingerprint "$@" ;;
+    env-reencrypt)        cmd_env_reencrypt "$@" ;;
     env-init)
       warn "env-init 은 제거되었습니다. 대신 'env-encrypt' 와 'env-keys-install' 을 순서대로 사용하세요."
       exit 2

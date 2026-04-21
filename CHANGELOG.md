@@ -5,24 +5,51 @@ Semantic Versioning (https://semver.org/)
 ## pxi-laravel dotenvx 지원 — 2026-04-21
 
 shell-tools/bin/pxi-laravel 에 dotenvx 네이티브 지원 추가. LXC .env
-파일을 dotenvx 로 암호화 후 git 커밋 가능하게.
+파일을 dotenvx 로 AES-256 암호화 후 git 커밋 가능. 4 PR 에 걸쳐 진화.
 
-- **`env-init <vmid>`** — .env 암호화 풀 플로우:
-  1. `curl -fsSL https://dotenvx.sh | sh` 로 LXC 안에 바이너리 설치
-  2. `dotenvx encrypt -f .env` in-place 암호화 → `.env.keys` 생성
-  3. php-fpm pool.d/www.conf 에 `clear_env = no` 설정 (자식에 env 상속)
-  4. `/etc/systemd/system/php{ver}-fpm.service.d/dotenvx.conf` override:
-     `Environment=DOTENV_PRIVATE_KEY=xxx` + `ExecStart=dotenvx run ...`
-  5. 호스트 `/root/.secrets/pxi-laravel/{vmid}.env.keys` 에 chmod 600 백업
-- **`env-show <vmid> [--decrypt]`** — 암호화 감지 시 `--decrypt` 로 복호화
-  출력. 기본은 encrypted 원본.
-- **`env-edit`** — 암호화 상태면 편집 차단 + 안전한 플로우 안내 (키 깨짐 방지)
-- **`artisan`** — 암호화 감지 시 `dotenvx run --` 으로 자동 wrap
-- **`_env_is_encrypted`** / **`_fpm_version`** 공통 헬퍼
+### 아키텍처 (최종)
 
-Why: 피드백 `feedback_dotenvx.md` — LXC .env 는 dotenvx 로 AES-256 암호화,
-systemd `DOTENV_PRIVATE_KEY` 로 런타임 복호화. 이제까지 pxi-laravel 은
-평문 .env 만 지원했는데, 이번에 네이티브화.
+```
+정본: /root/control-plane/.secrets/pxi-laravel/<vmid>.env.keys (chmod 600)
+                  │ env-keys-install
+                  ▼
+LXC:
+  /etc/systemd/system/pxi-laravel-decrypt@.service
+    oneshot Type, Before= php*-fpm, DOTENV_PRIVATE_KEY drop-in
+    ExecStart=/usr/local/bin/pxi-env-decrypt /var/www/html/.env /run/pxi-laravel-<vmid>.env
+                  │ Wants=/After= dependency
+                  ▼
+  php*-fpm override: EnvironmentFile=/run/pxi-laravel-<vmid>.env
+                  │ pool clear_env=no 로 자식 상속
+                  ▼
+  php-fpm → Laravel (safeLoad 가 이미 주입된 env 우선)
+```
+
+### 명령 (최종)
+
+| 명령 | 기능 |
+|---|---|
+| `env-encrypt <vmid>` | 평문 .env → 암호화, keys 를 호스트 정본으로 이동 |
+| `env-keys-install <vmid>` | 정본 keys 로 systemd oneshot + override 설치 (idempotent, rollback trap) |
+| `env-reencrypt <vmid>` | 복호화 → 편집 → 재암호화 원샷 (키 rotate 감지) |
+| `env-keys-backup <vmid>` | LXC → 호스트 정본 긴급 복구 |
+| `env-keys-fingerprint <vmid>` | 정본 keys 의 sha256(8자) 지문 |
+| `env-show --decrypt` | /run tmpfs 복호화본 출력 |
+| `env-edit` | 암호화 상태 차단, env-reencrypt 로 안내 |
+| `artisan` | 암호화 감지 시 /run/.env source 후 실행 (printf %q injection 방어) |
+
+### PR 진화
+
+- **#66** 최초 `env-init` — `dotenvx run` 으로 php-fpm wrap → Type=notify 타임아웃
+- **#67** 재설계 — oneshot decrypt 서비스 + Wants/After 체인, 정본 경로 control-plane 로
+- **#68** 하드닝 (C1/C3/W1/W2/W3) — shell injection 방어, idempotent 재설치, rollback trap, dotenvx 1.61.1 버전 고정
+- **#69** `env-reencrypt` 구현, 셀프리뷰 후속
+
+### Why
+
+피드백 `feedback_dotenvx.md` — LXC .env 는 dotenvx AES-256 암호화,
+systemd `DOTENV_PRIVATE_KEY` 로 런타임 복호화.
+피드백 `feedback_not_root_only.md` — 호스트 시크릿 정본은 control-plane.
 
 ## Nickel SSOT enforcement — 2026-04-20/21
 
