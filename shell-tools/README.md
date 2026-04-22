@@ -7,6 +7,7 @@ Shell 기반 pxi 확장 도구. Rust 바이너리(`pxi-*` crates) 와 병행 설
 ```
 bin/
   pxi-laravel         자체 호스팅 Laravel LXC 배포/관리 (nginx + PHP-FPM + MariaDB + Node + Composer + Traefik)
+  pxi-svn             게임 협업용 SVN LXC thin wrapper (deploy recipe + service + cloudflare 조합)
   pxi-seo-monitor     Prelik SEO Monitor (LXC 50183) 앱/Playwright 관리 — pxi-laravel 위에 얹는 앱별 CLI
   kubetest-run        k3s testkube 기반 Playwright 런너 헬퍼 (NFS: /volume1/works/e2e/kubetest)
 
@@ -30,6 +31,7 @@ share/
 
 ```bash
 install -m 0755 shell-tools/bin/pxi-laravel       /usr/local/bin/
+install -m 0755 shell-tools/bin/pxi-svn           /usr/local/bin/
 install -m 0755 shell-tools/bin/pxi-seo-monitor   /usr/local/bin/
 install -m 0755 shell-tools/bin/kubetest-run      /usr/local/bin/
 
@@ -42,6 +44,11 @@ cp -r shell-tools/share/pxi-seo-monitor/* /usr/local/share/pxi-seo-monitor/
 ```bash
 pxi run laravel install --vmid 50183 --hostname prelik-seo-monitor \
   --domain prelik-seo-monitor.50.internal.kr --php 8.4 ...
+pxi run svn install --vmid 50123 --hostname svn --domain svn.50.internal.kr
+pxi run svn repo-create --vmid 50123 --name prototype
+pxi run svn repo-list --vmid 50123
+pxi run svn password --vmid 50123 --user admin
+pxi run svn user-list --vmid 50123
 pxi run seo-monitor playwright install
 pxi run seo-monitor sites import-wp
 ```

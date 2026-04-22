@@ -1,0 +1,534 @@
+[service]
+name = "svn"
+description = "게임 협업용 Apache Subversion 서버 (game 저장소 + onboarding + 백업)"
+
+[lxc]
+cores = "2"
+memory = "2048"
+disk = "64"
+
+[install]
+packages = ["apache2", "subversion", "libapache2-mod-svn", "apache2-utils", "curl", "python3", "nodejs", "npm"]
+
+[[install.steps]]
+name = "저장소/레이아웃 초기화"
+run = """
+set -euo pipefail
+
+REPO_ROOT="/srv/svn/repos"
+REPO_NAME="game"
+REPO_PATH="${REPO_ROOT}/${REPO_NAME}"
+
+mkdir -p /srv/svn/conf /srv/svn/backups "${REPO_ROOT}"
+
+if [ ! -d "${REPO_PATH}/db" ]; then
+  svnadmin create "${REPO_PATH}"
+  svn mkdir -m "Initialize standard layout" \
+    "file://${REPO_PATH}/trunk" \
+    "file://${REPO_PATH}/branches" \
+    "file://${REPO_PATH}/tags"
+  svn mkdir -m "Initialize game content layout" \
+    "file://${REPO_PATH}/trunk/art" \
+    "file://${REPO_PATH}/trunk/audio" \
+    "file://${REPO_PATH}/trunk/code" \
+    "file://${REPO_PATH}/trunk/design" \
+    "file://${REPO_PATH}/trunk/docs"
+fi
+
+chown -R www-data:www-data /srv/svn
+"""
+
+[[install.steps]]
+name = "게임 자산 lock 기본 규칙 적용"
+run = """
+set -euo pipefail
+
+REPO_PATH="/srv/svn/repos/game"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+svn checkout "file://${REPO_PATH}/trunk" "${TMP_DIR}/trunk" >/dev/null
+
+cat > "${TMP_DIR}/auto-props.txt" <<'EOF'
+*.fbx = svn:needs-lock=*
+*.blend = svn:needs-lock=*
+*.max = svn:needs-lock=*
+*.ma = svn:needs-lock=*
+*.mb = svn:needs-lock=*
+*.psd = svn:needs-lock=*
+*.tga = svn:needs-lock=*
+*.png = svn:needs-lock=*
+*.wav = svn:needs-lock=*
+*.uasset = svn:needs-lock=*
+*.umap = svn:needs-lock=*
+EOF
+
+CURRENT="$(svn pg svn:auto-props "${TMP_DIR}/trunk" 2>/dev/null || true)"
+DESIRED="$(cat "${TMP_DIR}/auto-props.txt")"
+
+if [ "${CURRENT}" != "${DESIRED}" ]; then
+  svn propset svn:auto-props "${DESIRED}" "${TMP_DIR}/trunk" >/dev/null
+  svn commit -m "Add default needs-lock rules for game assets" "${TMP_DIR}/trunk" >/dev/null
+fi
+"""
+
+[[install.steps]]
+name = "SVN 권한/Apache 설정 배치"
+run = """
+set -euo pipefail
+
+cat > /srv/svn/conf/authz <<'EOF'
+[groups]
+admins = admin
+artists =
+programmers =
+external =
+
+[/]
+@admins = rw
+@artists = r
+@programmers = r
+@external = r
+* =
+
+[/trunk]
+@admins = rw
+@artists = rw
+@programmers = rw
+@external = r
+
+[/trunk/art]
+@admins = rw
+@artists = rw
+@programmers = r
+@external = r
+
+[/trunk/audio]
+@admins = rw
+@artists = rw
+@programmers = r
+@external = r
+
+[/trunk/design]
+@admins = rw
+@artists = rw
+@programmers = rw
+@external = r
+
+[/trunk/code]
+@admins = rw
+@artists = r
+@programmers = rw
+@external = r
+
+[/branches]
+@admins = rw
+@programmers = rw
+@artists = r
+@external = r
+
+[/tags]
+@admins = rw
+@artists = r
+@programmers = r
+@external = r
+EOF
+
+cat > /etc/apache2/conf-available/svn-game.conf <<'EOF'
+<Location /svn>
+    DAV svn
+    SVNParentPath /srv/svn/repos
+    SVNListParentPath on
+
+    AuthType Basic
+    AuthName "Game SVN"
+    AuthUserFile /srv/svn/conf/passwd
+    Require valid-user
+
+    AuthzSVNAccessFile /srv/svn/conf/authz
+    LimitXMLRequestBody 0
+</Location>
+EOF
+"""
+
+[[install.steps]]
+name = "운영 스크립트/landing page/관리자 계정"
+run = """
+set -euo pipefail
+
+REPO_NAME="game"
+SVN_IP="$(hostname -I | awk '{print $1}')"
+ADMIN_USER="admin"
+if [ ! -f /root/.env ]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
+  cat > /root/.env <<EOF
+SVN_URL=http://svn.50.internal.kr/svn/${REPO_NAME}
+SVN_REPO=${REPO_NAME}
+SVN_ADMIN_USER=admin
+SVN_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+SVN_MODELER_USER=modeler
+SVN_MODELER_PASSWORD=
+SVN_PROGRAMMER_USER=programmer
+SVN_PROGRAMMER_PASSWORD=
+EOF
+  chmod 600 /root/.env
+else
+  ADMIN_PASSWORD="$(grep '^SVN_ADMIN_PASSWORD=' /root/.env 2>/dev/null | head -1 | cut -d= -f2- || true)"
+fi
+
+htpasswd -bc /srv/svn/conf/passwd "${ADMIN_USER}" "${ADMIN_PASSWORD}"
+chown root:www-data /srv/svn/conf/passwd /srv/svn/conf/authz
+chmod 750 /srv/svn/conf
+chmod 640 /srv/svn/conf/passwd /srv/svn/conf/authz
+
+if ! command -v dotenvx >/dev/null 2>&1; then
+  npm install -g @dotenvx/dotenvx@latest >/dev/null
+fi
+cd /root
+rm -f .env.keys
+dotenvx encrypt -f .env >/dev/null
+chmod 600 /root/.env /root/.env.keys
+
+cat > /usr/local/bin/backup-svn-game <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="/srv/svn/repos"
+backup_root="/srv/svn/backups"
+timestamp="$(date +%Y%m%d-%H%M%S)"
+
+mkdir -p "${backup_root}"
+
+for repo in "${repo_root}"/*; do
+  [ -d "${repo}" ] || continue
+  name="$(basename "${repo}")"
+  target="${backup_root}/${name}-${timestamp}"
+  svnadmin hotcopy "${repo}" "${target}"
+done
+
+find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
+EOF
+
+cat > /usr/local/bin/svn-user-add <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: svn-user-add <username> <password> [admins|artists|programmers|external]" >&2
+  exit 1
+fi
+
+username="$1"
+password="$2"
+group="${3:-}"
+
+passwd_file="/srv/svn/conf/passwd"
+authz_file="/srv/svn/conf/authz"
+
+htpasswd -b "${passwd_file}" "${username}" "${password}" >/dev/null
+
+if [ -n "${group}" ]; then
+  case "${group}" in
+    admins|artists|programmers|external)
+      python3 - "${authz_file}" "${group}" "${username}" <<'PY'
+from pathlib import Path
+import sys
+
+authz_path = Path(sys.argv[1])
+group = sys.argv[2]
+user = sys.argv[3]
+lines = authz_path.read_text().splitlines()
+updated = []
+
+for line in lines:
+    if line.startswith(f"{group} ="):
+        left, right = line.split("=", 1)
+        users = [x.strip() for x in right.split(",") if x.strip()]
+        if user not in users:
+            users.append(user)
+        line = f"{left}= {', '.join(users)}"
+    updated.append(line)
+
+authz_path.write_text("\\n".join(updated) + "\\n")
+PY
+      ;;
+    *)
+      echo "invalid group: ${group}" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+chown root:www-data "${passwd_file}" "${authz_file}"
+chmod 640 "${passwd_file}" "${authz_file}"
+EOF
+
+cat > /etc/cron.d/svn-backup-game <<'EOF'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+15 3 * * * root /usr/local/bin/backup-svn-game >/var/log/svn-backup-game.log 2>&1
+EOF
+
+cat > /var/www/html/index.html <<EOF
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game SVN Onboarding</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --ink: #1f2933;
+      --muted: #52606d;
+      --line: #d8d1c2;
+      --accent: #8b5e34;
+      --accent-2: #2f6f5e;
+      --code: #f1ede5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      background:
+        radial-gradient(circle at top left, #efe6d5 0, transparent 34%),
+        linear-gradient(180deg, #f8f4ec 0%, var(--bg) 100%);
+      color: var(--ink);
+      line-height: 1.6;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 40px 20px 64px; }
+    .hero {
+      background: linear-gradient(135deg, rgba(139, 94, 52, 0.12), rgba(47, 111, 94, 0.08));
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 16px 40px rgba(31, 41, 51, 0.08);
+    }
+    .badge {
+      display: inline-block;
+      margin-bottom: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      background: rgba(139, 94, 52, 0.12);
+      color: var(--accent);
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(31, 41, 51, 0.05);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      margin-top: 20px;
+    }
+    pre {
+      margin: 12px 0 0;
+      padding: 14px 16px;
+      white-space: pre-wrap;
+      border-radius: 12px;
+      border: 1px solid #ded8cc;
+      background: var(--code);
+      overflow-x: auto;
+    }
+    h1, h2 { margin: 0 0 12px; line-height: 1.2; }
+    h1 { font-size: clamp(2rem, 4vw, 3.2rem); }
+    h2 { font-size: 1.25rem; margin-top: 28px; }
+    p { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    ul { margin: 0; padding-left: 20px; }
+    li + li { margin-top: 8px; }
+    .callout {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent-2);
+      border-radius: 10px;
+      background: rgba(47, 111, 94, 0.08);
+    }
+    .warn {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-left: 4px solid #b04a2d;
+      border-radius: 10px;
+      background: rgba(176, 74, 45, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="badge">SVN Onboarding</div>
+      <h1>게임 프로젝트 SVN 서버</h1>
+      <p class="muted">기본 저장소는 <code>${REPO_NAME}</code> 입니다. 코드와 아트 자산을 함께 관리합니다.</p>
+      <div class="callout">
+        <strong>접근 정책</strong><br>
+        SVN은 <code>svn.50.internal.kr</code> 도메인으로만 접근합니다.
+        IP 직접 접근은 막혀 있습니다.
+      </div>
+      <div class="warn">
+        <strong>내부 인수인계 메모</strong><br>
+        이 페이지는 내부 운영/협업용 안내입니다. 계정, 접속 방법, 기본 작업 흐름을 아래에 정리해두었습니다.
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>접속 주소</h2>
+        <pre>http://svn.50.internal.kr/svn/${REPO_NAME}/</pre>
+      </article>
+      <article class="card">
+        <h2>최초 Checkout</h2>
+        <pre>svn checkout http://svn.50.internal.kr/svn/${REPO_NAME}/trunk ${REPO_NAME}-trunk</pre>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>현재 가야 저장소</h2>
+      <ul>
+        <li><code>gaya-renpy</code> : Ren'Py/Python 게임 본체</li>
+        <li><code>bridge-of-gaya</code> : Unity 프로젝트</li>
+        <li><code>gaya-main</code> : <code>ai / live / script / tts</code> 메인 모노레포</li>
+      </ul>
+      <pre>svn checkout http://svn.50.internal.kr/svn/gaya-renpy/trunk gaya-renpy
+svn checkout http://svn.50.internal.kr/svn/bridge-of-gaya/trunk bridge-of-gaya
+svn checkout http://svn.50.internal.kr/svn/gaya-main/trunk gaya-main</pre>
+    </section>
+
+    <section class="card">
+      <h2>기본 계정</h2>
+      <pre>admin
+modeler
+programmer</pre>
+      <p>비밀번호와 접속 자격증명은 LXC 내부 <code>/root/.env</code> 에 <code>dotenvx</code>로 암호화되어 저장됩니다. 복호화 키 정본은 호스트 <code>/root/control-plane/.secrets/pxi-svn/&lt;vmid&gt;.env.keys</code> 에 둡니다.</p>
+      <pre>pxi run svn password --vmid 50123 --user admin
+pxi run svn password --vmid 50123 --user modeler
+pxi run svn password --vmid 50123 --user programmer</pre>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Windows / TortoiseSVN</h2>
+        <ul>
+          <li>폴더 우클릭 → <code>SVN Checkout...</code></li>
+          <li><code>URL of repository</code> 에 <code>http://svn.50.internal.kr/svn/${REPO_NAME}/trunk</code> 입력</li>
+          <li>처음 접속 시 계정:
+            <br><code>modeler</code> 또는 <code>programmer</code>
+          </li>
+          <li>비밀번호는 페이지에 노출하지 않고, 내부 운영자가 <code>pxi run svn password --vmid 50123 --user &lt;role&gt;</code> 로 조회해서 전달합니다.</li>
+          <li>체크아웃 후 <code>SVN Update</code>, 변경 후 <code>SVN Commit</code></li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>CLI 접속</h2>
+        <pre>svn checkout http://svn.50.internal.kr/svn/${REPO_NAME}/trunk ${REPO_NAME}-trunk
+svn ls --username modeler --password '<비밀번호>' http://svn.50.internal.kr/svn/${REPO_NAME}/
+svn ls --username programmer --password '<비밀번호>' http://svn.50.internal.kr/svn/${REPO_NAME}/</pre>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>모델러</h2>
+        <p><code>modeler</code> 계정으로 접속하고, 바이너리 자산은 수정 전에 lock을 잡습니다.</p>
+        <pre>svn update
+svn lock art/characters/hero.fbx -m "rig update"
+svn commit -m "Update hero rig"
+svn unlock art/characters/hero.fbx</pre>
+      </article>
+      <article class="card">
+        <h2>프로그래머</h2>
+        <p><code>programmer</code> 계정으로 접속하고, 코드 작업은 update → commit 흐름으로 진행합니다.</p>
+        <pre>svn update
+svn status
+svn commit -m "Implement inventory logic"</pre>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>공통 작업 흐름</h2>
+      <ul>
+        <li>작업 시작 전 항상 <code>svn update</code></li>
+        <li>아트 자산은 수정 전에 <code>svn lock</code></li>
+        <li>커밋 메시지는 작업 내용을 바로 알아볼 수 있게 작성</li>
+        <li>빌드 산출물, 캐시, 임시 파일은 커밋 금지</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Lock 기본 규칙</h2>
+      <ul>
+        <li><code>*.fbx</code>, <code>*.blend</code>, <code>*.psd</code>, <code>*.wav</code>, <code>*.uasset</code>, <code>*.umap</code> 은 기본적으로 lock 대상입니다.</li>
+        <li>모델/텍스처/애니메이션 같은 바이너리 파일은 동시에 수정하지 않는 것을 원칙으로 합니다.</li>
+        <li>코드는 일반 commit 흐름으로 작업하되, 큰 자산 파일은 merge보다 lock을 우선합니다.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>자주 쓰는 명령</h2>
+      <pre>svn update
+svn status
+svn add &lt;file&gt;
+svn commit -m "message"
+svn lock &lt;file&gt; -m "reason"
+svn unlock &lt;file&gt;
+svn log --limit 10
+svn info</pre>
+    </section>
+
+    <section class="card">
+      <h2>운영 메모</h2>
+      <ul>
+        <li>SVN URL: <code>http://svn.50.internal.kr/svn/${REPO_NAME}/</code></li>
+        <li>설명 페이지: <code>http://svn.50.internal.kr/</code></li>
+        <li>IP 직접 접근은 차단되어 있어야 정상입니다.</li>
+        <li>서버 내부 자격증명 파일: <code>/root/.env</code> (dotenvx 암호화)</li>
+        <li>호스트 키 정본: <code>/root/control-plane/.secrets/pxi-svn/&lt;vmid&gt;.env.keys</code></li>
+        <li>운영 명령: <code>pxi run svn repo-create --vmid 50123 --name prototype</code>, <code>pxi run svn repo-list --vmid 50123</code>, <code>pxi run svn user-list --vmid 50123</code>, <code>pxi run svn admin-show 50123</code>, <code>pxi run svn password --vmid 50123 --user admin</code></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
+EOF
+
+cat > /root/svn-bootstrap.txt <<EOF
+SVN bootstrap summary
+=====================
+repo: ${REPO_NAME}
+url:  http://${SVN_IP}/svn/${REPO_NAME}
+admin_user: ${ADMIN_USER}
+
+credentials:
+store in /root/.env using dotenvx
+key file: /root/.env.keys
+
+checkout:
+svn checkout http://${SVN_IP}/svn/${REPO_NAME}/trunk ${REPO_NAME}-trunk
+EOF
+
+chmod +x /usr/local/bin/backup-svn-game /usr/local/bin/svn-user-add
+"""
+
+[[install.steps]]
+name = "Apache enable + 검증"
+run = """
+set -euo pipefail
+
+a2enconf svn-game >/dev/null
+apache2ctl -t
+systemctl enable --now apache2
+systemctl restart apache2
+
+ADMIN_PASSWORD="$(cd /root && dotenvx get SVN_ADMIN_PASSWORD -f .env)"
+svn ls --non-interactive --username admin --password "${ADMIN_PASSWORD}" http://127.0.0.1/svn/game >/dev/null
+systemctl is-active apache2 | grep -q '^active$'
+echo "✓ svn ready"
+echo "admin credentials: /root/.env (dotenvx-managed)"
+"""
