@@ -1,0 +1,677 @@
+#!/usr/bin/env bash
+# pxi-svn — game SVN LXC thin wrapper
+# existing pxi domains only:
+#   deploy service -> recipe install
+#   service add    -> service registry + traefik sync
+#   cloudflare dns-upsert -> DNS
+#
+# Usage:
+#   pxi-svn install --vmid 50123 --hostname svn --domain svn.50.internal.kr [--ip 10.0.50.123]
+#   pxi-svn expose  --vmid 50123 --hostname svn --domain svn.50.internal.kr [--ip 10.0.50.123]
+#   pxi-svn user-add --vmid 50123 --username modeler1 --group artists [--password ...]
+#   pxi-svn user-list --vmid 50123
+#   pxi-svn admin-show <vmid>
+#   pxi-svn admin-reset --vmid 50123 [--password ...]
+#   pxi-svn info    <vmid>
+#   pxi-svn help
+
+set -euo pipefail
+
+RECIPE_DEFAULT="examples/recipes/svn.toml"
+PXI_SVN_SECRETS_DIR="/root/control-plane/.secrets/pxi-svn"
+
+c_red()   { printf '\033[0;31m%s\033[0m' "$*"; }
+c_green() { printf '\033[0;32m%s\033[0m' "$*"; }
+c_blue()  { printf '\033[0;34m%s\033[0m' "$*"; }
+c_yel()   { printf '\033[0;33m%s\033[0m' "$*"; }
+log()  { echo "$(c_blue '[pxi-svn]') $*" >&2; }
+ok()   { echo "$(c_green '✓') $*" >&2; }
+warn() { echo "$(c_yel '⚠') $*" >&2; }
+die()  { echo "$(c_red '✗') $*" >&2; exit 1; }
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "필수 명령 없음: $1"
+}
+
+usage() {
+  cat <<'EOF'
+게임 협업용 SVN LXC thin wrapper
+
+Usage:
+  pxi-svn install --vmid <VMID> --hostname <HOSTNAME> --domain <FQDN> [--ip <IP>] [--recipe <PATH>]
+  pxi-svn expose  --vmid <VMID> --hostname <HOSTNAME> --domain <FQDN> [--ip <IP>]
+  pxi-svn repo-create --vmid <VMID> --name <REPO>
+  pxi-svn repo-list --vmid <VMID>
+  pxi-svn user-add --vmid <VMID> --username <NAME> [--group <admins|artists|programmers|external>] [--password <PW>]
+  pxi-svn user-list --vmid <VMID>
+  pxi-svn env-get --vmid <VMID> <KEY>
+  pxi-svn password --vmid <VMID> --user <admin|modeler|programmer>
+  pxi-svn admin-show <VMID>
+  pxi-svn admin-reset --vmid <VMID> [--password <PW>]
+  pxi-svn info <VMID>
+  pxi-svn help
+
+Examples:
+  pxi-svn install --vmid 50123 --hostname svn --domain svn.50.internal.kr
+  pxi-svn expose --vmid 50123 --hostname svn --domain svn.50.internal.kr --ip 10.0.50.123
+  pxi-svn repo-create --vmid 50123 --name prototype
+  pxi-svn repo-list --vmid 50123
+  pxi-svn user-add --vmid 50123 --username modeler1 --group artists
+  pxi-svn user-list --vmid 50123
+  pxi-svn env-get --vmid 50123 SVN_ADMIN_PASSWORD
+  pxi-svn password --vmid 50123 --user modeler
+  pxi-svn admin-show 50123
+  pxi-svn admin-reset --vmid 50123
+  pxi-svn info 50123
+EOF
+}
+
+lxc_ip() {
+  pct config "$1" 2>/dev/null | grep -oP 'ip=\K[0-9.]+' | head -1
+}
+
+gen_password() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 24 | tr -d '\n'
+  else
+    python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(18))
+PY
+  fi
+}
+
+keys_path() {
+  echo "$PXI_SVN_SECRETS_DIR/${1}.env.keys"
+}
+
+ensure_secrets_dir() {
+  mkdir -p "$PXI_SVN_SECRETS_DIR"
+  chmod 700 "$PXI_SVN_SECRETS_DIR"
+}
+
+host_private_key() {
+  local vmid="$1"
+  local kpath
+  kpath="$(keys_path "$vmid")"
+  [ -f "$kpath" ] || return 1
+  grep '^DOTENV_PRIVATE_KEY=' "$kpath" | head -1 | cut -d= -f2- | tr -d '"' || true
+}
+
+sync_keys_to_host() {
+  local vmid="$1"
+  local kpath
+  kpath="$(keys_path "$vmid")"
+  ensure_secrets_dir
+
+  if pct exec "$vmid" -- bash -lc 'test -f /root/.env.keys'; then
+    pct pull "$vmid" /root/.env.keys "$kpath" >/dev/null
+    chmod 600 "$kpath"
+    pct exec "$vmid" -- bash -lc 'rm -f /root/.env.keys' >/dev/null
+  fi
+}
+
+env_get() {
+  local vmid="$1" key="$2"
+  local pkey=""
+  pkey="$(host_private_key "$vmid" || true)"
+  if [ -n "$pkey" ]; then
+    pct exec "$vmid" -- bash -lc "
+set -euo pipefail
+cd /root
+DOTENV_PRIVATE_KEY='${pkey}' dotenvx get ${key} -f .env
+" 2>/dev/null || true
+  else
+    pct exec "$vmid" -- bash -lc "
+set -euo pipefail
+cd /root
+if command -v dotenvx >/dev/null 2>&1 && [ -f .env ]; then
+  dotenvx get ${key} -f .env
+else
+  grep '^${key}=' /root/.env 2>/dev/null | head -1 | cut -d= -f2-
+fi
+" 2>/dev/null || true
+  fi
+}
+
+sync_credentials_env() {
+  local vmid="$1"
+  local admin_pw="$2"
+  local modeler_pw="$3"
+  local programmer_pw="$4"
+  local tmp
+  tmp="$(mktemp)"
+
+  cat >"$tmp" <<EOF
+SVN_URL=http://svn.50.internal.kr/svn/game
+SVN_REPO=game
+SVN_ADMIN_USER=admin
+SVN_ADMIN_PASSWORD=${admin_pw}
+SVN_MODELER_USER=modeler
+SVN_MODELER_PASSWORD=${modeler_pw}
+SVN_PROGRAMMER_USER=programmer
+SVN_PROGRAMMER_PASSWORD=${programmer_pw}
+EOF
+
+  pct push "$vmid" "$tmp" /root/.env >/dev/null
+  rm -f "$tmp"
+
+  pct exec "$vmid" -- bash -lc '
+set -euo pipefail
+chmod 600 /root/.env
+if command -v dotenvx >/dev/null 2>&1; then
+  cd /root
+  rm -f .env.keys
+  dotenvx encrypt -f .env >/dev/null
+  chmod 600 /root/.env .env.keys
+fi
+cat > /root/svn-bootstrap.txt <<EOF
+SVN bootstrap summary
+=====================
+repo: game
+url:  http://svn.50.internal.kr/svn/game
+admin_user: admin
+
+credentials:
+stored in /root/.env (dotenvx-managed)
+host key file: /root/control-plane/.secrets/pxi-svn/VMID.env.keys
+
+examples:
+pxi run svn env-get --vmid VMID SVN_ADMIN_PASSWORD
+pxi run svn env-get --vmid VMID SVN_MODELER_PASSWORD
+pxi run svn env-get --vmid VMID SVN_PROGRAMMER_PASSWORD
+
+checkout:
+svn checkout http://svn.50.internal.kr/svn/game/trunk game-trunk
+EOF
+chmod 600 /root/svn-bootstrap.txt
+rm -f /root/.svn-bootstrap-admin-password /root/.env.plain.backup
+' >/dev/null
+
+  pct exec "$vmid" -- bash -lc "sed -i 's/VMID/${vmid}/g' /root/svn-bootstrap.txt" >/dev/null
+  sync_keys_to_host "$vmid"
+}
+
+apply_host_lock() {
+  local vmid="$1" domain="$2"
+  local tmp
+  tmp="$(mktemp)"
+
+  cat >"$tmp" <<EOF
+<VirtualHost *:80>
+    ServerName invalid.local
+    RedirectMatch 403 ^/
+</VirtualHost>
+EOF
+  pct push "$vmid" "$tmp" /etc/apache2/sites-available/000-default.conf >/dev/null
+
+  cat >"$tmp" <<EOF
+<VirtualHost *:80>
+    ServerName ${domain}
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+EOF
+  pct push "$vmid" "$tmp" /etc/apache2/sites-available/svn-domain.conf >/dev/null
+
+  cat >"$tmp" <<EOF
+<Location /svn>
+    DAV svn
+    SVNParentPath /srv/svn/repos
+    SVNListParentPath on
+
+    AuthType Basic
+    AuthName "Game SVN"
+    AuthUserFile /srv/svn/conf/passwd
+
+    <RequireAll>
+        Require expr %{HTTP_HOST} == '${domain}'
+        Require valid-user
+    </RequireAll>
+
+    AuthzSVNAccessFile /srv/svn/conf/authz
+    LimitXMLRequestBody 0
+</Location>
+EOF
+  pct push "$vmid" "$tmp" /etc/apache2/conf-available/svn-game.conf >/dev/null
+  rm -f "$tmp"
+
+  pct exec "$vmid" -- bash -lc '
+set -euo pipefail
+a2ensite svn-domain >/dev/null
+apache2ctl -t >/dev/null
+systemctl reload apache2
+' >/dev/null
+}
+
+split_service_zone() {
+  local fqdn="$1"
+  local host zone
+  host="${fqdn%%.*}"
+  zone="${fqdn#*.}"
+  [ -n "$host" ] && [ -n "$zone" ] || return 1
+  printf '%s %s\n' "$host" "$zone"
+}
+
+split_cf_zone() {
+  local fqdn="$1"
+  local zones line zone
+
+  zones="$(pxi-cloudflare zones 2>/dev/null | sed -n 's/^  ✓ \([^[:space:]]\+\).*/\1/p' | awk '{ print length, $0 }' | sort -rn | cut -d" " -f2-)"
+  [ -n "$zones" ] || return 1
+
+  while IFS= read -r zone; do
+    [ -n "$zone" ] || continue
+    if [ "$fqdn" = "$zone" ]; then
+      printf '@ %s\n' "$zone"
+      return 0
+    fi
+    case "$fqdn" in
+      *."$zone")
+        local name="${fqdn%.$zone}"
+        [ -n "$name" ] || return 1
+        printf '%s %s\n' "$name" "$zone"
+        return 0
+        ;;
+    esac
+  done <<<"$zones"
+
+  return 1
+}
+
+cmd_install() {
+  local vmid="" hostname="" domain="" ip="" recipe="$RECIPE_DEFAULT"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --hostname) hostname="$2"; shift 2 ;;
+      --domain) domain="$2"; shift 2 ;;
+      --ip) ip="$2"; shift 2 ;;
+      --recipe) recipe="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$hostname" ] || die "--hostname 필요"
+  [ -n "$domain" ] || die "--domain 필요"
+
+  need_cmd pxi
+  need_cmd pct
+  need_cmd pxi-service
+  need_cmd pxi-cloudflare
+
+  if [ -z "$ip" ]; then
+    ip="$(python3 - <<PY
+vmid = "$vmid"
+if len(vmid) != 5 or not vmid.isdigit():
+    raise SystemExit(1)
+subnet = int(vmid[:2])
+tail = int(vmid[2:])
+if tail > 255:
+    raise SystemExit(1)
+print(f"10.0.{subnet}.{tail}")
+PY
+)" || die "--ip 생략 시 VMID 규약(AABCC) 필요"
+  fi
+
+  log "SVN recipe 배포"
+  pxi run deploy service \
+    --recipe "$recipe" \
+    --vmid "$vmid" \
+    --hostname "$hostname" \
+    --ip "$ip"
+
+  sync_keys_to_host "$vmid"
+  cmd_expose --vmid "$vmid" --hostname "$hostname" --domain "$domain" --ip "$ip"
+  cmd_info "$vmid"
+}
+
+cmd_expose() {
+  local vmid="" hostname="" domain="" ip=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --hostname) hostname="$2"; shift 2 ;;
+      --domain) domain="$2"; shift 2 ;;
+      --ip) ip="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$hostname" ] || die "--hostname 필요"
+  [ -n "$domain" ] || die "--domain 필요"
+
+  need_cmd pxi-service
+  need_cmd pxi-cloudflare
+
+  if [ -z "$ip" ]; then
+    ip="$(lxc_ip "$vmid")"
+  fi
+  [ -n "$ip" ] || die "IP를 찾지 못함 — --ip 지정 필요"
+
+  read -r _ service_zone <<<"$(split_service_zone "$domain")" || die "도메인 형식 해석 실패: $domain"
+  read -r cf_name cf_zone <<<"$(split_cf_zone "$domain")" || die "Cloudflare zone 추론 실패: $domain"
+
+  log "service registry 등록"
+  pxi run service add \
+    --domain "$service_zone" \
+    --name "$hostname" \
+    --host "$domain" \
+    --ip "$ip" \
+    --port 80 \
+    --vmid "$vmid"
+
+  log "Cloudflare DNS 등록"
+  pxi run cloudflare dns-upsert \
+    --domain "$cf_zone" \
+    --type A \
+    --name "$cf_name" \
+    --content "$ip" \
+    --proxied false
+
+  log "Apache host lock 적용"
+  apply_host_lock "$vmid" "$domain"
+
+  ok "노출 완료: $domain -> $ip"
+}
+
+cmd_repo_create() {
+  local vmid="" name=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$name" ] || die "--name 필요"
+
+  case "$name" in
+    *[!a-zA-Z0-9._-]*|'') die "--name 은 [A-Za-z0-9._-]만 허용" ;;
+  esac
+
+  pct exec "$vmid" -- bash -lc "
+set -euo pipefail
+repo=/srv/svn/repos/$name
+if [ -d \"\$repo/db\" ]; then
+  echo exists
+  exit 0
+fi
+svnadmin create \"\$repo\"
+svn mkdir -m 'Initialize standard layout' \
+  file://\$repo/trunk \
+  file://\$repo/branches \
+  file://\$repo/tags >/dev/null
+chown -R www-data:www-data \"\$repo\"
+echo created
+" >/tmp/pxi-svn-repo-create.out
+
+  local state
+  state="$(cat /tmp/pxi-svn-repo-create.out 2>/dev/null || true)"
+  rm -f /tmp/pxi-svn-repo-create.out
+
+  if [ "$state" = "exists" ]; then
+    ok "저장소 이미 존재: $name"
+  else
+    ok "저장소 생성 완료: $name"
+  fi
+  echo "url: http://svn.50.internal.kr/svn/$name/"
+}
+
+cmd_repo_list() {
+  local vmid=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+
+  pct exec "$vmid" -- bash -lc '
+set -euo pipefail
+echo "[repos]"
+find /srv/svn/repos -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort
+' || true
+}
+
+cmd_info() {
+  local vmid="${1:-}"
+  [ -n "$vmid" ] || die "info <vmid> 필요"
+
+  local ip
+  ip="$(lxc_ip "$vmid")"
+
+  echo "VMID: $vmid"
+  echo "IP:   ${ip:-unknown}"
+  echo
+  pct exec "$vmid" -- bash -lc 'test -f /root/svn-bootstrap.txt && cat /root/svn-bootstrap.txt || echo "bootstrap summary missing"' || true
+}
+
+cmd_admin_show() {
+  local vmid="${1:-}"
+  [ -n "$vmid" ] || die "admin-show <vmid> 필요"
+  local kpath
+  kpath="$(keys_path "$vmid")"
+
+  pct exec "$vmid" -- bash -lc '
+set -euo pipefail
+echo "admin user: admin"
+if command -v dotenvx >/dev/null 2>&1 && [ -f /root/.env ]; then
+  echo "credentials: dotenvx-managed (/root/.env)"
+  echo "host key file: '"$kpath"'"
+  echo "show password: pxi run svn env-get --vmid '"$vmid"' SVN_ADMIN_PASSWORD"
+elif [ -f /root/svn-bootstrap.txt ]; then
+  sed -n "1,120p" /root/svn-bootstrap.txt
+else
+  echo "credentials file missing"
+fi
+' || true
+}
+
+cmd_admin_reset() {
+  local vmid="" password=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --password) password="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+
+  if [ -z "$password" ]; then
+    password="$(gen_password)"
+  fi
+
+  pct exec "$vmid" -- bash -lc "
+set -euo pipefail
+htpasswd -bc /srv/svn/conf/passwd admin '$password' >/dev/null
+" >/dev/null
+
+  local modeler_pw programmer_pw
+  modeler_pw="$(env_get "$vmid" SVN_MODELER_PASSWORD)"
+  programmer_pw="$(env_get "$vmid" SVN_PROGRAMMER_PASSWORD)"
+  sync_credentials_env "$vmid" "$password" "$modeler_pw" "$programmer_pw"
+
+  ok "admin 비밀번호 재설정 완료"
+  echo "vmid:     $vmid"
+  echo "username: admin"
+  echo "password: [stored in dotenvx-managed /root/.env]"
+}
+
+cmd_user_add() {
+  local vmid="" username="" group="" password=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --username|--user) username="$2"; shift 2 ;;
+      --group) group="$2"; shift 2 ;;
+      --password) password="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$username" ] || die "--username 필요"
+
+  case "$group" in
+    ""|admins|artists|programmers|external) ;;
+    *) die "--group 는 admins|artists|programmers|external 중 하나여야 함" ;;
+  esac
+
+  need_cmd pct
+  if [ -z "$password" ]; then
+    password="$(gen_password)"
+  fi
+
+  local esc_user esc_pass esc_group cmd
+  esc_user="$(printf '%q' "$username")"
+  esc_pass="$(printf '%q' "$password")"
+  if [ -n "$group" ]; then
+    esc_group="$(printf '%q' "$group")"
+    cmd="/usr/local/bin/svn-user-add $esc_user $esc_pass $esc_group"
+  else
+    cmd="/usr/local/bin/svn-user-add $esc_user $esc_pass"
+  fi
+  pct exec "$vmid" -- bash -lc "$cmd" >/dev/null
+  pct exec "$vmid" -- bash -lc 'systemctl reload apache2' >/dev/null
+
+  local admin_pw modeler_pw programmer_pw
+  admin_pw="$(env_get "$vmid" SVN_ADMIN_PASSWORD)"
+  modeler_pw="$(env_get "$vmid" SVN_MODELER_PASSWORD)"
+  programmer_pw="$(env_get "$vmid" SVN_PROGRAMMER_PASSWORD)"
+  case "$username" in
+    modeler) modeler_pw="$password" ;;
+    programmer) programmer_pw="$password" ;;
+    admin) admin_pw="$password" ;;
+  esac
+  sync_credentials_env "$vmid" "$admin_pw" "$modeler_pw" "$programmer_pw"
+
+  ok "SVN 계정 생성 완료"
+  echo "vmid:     $vmid"
+  echo "username: $username"
+  echo "password: [stored in dotenvx-managed /root/.env]"
+  echo "group:    ${group:-none}"
+}
+
+cmd_user_list() {
+  local vmid=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+
+  pct exec "$vmid" -- bash -lc '
+set -euo pipefail
+echo "[groups]"
+awk "
+  /^\[groups\]/ { in_groups=1; next }
+  in_groups && /^$/ { exit }
+  in_groups { print }
+" /srv/svn/conf/authz
+echo
+echo "[users]"
+cut -d: -f1 /srv/svn/conf/passwd | sed "/^$/d"
+' || true
+}
+
+cmd_env_get() {
+  local vmid="" key=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        if [ -z "$key" ]; then
+          key="$1"
+          shift
+        else
+          die "알 수 없는 인자: $1"
+        fi
+        ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$key" ] || die "env-get <KEY> 필요"
+
+  local value
+  value="$(env_get "$vmid" "$key")"
+  [ -n "$value" ] || die "키 조회 실패: $key"
+  printf '%s\n' "$value"
+}
+
+cmd_password() {
+  local vmid="" user="" key=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --vmid) vmid="$2"; shift 2 ;;
+      --user) user="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "알 수 없는 옵션: $1" ;;
+    esac
+  done
+
+  [ -n "$vmid" ] || die "--vmid 필요"
+  [ -n "$user" ] || die "--user 필요"
+
+  case "$user" in
+    admin) key="SVN_ADMIN_PASSWORD" ;;
+    modeler) key="SVN_MODELER_PASSWORD" ;;
+    programmer) key="SVN_PROGRAMMER_PASSWORD" ;;
+    *) die "--user 는 admin|modeler|programmer 중 하나여야 함" ;;
+  esac
+
+  cmd_env_get --vmid "$vmid" "$key"
+}
+
+main() {
+  local cmd="${1:-help}"
+  case "$cmd" in
+    install) shift; cmd_install "$@" ;;
+    expose) shift; cmd_expose "$@" ;;
+    repo-create) shift; cmd_repo_create "$@" ;;
+    repo-list) shift; cmd_repo_list "$@" ;;
+    user-add) shift; cmd_user_add "$@" ;;
+    user-list) shift; cmd_user_list "$@" ;;
+    env-get) shift; cmd_env_get "$@" ;;
+    password) shift; cmd_password "$@" ;;
+    admin-show) shift; cmd_admin_show "$@" ;;
+    admin-reset) shift; cmd_admin_reset "$@" ;;
+    info) shift; cmd_info "$@" ;;
+    help|-h|--help) usage ;;
+    *) die "알 수 없는 서브커맨드: $cmd" ;;
+  esac
+}
+
+main "$@"

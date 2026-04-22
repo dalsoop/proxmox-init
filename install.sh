@@ -172,7 +172,8 @@ if [ -z "${PRELIK_SKIP_SHELL_TOOLS:-}" ] && command -v pct >/dev/null 2>&1; then
             if [ -d "$ST_ROOT/share" ]; then
                 cp -r "$ST_ROOT/share/." "$SHARE_DIR/"
             fi
-            echo "  shell-tools: $(ls "$ST_ROOT/bin" 2>/dev/null | tr '\n' ' ')→ $BIN_DIR/"
+            tools_list="$(find "$ST_ROOT/bin" -maxdepth 1 -type f -printf '%f ' 2>/dev/null)"
+            echo "  shell-tools: ${tools_list}→ $BIN_DIR/"
         fi
     else
         echo "  shell-tools: 이 태그에 shell-tools/ 없음 — skip"
