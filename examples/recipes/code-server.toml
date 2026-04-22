@@ -12,15 +12,15 @@ packages = ["curl", "git"]
 
 [[install.steps]]
 name = "code-server 설치"
-run = """
+run = '''
 set -euo pipefail
 curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone 2>&1 | tail -3
 echo "ok"
-"""
+'''
 
 [[install.steps]]
 name = "설정 (auth: none, 포트 8443)"
-run = """
+run = '''
 set -euo pipefail
 mkdir -p ~/.config/code-server
 cat > ~/.config/code-server/config.yaml << CFGEOF
@@ -28,11 +28,11 @@ bind-addr: 0.0.0.0:8443
 auth: none
 cert: false
 CFGEOF
-"""
+'''
 
 [[install.steps]]
 name = "systemd 서비스"
-run = """
+run = '''
 set -euo pipefail
 CS_BIN=$(find /root/.local/lib -name "code-server" -path "*/bin/*" -type f -executable 2>/dev/null | head -1)
 [ -z "$CS_BIN" ] && CS_BIN=$(command -v code-server)
@@ -56,11 +56,11 @@ SVCEOF
 
 systemctl daemon-reload
 systemctl enable --now code-server
-"""
+'''
 
 [[install.steps]]
 name = "git auto-sync (5분마다 pull+push)"
-run = """
+run = '''
 set -euo pipefail
 FOLDER="${CODE_SERVER_FOLDER:-/root}"
 
@@ -88,10 +88,10 @@ GSEOF
 else
   echo "skip git sync (no .git)"
 fi
-"""
+'''
 
 [[install.steps]]
 name = "검증"
-run = """
+run = '''
 systemctl is-active code-server && echo "ok code-server running on :8443" || { echo "fail"; exit 1; }
-"""
+'''
