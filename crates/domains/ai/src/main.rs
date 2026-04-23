@@ -850,6 +850,12 @@ fn install_cli(vmid: Option<&str>) -> anyhow::Result<()> {
     } else {
         println!("  ✓ codex 이미 설치됨");
     }
+    if !has_on(vmid, "gemini") {
+        println!("  gemini 설치...");
+        run_on(vmid, &format!("{sudo}npm install -g @google/gemini-cli"))?;
+    } else {
+        println!("  ✓ gemini 이미 설치됨");
+    }
     println!("✓ AI CLI 설치 완료");
     Ok(())
 }
