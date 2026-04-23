@@ -6,15 +6,38 @@ use std::path::Path;
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "pxi-ministack", about = "MiniStack (LocalStack AWS 에뮬레이터)")]
-struct Cli { #[command(subcommand)] cmd: Cmd }
+#[command(
+    name = "pxi-ministack",
+    about = "MiniStack (LocalStack AWS 에뮬레이터)"
+)]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
 
 #[derive(Subcommand)]
 enum Cmd {
-    Install { #[arg(long, default_value = "4566")] port: u16, #[arg(long)] data_dir: Option<String> },
-    Uninstall { #[arg(long)] force: bool },
-    Start, Stop, Restart, Status, Reset,
-    Logs { #[arg(long)] follow: bool, #[arg(long)] tail: Option<String> },
+    Install {
+        #[arg(long, default_value = "4566")]
+        port: u16,
+        #[arg(long)]
+        data_dir: Option<String>,
+    },
+    Uninstall {
+        #[arg(long)]
+        force: bool,
+    },
+    Start,
+    Stop,
+    Restart,
+    Status,
+    Reset,
+    Logs {
+        #[arg(long)]
+        follow: bool,
+        #[arg(long)]
+        tail: Option<String>,
+    },
     Update,
     /// 환경 진단
     Doctor,
@@ -24,14 +47,27 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let dc = "/opt/ministack/docker-compose.yml";
     match cli.cmd {
-        Cmd::Status => { common::run("docker", &["compose", "-f", dc, "ps"]); }
-        Cmd::Start => { common::run("docker", &["compose", "-f", dc, "up", "-d"]); }
-        Cmd::Stop => { common::run("docker", &["compose", "-f", dc, "down"]); }
-        Cmd::Restart => { common::run("docker", &["compose", "-f", dc, "restart"]); }
+        Cmd::Status => {
+            common::run("docker", &["compose", "-f", dc, "ps"]);
+        }
+        Cmd::Start => {
+            common::run("docker", &["compose", "-f", dc, "up", "-d"]);
+        }
+        Cmd::Stop => {
+            common::run("docker", &["compose", "-f", dc, "down"]);
+        }
+        Cmd::Restart => {
+            common::run("docker", &["compose", "-f", dc, "restart"]);
+        }
         Cmd::Logs { follow, tail } => {
             let mut a = vec!["compose", "-f", dc, "logs"];
-            if follow { a.push("-f"); }
-            if let Some(t) = &tail { a.push("--tail"); a.push(t); }
+            if follow {
+                a.push("-f");
+            }
+            if let Some(t) = &tail {
+                a.push("--tail");
+                a.push(t);
+            }
             common::run("docker", &a);
         }
         Cmd::Install { port, data_dir } => ministack_install(port, data_dir.as_deref()),
@@ -58,7 +94,9 @@ fn saved_port() -> u16 {
 
 fn require_installed() {
     if !Path::new(COMPOSE_FILE).exists() {
-        eprintln!("MiniStack이 설치되어 있지 않습니다. `pxi run ministack install`을 먼저 실행하세요.");
+        eprintln!(
+            "MiniStack이 설치되어 있지 않습니다. `pxi run ministack install`을 먼저 실행하세요."
+        );
         std::process::exit(1);
     }
 }
@@ -161,9 +199,16 @@ fn ministack_install(port: u16, data_dir: Option<&str>) {
     common::run("docker", &["compose", "-f", COMPOSE_FILE, "pull"]).ok();
 
     // AWS CLI 확인
-    if !Command::new("aws").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+    if !Command::new("aws")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
         println!("\nAWS CLI 설치 중...");
-        let _ = Command::new("apt-get").args(["install", "-y", "-qq", "awscli"]).status();
+        let _ = Command::new("apt-get")
+            .args(["install", "-y", "-qq", "awscli"])
+            .status();
     }
 
     // AWS 환경변수 설정
@@ -268,7 +313,19 @@ fn ministack_update() {
     }
 
     println!("컨테이너 재생성...");
-    if common::run("docker", &["compose", "-f", COMPOSE_FILE, "up", "-d", "--force-recreate"]).is_ok() {
+    if common::run(
+        "docker",
+        &[
+            "compose",
+            "-f",
+            COMPOSE_FILE,
+            "up",
+            "-d",
+            "--force-recreate",
+        ],
+    )
+    .is_ok()
+    {
         println!("\n  업데이트 완료");
     }
 }
@@ -295,7 +352,15 @@ fn doctor() {
     // Container running
     if compose_ok && docker_ok {
         let ps_ok = Command::new("docker")
-            .args(["compose", "-f", COMPOSE_FILE, "ps", "--status", "running", "-q"])
+            .args([
+                "compose",
+                "-f",
+                COMPOSE_FILE,
+                "ps",
+                "--status",
+                "running",
+                "-q",
+            ])
             .output()
             .map(|o| o.status.success() && !o.stdout.is_empty())
             .unwrap_or(false);
@@ -307,11 +372,20 @@ fn doctor() {
     // Health endpoint
     let port = saved_port();
     let health_ok = Command::new("curl")
-        .args(["-sf", "--max-time", "5", &format!("http://localhost:{}/_ministack/health", port)])
+        .args([
+            "-sf",
+            "--max-time",
+            "5",
+            &format!("http://localhost:{}/_ministack/health", port),
+        ])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} health endpoint (localhost:{}/_ministack/health)", if health_ok { "✓" } else { "✗" }, port);
+    println!(
+        "  {} health endpoint (localhost:{}/_ministack/health)",
+        if health_ok { "✓" } else { "✗" },
+        port
+    );
 
     // AWS CLI installed
     let aws_ok = Command::new("aws")

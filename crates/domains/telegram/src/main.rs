@@ -55,9 +55,13 @@ enum Cmd {
     /// 등록된 봇 목록 (토큰은 마스킹)
     List,
     /// 봇 등록 해제
-    Remove { name: String },
+    Remove {
+        name: String,
+    },
     /// getMe로 토큰 검증
-    Verify { bot: String },
+    Verify {
+        bot: String,
+    },
     /// 텔레그램 총괄 상태 (봇 + OpenClaw 채널)
     Status,
     /// 등록된 봇 상세 정보 (username, webhook 등)
@@ -131,29 +135,74 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Register { name, token } => register(&name, &token),
-        Cmd::Send { bot, chat, text, markdown } => send(&bot, &chat, text.as_deref(), markdown),
-        Cmd::SendPhoto { bot, chat, file, caption } => {
-            send_photo(&bot, &chat, &file, caption.as_deref())
+        Cmd::Send {
+            bot,
+            chat,
+            text,
+            markdown,
+        } => send(&bot, &chat, text.as_deref(), markdown),
+        Cmd::SendPhoto {
+            bot,
+            chat,
+            file,
+            caption,
+        } => send_photo(&bot, &chat, &file, caption.as_deref()),
+        Cmd::List => {
+            list()?;
+            Ok(())
         }
-        Cmd::List => { list()?; Ok(()) }
         Cmd::Remove { name } => remove(&name),
         Cmd::Verify { bot } => verify(&bot),
-        Cmd::Status => { status(); Ok(()) }
-        Cmd::Bots => { bots_detail(); Ok(()) }
-        Cmd::Webhook { bot, url } => { webhook_set(&bot, &url); Ok(()) }
-        Cmd::PairingApprove { code } => { pairing_approve(&code); Ok(()) }
-        Cmd::Generate { bot, chat, prompt, model } => {
-            generate(&bot, &chat, &prompt, model.as_deref())
+        Cmd::Status => {
+            status();
+            Ok(())
         }
-        Cmd::SetupAll => { setup_all(); Ok(()) }
-        Cmd::Assign { bot, target, channel } => {
+        Cmd::Bots => {
+            bots_detail();
+            Ok(())
+        }
+        Cmd::Webhook { bot, url } => {
+            webhook_set(&bot, &url);
+            Ok(())
+        }
+        Cmd::PairingApprove { code } => {
+            pairing_approve(&code);
+            Ok(())
+        }
+        Cmd::Generate {
+            bot,
+            chat,
+            prompt,
+            model,
+        } => generate(&bot, &chat, &prompt, model.as_deref()),
+        Cmd::SetupAll => {
+            setup_all();
+            Ok(())
+        }
+        Cmd::Assign {
+            bot,
+            target,
+            channel,
+        } => {
             assign(&bot, &target, channel.as_deref());
             Ok(())
         }
-        Cmd::Channels => { list_channels(); Ok(()) }
-        Cmd::BotRegister { name, token } => { bot_register(&name, &token); Ok(()) }
-        Cmd::BotRename { bot, name } => { bot_rename(&bot, &name); Ok(()) }
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Channels => {
+            list_channels();
+            Ok(())
+        }
+        Cmd::BotRegister { name, token } => {
+            bot_register(&name, &token);
+            Ok(())
+        }
+        Cmd::BotRename { bot, name } => {
+            bot_rename(&bot, &name);
+            Ok(())
+        }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -180,7 +229,8 @@ fn load_bots() -> anyhow::Result<serde_json::Value> {
 
 fn save_bots(v: &serde_json::Value) -> anyhow::Result<()> {
     let p = bots_path()?;
-    let parent = p.parent()
+    let parent = p
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("부모 디렉토리 없음"))?;
     fs::create_dir_all(parent)?;
 
@@ -199,14 +249,15 @@ fn mask_token(token: &str) -> String {
     if token.len() < 10 {
         "***".into()
     } else {
-        format!("{}...{}", &token[..5], &token[token.len()-4..])
+        format!("{}...{}", &token[..5], &token[token.len() - 4..])
     }
 }
 
 /// config에서 봇 토큰을 name으로 조회
 fn get_token(bot: &str) -> anyhow::Result<String> {
     let bots = load_bots()?;
-    bots["bots"][bot].as_str()
+    bots["bots"][bot]
+        .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("등록된 봇 없음: {bot} (pxi run telegram register)"))
 }
@@ -214,7 +265,8 @@ fn get_token(bot: &str) -> anyhow::Result<String> {
 /// config에서 봇 토큰을 name 또는 suffix로 조회 (fuzzy)
 fn get_token_fuzzy(bot: &str) -> anyhow::Result<(String, String)> {
     let bots = load_bots()?;
-    let map = bots["bots"].as_object()
+    let map = bots["bots"]
+        .as_object()
         .ok_or_else(|| anyhow::anyhow!("config 파싱 실패"))?;
 
     // 정확히 일치
@@ -231,7 +283,14 @@ fn get_token_fuzzy(bot: &str) -> anyhow::Result<(String, String)> {
     }
 
     let names: Vec<&String> = map.keys().collect();
-    anyhow::bail!("봇 '{bot}' 없음. 등록된 봇: {}", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+    anyhow::bail!(
+        "봇 '{bot}' 없음. 등록된 봇: {}",
+        names
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// 등록된 모든 봇 (name, token) 목록
@@ -267,15 +326,23 @@ fn bot_api_get(token: &str, method: &str) -> Option<serde_json::Value> {
 }
 
 /// curl로 Telegram Bot API POST 호출 (JSON body), 전체 응답 반환
-fn bot_api_post(token: &str, method: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+fn bot_api_post(
+    token: &str,
+    method: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
     let url = format!("https://api.telegram.org/bot{token}/{method}");
     let body_str = body.to_string();
     let output = std::process::Command::new("curl")
         .args([
-            "-sSL", "--fail",
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-d", &body_str,
+            "-sSL",
+            "--fail",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body_str,
             &url,
         ])
         .output()?;
@@ -290,7 +357,12 @@ fn bot_api_post(token: &str, method: &str, body: &serde_json::Value) -> anyhow::
 }
 
 /// curl로 Telegram Bot API POST (multipart/form-data) — 파일 업로드용
-fn bot_api_multipart(token: &str, method: &str, fields: &[(&str, &str)], file_field: Option<(&str, &str)>) -> anyhow::Result<serde_json::Value> {
+fn bot_api_multipart(
+    token: &str,
+    method: &str,
+    fields: &[(&str, &str)],
+    file_field: Option<(&str, &str)>,
+) -> anyhow::Result<serde_json::Value> {
     let url = format!("https://api.telegram.org/bot{token}/{method}");
     let mut args: Vec<String> = vec!["-sSL".into()];
     for (key, val) in fields {
@@ -303,9 +375,7 @@ fn bot_api_multipart(token: &str, method: &str, fields: &[(&str, &str)], file_fi
     }
     args.push(url);
 
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()?;
+    let output = std::process::Command::new("curl").args(&args).output()?;
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or(serde_json::json!({"ok": false, "description": String::from_utf8_lossy(&output.stdout).to_string()}));
     Ok(resp)
@@ -342,7 +412,8 @@ fn list() -> anyhow::Result<()> {
 
 fn remove(name: &str) -> anyhow::Result<()> {
     let mut bots = load_bots()?;
-    let obj = bots["bots"].as_object_mut()
+    let obj = bots["bots"]
+        .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("config 파싱 실패"))?;
     if obj.remove(name).is_some() {
         save_bots(&bots)?;
@@ -394,7 +465,10 @@ fn send(bot: &str, chat: &str, text: Option<&str>, markdown: bool) -> anyhow::Re
 
     let resp = bot_api_post(&token, "sendMessage", &data)?;
     if !resp["ok"].as_bool().unwrap_or(false) {
-        anyhow::bail!("Telegram API 실패: {}", resp["description"].as_str().unwrap_or("?"));
+        anyhow::bail!(
+            "Telegram API 실패: {}",
+            resp["description"].as_str().unwrap_or("?")
+        );
     }
     println!("✓ 발송 완료 → {bot}:{chat}");
     Ok(())
@@ -412,7 +486,12 @@ fn send_photo(bot: &str, chat: &str, file_path: &str, caption: Option<&str>) -> 
     send_photo_raw(&token, chat, file_path, caption)
 }
 
-fn send_photo_raw(token: &str, chat_id: &str, file_path: &str, caption: Option<&str>) -> anyhow::Result<()> {
+fn send_photo_raw(
+    token: &str,
+    chat_id: &str,
+    file_path: &str,
+    caption: Option<&str>,
+) -> anyhow::Result<()> {
     let mut fields: Vec<(&str, &str)> = vec![("chat_id", chat_id)];
     if let Some(cap) = caption {
         fields.push(("caption", cap));
@@ -422,7 +501,12 @@ fn send_photo_raw(token: &str, chat_id: &str, file_path: &str, caption: Option<&
         println!("✓ 이미지 전송 완료 → {chat_id}");
         Ok(())
     } else {
-        anyhow::bail!("이미지 전송 실패: {}", resp.get("description").and_then(|d| d.as_str()).unwrap_or("?"));
+        anyhow::bail!(
+            "이미지 전송 실패: {}",
+            resp.get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("?")
+        );
     }
 }
 
@@ -474,7 +558,10 @@ fn status() {
     if let Ok(vmid) = resolve_openclaw_vmid() {
         println!("\n── OpenClaw Gateway 채널 ──\n");
         if lxc_is_running(&vmid) {
-            let out = lxc_exec(&vmid, "export PATH=/usr/local/bin:$PATH && openclaw channels status 2>&1");
+            let out = lxc_exec(
+                &vmid,
+                "export PATH=/usr/local/bin:$PATH && openclaw channels status 2>&1",
+            );
             for line in out.lines() {
                 if line.contains("Telegram") || line.contains("Gateway") {
                     println!("  {}", line.trim());
@@ -532,7 +619,10 @@ fn bots_detail() {
 fn webhook_set(bot_name: &str, url: &str) {
     let token = match get_token(bot_name) {
         Ok(t) => t,
-        Err(e) => { eprintln!("[telegram] {e}"); return; }
+        Err(e) => {
+            eprintln!("[telegram] {e}");
+            return;
+        }
     };
 
     if url == "delete" || url == "off" || url.is_empty() {
@@ -554,7 +644,10 @@ fn webhook_set(bot_name: &str, url: &str) {
 fn pairing_approve(code: &str) {
     let vmid = match resolve_openclaw_vmid() {
         Ok(v) => v,
-        Err(e) => { eprintln!("[telegram] {e}"); return; }
+        Err(e) => {
+            eprintln!("[telegram] {e}");
+            return;
+        }
     };
 
     if !lxc_is_running(&vmid) {
@@ -563,7 +656,10 @@ fn pairing_approve(code: &str) {
     }
 
     // pending 목록 먼저 표시
-    let list_out = lxc_exec(&vmid, "export PATH=/usr/local/bin:$PATH && openclaw pairing list 2>&1");
+    let list_out = lxc_exec(
+        &vmid,
+        "export PATH=/usr/local/bin:$PATH && openclaw pairing list 2>&1",
+    );
     println!("{}", list_out.trim());
 
     if code == "all" {
@@ -594,7 +690,11 @@ fn extract_pairing_codes(text: &str) -> Vec<String> {
     let mut codes = Vec::new();
     for word in text.split_whitespace() {
         let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric());
-        if trimmed.len() == 8 && trimmed.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        if trimmed.len() == 8
+            && trimmed
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        {
             codes.push(trimmed.to_string());
         }
     }
@@ -606,8 +706,8 @@ fn extract_pairing_codes(text: &str) -> Vec<String> {
 fn generate(bot: &str, chat: &str, prompt: &str, model: Option<&str>) -> anyhow::Result<()> {
     let token = get_token(bot)?;
 
-    let comfyui_url = std::env::var("COMFYUI_URL")
-        .map_err(|_| anyhow::anyhow!("COMFYUI_URL 환경변수 필요"))?;
+    let comfyui_url =
+        std::env::var("COMFYUI_URL").map_err(|_| anyhow::anyhow!("COMFYUI_URL 환경변수 필요"))?;
     let default_model = std::env::var("COMFYUI_DEFAULT_MODEL").unwrap_or_default();
     let ckpt = model.unwrap_or(&default_model);
     if ckpt.is_empty() {
@@ -673,12 +773,22 @@ fn generate(bot: &str, chat: &str, prompt: &str, model: Option<&str>) -> anyhow:
     let body_str = workflow.to_string();
     let url = format!("{comfyui_url}/prompt");
     let output = std::process::Command::new("curl")
-        .args(["-sSL", "-X", "POST", "-H", "Content-Type: application/json", "-d", &body_str, &url])
+        .args([
+            "-sSL",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body_str,
+            &url,
+        ])
         .output()?;
 
     let body: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|_| anyhow::anyhow!("ComfyUI 응답 파싱 실패"))?;
-    let prompt_id = body["prompt_id"].as_str()
+    let prompt_id = body["prompt_id"]
+        .as_str()
         .ok_or_else(|| anyhow::anyhow!("prompt_id 없음: {body}"))?
         .to_string();
 
@@ -873,10 +983,18 @@ fn setup_all() {
             .unwrap_or(false);
 
         // setMyShortDescription
-        let _ = bot_api_post(&token, "setMyShortDescription", &serde_json::json!({"short_description": short_desc}));
+        let _ = bot_api_post(
+            &token,
+            "setMyShortDescription",
+            &serde_json::json!({"short_description": short_desc}),
+        );
 
         // setMyDescription
-        let _ = bot_api_post(&token, "setMyDescription", &serde_json::json!({"description": about}));
+        let _ = bot_api_post(
+            &token,
+            "setMyDescription",
+            &serde_json::json!({"description": about}),
+        );
 
         let status = if cmd_ok { "OK" } else { "FAIL" };
         println!("[{label}] 명령어 {status}, 설명 설정 완료");
@@ -890,7 +1008,10 @@ fn setup_all() {
 fn assign(bot_name: &str, target: &str, channel: Option<&str>) {
     let token = match get_token(bot_name) {
         Ok(t) => t,
-        Err(e) => { eprintln!("[telegram] {e}"); return; }
+        Err(e) => {
+            eprintln!("[telegram] {e}");
+            return;
+        }
     };
 
     let username = bot_api_get(&token, "getMe")
@@ -918,7 +1039,10 @@ fn assign(bot_name: &str, target: &str, channel: Option<&str>) {
         "openclaw" => {
             let vmid = match resolve_openclaw_vmid() {
                 Ok(v) => v,
-                Err(e) => { eprintln!("[telegram] {e}"); return; }
+                Err(e) => {
+                    eprintln!("[telegram] {e}");
+                    return;
+                }
             };
 
             if !lxc_is_running(&vmid) {
@@ -961,7 +1085,9 @@ fn list_channels() {
             let name = entry.file_name().to_string_lossy().to_string();
             let env_path = format!("{ch_dir}/{name}/.env");
             if let Ok(content) = fs::read_to_string(&env_path) {
-                let token_line = content.lines().find(|l| l.starts_with("TELEGRAM_BOT_TOKEN="));
+                let token_line = content
+                    .lines()
+                    .find(|l| l.starts_with("TELEGRAM_BOT_TOKEN="));
                 if let Some(line) = token_line {
                     let token = line.trim_start_matches("TELEGRAM_BOT_TOKEN=");
                     let token_id = token.split(':').next().unwrap_or("?");
@@ -984,7 +1110,10 @@ fn list_channels() {
     println!("\n── OpenClaw 채널 ──\n");
     if let Ok(vmid) = resolve_openclaw_vmid() {
         if lxc_is_running(&vmid) {
-            let out = lxc_exec(&vmid, "export PATH=/usr/local/bin:$PATH && openclaw channels list 2>&1");
+            let out = lxc_exec(
+                &vmid,
+                "export PATH=/usr/local/bin:$PATH && openclaw channels list 2>&1",
+            );
             for line in out.lines() {
                 if line.contains("Telegram") {
                     println!("  {}", line.trim().trim_start_matches("- "));
@@ -1014,7 +1143,11 @@ fn bot_register(label: &str, token: &str) {
 
     // pxi config telegram.json 에도 등록
     let mut bots = load_bots().unwrap_or(serde_json::json!({"bots": {}}));
-    let bot_label = if label.starts_with("openclaw-") { label.to_string() } else { format!("openclaw-{label}") };
+    let bot_label = if label.starts_with("openclaw-") {
+        label.to_string()
+    } else {
+        format!("openclaw-{label}")
+    };
     bots["bots"][&bot_label] = serde_json::json!(token);
     if let Err(e) = save_bots(&bots) {
         eprintln!("[telegram] config 저장 실패: {e}");
@@ -1029,7 +1162,8 @@ fn bot_register(label: &str, token: &str) {
         );
         let content = fs::read_to_string(&env_path).unwrap_or_default();
         if content.contains(&env_key) {
-            let new_content: String = content.lines()
+            let new_content: String = content
+                .lines()
                 .map(|l| {
                     if l.starts_with(&format!("{env_key}=")) {
                         format!("{env_key}={token}")
@@ -1042,7 +1176,11 @@ fn bot_register(label: &str, token: &str) {
             let _ = fs::write(&env_path, format!("{new_content}\n"));
         } else {
             use std::io::Write;
-            if let Ok(mut f) = fs::OpenOptions::new().append(true).create(true).open(&env_path) {
+            if let Ok(mut f) = fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&env_path)
+            {
                 let _ = writeln!(f, "{env_key}={token}");
             }
         }
@@ -1062,7 +1200,10 @@ fn bot_register(label: &str, token: &str) {
 fn bot_rename(bot_name: &str, display_name: &str) {
     let (label, token) = match get_token_fuzzy(bot_name) {
         Ok(t) => t,
-        Err(e) => { eprintln!("[telegram] {e}"); return; }
+        Err(e) => {
+            eprintln!("[telegram] {e}");
+            return;
+        }
     };
 
     let body = serde_json::json!({"name": display_name});
@@ -1074,7 +1215,12 @@ fn bot_rename(bot_name: &str, display_name: &str) {
             println!("[telegram] @{username} ({label}) → \"{display_name}\" 변경 완료");
         }
         Ok(resp) => {
-            eprintln!("[telegram] 이름 변경 실패: {}", resp.get("description").and_then(|d| d.as_str()).unwrap_or("?"));
+            eprintln!(
+                "[telegram] 이름 변경 실패: {}",
+                resp.get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("?")
+            );
         }
         Err(e) => {
             eprintln!("[telegram] 이름 변경 실패: {e}");
@@ -1086,9 +1232,20 @@ fn bot_rename(bot_name: &str, display_name: &str) {
 
 fn doctor() {
     println!("=== pxi-telegram doctor ===");
-    println!("  curl:    {}", if common::has_cmd("curl") { "✓" } else { "✗" });
+    println!(
+        "  curl:    {}",
+        if common::has_cmd("curl") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
     match bots_path() {
-        Ok(p) => println!("  config:  {} ({})", p.display(), if p.exists() { "존재" } else { "없음" }),
+        Ok(p) => println!(
+            "  config:  {} ({})",
+            p.display(),
+            if p.exists() { "존재" } else { "없음" }
+        ),
         Err(e) => println!("  config:  ✗ {e}"),
     }
     if let Ok(bots) = load_bots() {
@@ -1097,10 +1254,20 @@ fn doctor() {
     }
     // LXC 환경 검사
     let pct = common::has_cmd("pct");
-    println!("  pct:     {}", if pct { "✓ (Proxmox LXC 지원)" } else { "✗ (LXC 비지원 — assign/pairing/status 일부 제한)" });
+    println!(
+        "  pct:     {}",
+        if pct {
+            "✓ (Proxmox LXC 지원)"
+        } else {
+            "✗ (LXC 비지원 — assign/pairing/status 일부 제한)"
+        }
+    );
     if let Ok(vmid) = resolve_openclaw_vmid() {
         let running = lxc_is_running(&vmid);
-        println!("  openclaw: LXC {vmid} ({})", if running { "running" } else { "stopped" });
+        println!(
+            "  openclaw: LXC {vmid} ({})",
+            if running { "running" } else { "stopped" }
+        );
     } else {
         println!("  openclaw: OPENCLAW_VMID 미설정");
     }
@@ -1114,7 +1281,11 @@ fn resolve_openclaw_vmid() -> anyhow::Result<String> {
     if raw.is_empty() {
         anyhow::bail!("OPENCLAW_VMID 비어있음");
     }
-    if raw.len() >= 5 { Ok(raw) } else { Ok(format!("50{raw}")) }
+    if raw.len() >= 5 {
+        Ok(raw)
+    } else {
+        Ok(format!("50{raw}"))
+    }
 }
 
 fn lxc_is_running(vmid: &str) -> bool {
@@ -1124,7 +1295,5 @@ fn lxc_is_running(vmid: &str) -> bool {
 }
 
 fn lxc_exec(vmid: &str, script: &str) -> String {
-    common::run("pct", &["exec", vmid, "--", "bash", "-c", script])
-        .unwrap_or_default()
+    common::run("pct", &["exec", vmid, "--", "bash", "-c", script]).unwrap_or_default()
 }
-

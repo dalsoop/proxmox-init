@@ -73,10 +73,11 @@ pub fn pct_exec_passthrough(vmid: &str, cmd_args: &[&str]) -> Result<()> {
 
 /// LXC 실행 상태 확인 + 미실행 시 시작
 pub fn ensure_lxc_running(vmid: &str) -> Result<()> {
+    const LXC_START_SETTLE_SECS: u64 = 3;
     let status = run_capture("pct", &["status", vmid])?;
     if !status.contains("running") {
         run_passthrough("pct", &["start", vmid])?;
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(LXC_START_SETTLE_SECS));
     }
     Ok(())
 }

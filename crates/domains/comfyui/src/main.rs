@@ -50,7 +50,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::GpuPassthrough { vmid, gpu } => gpu_passthrough(&vmid, &gpu),
         Cmd::Install { vmid, path, port } => install(&vmid, &path, &port),
         Cmd::Status { vmid } => status(&vmid),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -94,9 +97,17 @@ fn install(vmid: &str, path: &str, port: &str) -> anyhow::Result<()> {
     println!("=== ComfyUI 설치: LXC {vmid} → {path} (포트 {port}) ===");
 
     // 의존성
-    common::run("pct", &["exec", vmid, "--", "bash", "-c",
-        "apt-get update && apt-get install -y python3 python3-venv python3-pip git",
-    ])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "apt-get update && apt-get install -y python3 python3-venv python3-pip git",
+        ],
+    )?;
 
     // 클론 (이미 있으면 pull)
     let clone_cmd = format!(
@@ -136,9 +147,23 @@ WantedBy=multi-user.target
     // tempfile로 로컬 작성 후 pct push
     let (tmp, _g) = secure_tempfile()?;
     std::fs::write(&tmp, unit)?;
-    common::run("pct", &["push", vmid, &tmp, "/etc/systemd/system/comfyui.service"])?;
+    common::run(
+        "pct",
+        &["push", vmid, &tmp, "/etc/systemd/system/comfyui.service"],
+    )?;
     common::run("pct", &["exec", vmid, "--", "systemctl", "daemon-reload"])?;
-    common::run("pct", &["exec", vmid, "--", "systemctl", "enable", "--now", "comfyui"])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "enable",
+            "--now",
+            "comfyui",
+        ],
+    )?;
 
     println!("\n✓ 설치 + 시작 완료");
     println!("  Web UI: http://<LXC_IP>:{port}");
@@ -148,13 +173,25 @@ WantedBy=multi-user.target
 
 fn status(vmid: &str) -> anyhow::Result<()> {
     println!("=== ComfyUI 상태: LXC {vmid} ===");
-    let out = common::run("pct", &["exec", vmid, "--", "systemctl", "is-active", "comfyui"]);
+    let out = common::run(
+        "pct",
+        &["exec", vmid, "--", "systemctl", "is-active", "comfyui"],
+    );
     match out {
         Ok(s) => println!("  service: {}", s.trim()),
         Err(_) => println!("  service: ✗ (미설치)"),
     }
-    if let Ok(ports) = common::run("pct", &["exec", vmid, "--", "bash", "-c",
-        "ss -tlnp 2>/dev/null | grep :8188 || echo '(8188 리스닝 없음)'"]) {
+    if let Ok(ports) = common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "ss -tlnp 2>/dev/null | grep :8188 || echo '(8188 리스닝 없음)'",
+        ],
+    ) {
         println!("  포트:    {}", ports.trim());
     }
     Ok(())
@@ -177,7 +214,10 @@ impl Drop for TempGuard {
 
 fn doctor() {
     println!("=== pxi-comfyui doctor ===");
-    println!("  pct:       {}", if common::has_cmd("pct") { "✓" } else { "✗" });
+    println!(
+        "  pct:       {}",
+        if common::has_cmd("pct") { "✓" } else { "✗" }
+    );
     // NVIDIA 드라이버 호스트 확인
     if std::path::Path::new("/dev/nvidia0").exists() {
         println!("  /dev/nvidia0: ✓");

@@ -123,11 +123,39 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Install {
-            vmid, hostname, domain, db_password, disk, cores, memory,
-        } => cmd_install(vmid.as_str(), &hostname, &domain, db_password.as_deref(), &disk, &cores, &memory),
+            vmid,
+            hostname,
+            domain,
+            db_password,
+            disk,
+            cores,
+            memory,
+        } => cmd_install(
+            vmid.as_str(),
+            &hostname,
+            &domain,
+            db_password.as_deref(),
+            &disk,
+            &cores,
+            &memory,
+        ),
         Commands::Setup {
-            vmid, url, title, admin_user, admin_password, admin_email, locale,
-        } => cmd_setup(&vmid, &url, &title, &admin_user, &admin_password, &admin_email, &locale),
+            vmid,
+            url,
+            title,
+            admin_user,
+            admin_password,
+            admin_email,
+            locale,
+        } => cmd_setup(
+            &vmid,
+            &url,
+            &title,
+            &admin_user,
+            &admin_password,
+            &admin_email,
+            &locale,
+        ),
         Commands::Cli { vmid, args } => cmd_cli(&vmid, &args),
         Commands::Delete { vmid, force } => cmd_delete(&vmid, force),
         Commands::Doctor => cmd_doctor(),
@@ -142,7 +170,8 @@ fn main() -> Result<()> {
         }
         Commands::LockdownTest { vmid, host, path } => {
             let targets = resolve_targets(vmid.as_deref(), None)?;
-            let test_vmid = targets.first()
+            let test_vmid = targets
+                .first()
                 .ok_or_else(|| anyhow::anyhow!("lockdown test 대상 LXC 없음"))?;
             cmd_lockdown_test(test_vmid, host.as_deref(), &path)
         }
@@ -159,13 +188,34 @@ fn cmd_doctor() -> Result<()> {
     println!("  전체 점검 체크리스트:\n");
 
     // pct
-    println!("  {} pct (Proxmox LXC 관리)", if common::command_exists("pct") { "✓" } else { "✗" });
+    println!(
+        "  {} pct (Proxmox LXC 관리)",
+        if common::command_exists("pct") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 
     // pxi-traefik
-    println!("  {} pxi-traefik (라우트 관리)", if common::command_exists("pxi-traefik") { "✓" } else { "✗" });
+    println!(
+        "  {} pxi-traefik (라우트 관리)",
+        if common::command_exists("pxi-traefik") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 
     // pveam
-    println!("  {} pveam (LXC 템플릿)", if common::command_exists("pveam") { "✓" } else { "✗" });
+    println!(
+        "  {} pveam (LXC 템플릿)",
+        if common::command_exists("pveam") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 
     // List known WP LXCs (pct list, filter wp-* hostnames)
     println!();
@@ -215,18 +265,32 @@ fn cmd_install(
     println!("[1/5] LXC 생성 (VMID={vmid}, hostname={hostname})...");
     let storage = "local-lvm";
     let template = get_debian_template()?;
-    common::run("pct", &[
-        "create", vmid, &template,
-        "--hostname", hostname,
-        "--storage", storage,
-        "--rootfs", &format!("{storage}:{disk}"),
-        "--cores", cores,
-        "--memory", memory,
-        "--net0", &format!("name=eth0,bridge=vmbr0,ip=dhcp"),
-        "--unprivileged", "1",
-        "--features", "nesting=1",
-        "--start", "1",
-    ])?;
+    common::run(
+        "pct",
+        &[
+            "create",
+            vmid,
+            &template,
+            "--hostname",
+            hostname,
+            "--storage",
+            storage,
+            "--rootfs",
+            &format!("{storage}:{disk}"),
+            "--cores",
+            cores,
+            "--memory",
+            memory,
+            "--net0",
+            &format!("name=eth0,bridge=vmbr0,ip=dhcp"),
+            "--unprivileged",
+            "1",
+            "--features",
+            "nesting=1",
+            "--start",
+            "1",
+        ],
+    )?;
 
     // 부팅 대기
     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -234,7 +298,8 @@ fn cmd_install(
 
     // [2/5] Apache + PHP + MariaDB + WordPress
     println!("[2/5] WordPress 스택 설치...");
-    let install_script = format!(r#"
+    let install_script = format!(
+        r#"
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -274,7 +339,8 @@ a2enmod rewrite
 systemctl enable --now apache2
 systemctl restart apache2
 echo "WordPress stack installed"
-"#);
+"#
+    );
     common::pct_exec(vmid, &["bash", "-c", &install_script])?;
 
     // WP-CLI 설치
@@ -284,27 +350,37 @@ echo "WordPress stack installed"
     // [3/5] Traefik 라우트
     println!("[3/5] Traefik 라우트 등록 ({domain})...");
     let route_name = format!("wp-{vmid}");
-    let ip = common::pct_exec(vmid, &[
-        "bash", "-c",
-        "hostname -I | awk '{print $1}'",
-    ])?;
+    let ip = common::pct_exec(vmid, &["bash", "-c", "hostname -I | awk '{print $1}'"])?;
     let backend = format!("http://{}:80", ip.trim());
-    common::run("pxi-traefik", &[
-        "route-add",
-        "--name", &route_name,
-        "--domain", domain,
-        "--backend", &backend,
-    ])?;
+    common::run(
+        "pxi-traefik",
+        &[
+            "route-add",
+            "--name",
+            &route_name,
+            "--domain",
+            domain,
+            "--backend",
+            &backend,
+        ],
+    )?;
 
     // [4/5] .env 기록 (LXC 안)
     println!("[4/5] LXC 내부 .env 기록...");
     let env_content = format!(
         "WORDPRESS_DOMAIN={domain}\nWORDPRESS_DB_PASSWORD={db_pass}\nWORDPRESS_DB_USER=wp_user\nWORDPRESS_DB_NAME=wordpress\n"
     );
-    common::pct_exec(vmid, &["bash", "-c", &format!(
-        "mkdir -p /etc/pxi && cat > /etc/pxi/.env << 'ENV'\n{}ENV\nchmod 600 /etc/pxi/.env",
-        env_content,
-    )])?;
+    common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            &format!(
+                "mkdir -p /etc/pxi && cat > /etc/pxi/.env << 'ENV'\n{}ENV\nchmod 600 /etc/pxi/.env",
+                env_content,
+            ),
+        ],
+    )?;
 
     // [5/5] 검증
     println!("[5/5] 검증...");
@@ -340,16 +416,24 @@ fn get_debian_template() -> Result<String> {
 
 /// WP-CLI 설치 (LXC 안)
 fn ensure_wp_cli(vmid: &str) -> Result<()> {
-    let check = common::pct_exec(vmid, &["bash", "-c", "test -x /usr/local/bin/wp && echo ok"]);
+    let check = common::pct_exec(
+        vmid,
+        &["bash", "-c", "test -x /usr/local/bin/wp && echo ok"],
+    );
     if let Ok(out) = check {
         if out.trim() == "ok" {
             return Ok(());
         }
     }
-    common::pct_exec(vmid, &["bash", "-c",
-        "curl -fsSL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
-         -o /usr/local/bin/wp && chmod +x /usr/local/bin/wp"
-    ])?;
+    common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "curl -fsSL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
+         -o /usr/local/bin/wp && chmod +x /usr/local/bin/wp",
+        ],
+    )?;
     Ok(())
 }
 
@@ -419,9 +503,8 @@ fn cmd_cli(vmid: &str, args: &[String]) -> Result<()> {
     ensure_wp_cli(vmid)?;
 
     let wp_args = args.join(" ");
-    let script = format!(
-        "export PATH=/usr/local/bin:$PATH; cd /var/www/html && wp {wp_args} --allow-root"
-    );
+    let script =
+        format!("export PATH=/usr/local/bin:$PATH; cd /var/www/html && wp {wp_args} --allow-root");
     common::pct_exec_passthrough(vmid, &["bash", "-c", &script])?;
     Ok(())
 }
@@ -446,22 +529,36 @@ fn resolve_targets(single: Option<&str>, csv: Option<&str>) -> Result<Vec<String
         return Ok(vec![v.to_string()]);
     }
     if let Some(list) = csv {
-        return Ok(list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
+        return Ok(list
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect());
     }
     // 자동 탐지 : Apache 설치 + WP 파일 존재한 LXC
     let listing = common::run_capture("pct", &["list"]).unwrap_or_default();
     let mut candidates = Vec::new();
     for line in listing.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
         let vmid = parts[0];
         let status = parts[1];
-        if status != "running" { continue; }
+        if status != "running" {
+            continue;
+        }
         // Apache + WordPress 감지
-        let check = common::pct_exec(vmid, &["bash", "-c",
-            "test -d /etc/apache2/conf-available && \
+        let check = common::pct_exec(
+            vmid,
+            &[
+                "bash",
+                "-c",
+                "test -d /etc/apache2/conf-available && \
              (test -f /var/www/html/wp-config.php || ls /var/www/*/wp-config.php >/dev/null 2>&1) \
-             && echo yes"]);
+             && echo yes",
+            ],
+        );
         if let Ok(out) = check {
             if out.trim() == "yes" {
                 candidates.push(vmid.to_string());
@@ -482,7 +579,9 @@ fn lxc_has_apache(vmid: &str) -> bool {
 }
 
 fn cmd_lockdown_apply(targets: &[String]) -> Result<()> {
-    if targets.is_empty() { bail!("적용 대상 없음"); }
+    if targets.is_empty() {
+        bail!("적용 대상 없음");
+    }
     println!("=== wp-admin lockdown 적용: {} 개 LXC ===\n", targets.len());
     let mut failed = Vec::new();
     for vmid in targets {
@@ -507,7 +606,18 @@ fn cmd_lockdown_apply(targets: &[String]) -> Result<()> {
         }
         // configtest
         let test_out = common::pct_exec(vmid, &["apachectl", "configtest"]).unwrap_or_default();
-        if !test_out.contains("Syntax OK") && !common::pct_exec(vmid, &["bash", "-c", "apachectl configtest 2>&1 | grep -q 'Syntax OK' && echo ok"]).map(|s| s.trim() == "ok").unwrap_or(false) {
+        if !test_out.contains("Syntax OK")
+            && !common::pct_exec(
+                vmid,
+                &[
+                    "bash",
+                    "-c",
+                    "apachectl configtest 2>&1 | grep -q 'Syntax OK' && echo ok",
+                ],
+            )
+            .map(|s| s.trim() == "ok")
+            .unwrap_or(false)
+        {
             eprintln!("[{vmid}] ✗ configtest 실패 — 롤백");
             let _ = common::pct_exec(vmid, &["a2disconf", LOCKDOWN_CONF_NAME]);
             failed.push(vmid.clone());
@@ -576,16 +686,28 @@ fn cmd_lockdown_test(vmid: &str, custom_host: Option<&str>, path: &str) -> Resul
     // LXC IP
     let ip = common::pct_exec(vmid, &["bash", "-c", "hostname -I | awk '{print $1}'"])?;
     let ip = ip.trim();
-    if ip.is_empty() { bail!("LXC {vmid} IP 조회 실패"); }
+    if ip.is_empty() {
+        bail!("LXC {vmid} IP 조회 실패");
+    }
     println!("=== lockdown 테스트: LXC {vmid} ({ip}) ===\n");
 
     let run_curl = |host: &str, p: &str| -> Result<u16> {
-        let out = common::run_capture("curl", &[
-            "-sk", "-o", "/dev/null", "-w", "%{http_code}",
-            "-H", &format!("Host: {host}"),
-            &format!("http://{ip}{p}"),
-        ])?;
-        out.trim().parse::<u16>().map_err(|e| anyhow::anyhow!("status parse: {e}"))
+        let out = common::run_capture(
+            "curl",
+            &[
+                "-sk",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-H",
+                &format!("Host: {host}"),
+                &format!("http://{ip}{p}"),
+            ],
+        )?;
+        out.trim()
+            .parse::<u16>()
+            .map_err(|e| anyhow::anyhow!("status parse: {e}"))
     };
 
     // 커스텀 호스트 지정 시 한 번만
@@ -596,10 +718,18 @@ fn cmd_lockdown_test(vmid: &str, custom_host: Option<&str>, path: &str) -> Resul
     }
 
     // 자동 : internal vhost 하나 뽑기
-    let internal_host = common::pct_exec(vmid, &["bash", "-c",
-        "grep -h ServerName /etc/apache2/sites-enabled/*.conf 2>/dev/null | \
-         awk '{print $2}' | grep internal.kr | head -1"])
-        .unwrap_or_default().trim().to_string();
+    let internal_host = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "grep -h ServerName /etc/apache2/sites-enabled/*.conf 2>/dev/null | \
+         awk '{print $2}' | grep internal.kr | head -1",
+        ],
+    )
+    .unwrap_or_default()
+    .trim()
+    .to_string();
 
     let mut failed = false;
     let expect = |desc: &str, host: &str, p: &str, want_block: bool| -> Result<bool> {
@@ -612,16 +742,58 @@ fn cmd_lockdown_test(vmid: &str, custom_host: Option<&str>, path: &str) -> Resul
     };
 
     if !internal_host.is_empty() {
-        if !expect("internal → wp-admin (통과)", &internal_host, "/wp-admin/", false)? { failed = true; }
-        if !expect("internal → admin-ajax (통과)", &internal_host, "/wp-admin/admin-ajax.php", false)? { failed = true; }
+        if !expect(
+            "internal → wp-admin (통과)",
+            &internal_host,
+            "/wp-admin/",
+            false,
+        )? {
+            failed = true;
+        }
+        if !expect(
+            "internal → admin-ajax (통과)",
+            &internal_host,
+            "/wp-admin/admin-ajax.php",
+            false,
+        )? {
+            failed = true;
+        }
     } else {
         println!("  (internal.kr vhost 없음 — internal 테스트 스킵)");
     }
 
-    if !expect("외부 → wp-admin (차단)", "evil.example.com", "/wp-admin/", true)? { failed = true; }
-    if !expect("외부 → wp-login (차단)", "evil.example.com", "/wp-login.php", true)? { failed = true; }
-    if !expect("외부 → xmlrpc (차단)", "evil.example.com", "/xmlrpc.php", true)? { failed = true; }
-    if !expect("외부 → admin-ajax (통과)", "evil.example.com", "/wp-admin/admin-ajax.php", false)? { failed = true; }
+    if !expect(
+        "외부 → wp-admin (차단)",
+        "evil.example.com",
+        "/wp-admin/",
+        true,
+    )? {
+        failed = true;
+    }
+    if !expect(
+        "외부 → wp-login (차단)",
+        "evil.example.com",
+        "/wp-login.php",
+        true,
+    )? {
+        failed = true;
+    }
+    if !expect(
+        "외부 → xmlrpc (차단)",
+        "evil.example.com",
+        "/xmlrpc.php",
+        true,
+    )? {
+        failed = true;
+    }
+    if !expect(
+        "외부 → admin-ajax (통과)",
+        "evil.example.com",
+        "/wp-admin/admin-ajax.php",
+        false,
+    )? {
+        failed = true;
+    }
 
     println!();
     if failed {

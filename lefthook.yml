@@ -1,0 +1,12 @@
+pre-commit:
+  parallel: true
+  commands:
+    no-python-mix:
+      run: bash scripts/check_no_python_mix.sh
+    repo-guard:
+      run: python3 scripts/check_repo_guard.py --staged
+    architecture-lint:
+      run: python3 scripts/check_architecture.py --staged
+    nickel-ssot:
+      glob: "{ncl/**/*.ncl,crates/domains/**/domain.ncl}"
+      run: nickel eval ncl/domains.ncl >/dev/null

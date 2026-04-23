@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# pxi-keyword-insight — keyword-insight Laravel 앱 + Playwright SERP sidecar 관리
+set -euo pipefail
+
+VMID="${KEYWORD_INSIGHT_VMID:-50190}"
+APP_ROOT="/var/www/html"
+SHARE_DIR="/usr/local/share/pxi-keyword-insight"
+PLAYWRIGHT_ROOT="/opt/playwright"
+PLAYWRIGHT_DOCKER_DIR="$PLAYWRIGHT_ROOT/docker"
+PLAYWRIGHT_PORT="${KEYWORD_INSIGHT_PLAYWRIGHT_PORT:-3000}"
+PLAYWRIGHT_PROXY_SERVER="${KEYWORD_INSIGHT_PROXY_SERVER:-}"
+PLAYWRIGHT_PROXY_USERNAME="${KEYWORD_INSIGHT_PROXY_USERNAME:-}"
+PLAYWRIGHT_PROXY_PASSWORD="${KEYWORD_INSIGHT_PROXY_PASSWORD:-}"
+XDESKTOP_VMID="${KEYWORD_INSIGHT_XDESKTOP_VMID:-50210}"
+XDESKTOP_URL="${KEYWORD_INSIGHT_XDESKTOP_URL:-https://xdesktop.50.internal.kr/}"
+
+c_r(){ printf '\033[0;31m%s\033[0m' "$*"; }
+c_g(){ printf '\033[0;32m%s\033[0m' "$*"; }
+c_b(){ printf '\033[0;34m%s\033[0m' "$*"; }
+c_y(){ printf '\033[0;33m%s\033[0m' "$*"; }
+ok()   { echo "$(c_g '✓') $*" >&2; }
+warn() { echo "$(c_y '⚠') $*" >&2; }
+die()  { echo "$(c_r '✗') $*" >&2; exit 1; }
+log()  { echo "$(c_b '[keyword-insight]') $*" >&2; }
+
+in_lxc()  { pct exec "$VMID" -- bash -lc "$*"; }
+
+require_up() {
+  pct config "$VMID" >/dev/null 2>&1 || die "LXC $VMID 없음"
+  [ "$(pct status "$VMID" 2>/dev/null | awk '{print $2}')" = "running" ] \
+    || die "LXC $VMID 중지됨. pct start $VMID"
+}
+
+set_env_key() {
+  local key="$1" value="$2"
+  in_lxc "
+    cd $APP_ROOT
+    python3 - <<'PY'
+from pathlib import Path
+path = Path('.env')
+key = ${key@Q}
+value = ${value@Q}
+lines = path.read_text().splitlines()
+found = False
+out = []
+for line in lines:
+    if line.startswith(key + '='):
+        out.append(f'{key}={value}')
+        found = True
+    else:
+        out.append(line)
+if not found:
+    out.append(f'{key}={value}')
+path.write_text('\\n'.join(out) + '\\n')
+PY
+  "
+}
+
+remove_env_key() {
+  local key="$1"
+  in_lxc "
+    cd $APP_ROOT
+    python3 - <<'PY'
+from pathlib import Path
+path = Path('.env')
+key = ${key@Q}
+lines = path.read_text().splitlines()
+filtered = [line for line in lines if not line.startswith(key + '=')]
+path.write_text('\\n'.join(filtered) + '\\n')
+PY
+  "
+}
+
+clear_legacy_gsc_env() {
+  remove_env_key "GSC_CLIENT_ID"
+  remove_env_key "GSC_CLIENT_SECRET"
+  remove_env_key "GSC_REFRESH_TOKEN"
+  remove_env_key "GSC_SITE_URL"
+  remove_env_key "GSC_SERVICE_ACCOUNT_JSON_PATH"
+}
+
+cmd_playwright_install() {
+  require_up
+  log "Playwright sidecar 설치"
+
+  in_lxc "mkdir -p $PLAYWRIGHT_DOCKER_DIR"
+  for f in Dockerfile package.json playwright.config.ts server.js; do
+    pct push "$VMID" "$SHARE_DIR/docker/$f" "$PLAYWRIGHT_DOCKER_DIR/$f" >/dev/null
+  done
+  pct push "$VMID" "$SHARE_DIR/playwright-api.service" /etc/systemd/system/playwright-api.service >/dev/null
+
+  in_lxc "
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends \
+      curl ca-certificates \
+      libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+      libxkbcommon0 libatspi2.0-0 libxcomposite1 libxdamage1 libxext6 \
+      libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+    cd $PLAYWRIGHT_DOCKER_DIR
+    npm install --omit=dev --no-audit --no-fund
+    npx --yes playwright install chromium
+    mkdir -p /etc/systemd/system/playwright-api.service.d
+    cat > /etc/systemd/system/playwright-api.service.d/proxy.conf <<EOF
+[Service]
+Environment=PROXY_SERVER=$PLAYWRIGHT_PROXY_SERVER
+Environment=PROXY_USERNAME=$PLAYWRIGHT_PROXY_USERNAME
+Environment=PROXY_PASSWORD=$PLAYWRIGHT_PROXY_PASSWORD
+EOF
+    systemctl daemon-reload
+    systemctl enable playwright-api
+    systemctl restart playwright-api
+    sleep 2
+    curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health >/dev/null
+  "
+
+  ok "Playwright API 설치 완료"
+}
+
+cmd_playwright_status() {
+  require_up
+  in_lxc "systemctl --no-pager --lines=0 status playwright-api 2>&1 | head -10"
+  echo
+  in_lxc "curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health"
+}
+
+cmd_playwright_logs() {
+  require_up
+  in_lxc "journalctl -u playwright-api -n ${1:-200} --no-pager"
+}
+
+cmd_playwright_restart() {
+  require_up
+  in_lxc "systemctl restart playwright-api && sleep 2 && curl -sf http://127.0.0.1:$PLAYWRIGHT_PORT/health"
+}
+
+cmd_install() {
+  local forward_args=()
+  local primary_domain=""
+  local naver_client_id=""
+  local naver_client_secret=""
+  local searxng_base_url=""
+  local do_playwright="yes"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --primary-domain) primary_domain="$2"; shift 2 ;;
+      --naver-client-id) naver_client_id="$2"; shift 2 ;;
+      --naver-client-secret) naver_client_secret="$2"; shift 2 ;;
+      --searxng-base-url) searxng_base_url="$2"; shift 2 ;;
+      --no-playwright) do_playwright="no"; shift ;;
+      --vmid) VMID="$2"; forward_args+=("$1" "$2"); shift 2 ;;
+      *) forward_args+=("$1"); shift ;;
+    esac
+  done
+
+  pxi-laravel install "${forward_args[@]}"
+
+  if [[ "$do_playwright" == "yes" ]]; then
+    cmd_playwright_install
+    set_env_key "PLAYWRIGHT_NAVIGATE_API_URL" "http://127.0.0.1:$PLAYWRIGHT_PORT/navigate"
+  fi
+
+  [[ -n "$primary_domain" ]] && set_env_key "PROJECT_PRIMARY_DOMAIN" "$primary_domain"
+  [[ -n "$naver_client_id" ]] && set_env_key "NAVER_OPEN_API_CLIENT_ID" "$naver_client_id"
+  [[ -n "$naver_client_secret" ]] && set_env_key "NAVER_OPEN_API_CLIENT_SECRET" "$naver_client_secret"
+  [[ -n "$searxng_base_url" ]] && set_env_key "SEARXNG_BASE_URL" "$searxng_base_url"
+  clear_legacy_gsc_env
+
+  pxi-laravel artisan "$VMID" config:clear >/dev/null 2>&1 || true
+  ok "keyword-insight 설치 후처리 완료"
+}
+
+cmd_status() { pxi-laravel status "$VMID"; }
+cmd_logs() { pxi-laravel logs "$VMID" "${1:-app}"; }
+cmd_artisan() { pxi-laravel artisan "$VMID" "$@"; }
+cmd_keywords_refresh() {
+  local limit="10"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit) limit="$2"; shift 2 ;;
+      --limit=*) limit="${1#*=}"; shift ;;
+      *) die "알 수 없는 keywords refresh 옵션: $1" ;;
+    esac
+  done
+  pxi-laravel artisan "$VMID" keywords:refresh --limit="$limit"
+}
+
+cmd_ranks_track() {
+  local project=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) project="$2"; shift 2 ;;
+      --project=*) project="${1#*=}"; shift ;;
+      *) die "알 수 없는 ranks track 옵션: $1" ;;
+    esac
+  done
+  if [[ -n "$project" ]]; then
+    pxi-laravel artisan "$VMID" ranks:track --project="$project"
+  else
+    pxi-laravel artisan "$VMID" ranks:track
+  fi
+}
+
+cmd_ranks_stats() {
+  require_up
+  in_lxc "mariadb keyword_insight -e \"
+    SELECT p.id, p.name, p.engine, p.tracked_url, COUNT(k.id) AS keywords
+    FROM rank_tracking_projects p
+    LEFT JOIN tracked_keywords k ON k.rank_tracking_project_id = p.id
+    GROUP BY p.id, p.name, p.engine, p.tracked_url
+    ORDER BY p.id;
+    SELECT tk.keyword, rs.position, LEFT(rs.matched_url, 90) AS matched_url, rs.captured_at
+    FROM rank_snapshots rs
+    JOIN tracked_keywords tk ON tk.id = rs.tracked_keyword_id
+    ORDER BY rs.captured_at DESC
+    LIMIT 20;\""
+}
+cmd_update() {
+  local searxng_base_url=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --vmid) VMID="$2"; shift 2 ;;
+      --searxng-base-url) searxng_base_url="$2"; shift 2 ;;
+      *) die "알 수 없는 update 옵션: $1" ;;
+    esac
+  done
+
+  pxi-laravel update "$VMID"
+  [[ -n "$searxng_base_url" ]] && set_env_key "SEARXNG_BASE_URL" "$searxng_base_url"
+  clear_legacy_gsc_env
+  pxi-laravel artisan "$VMID" config:clear >/dev/null 2>&1 || true
+  ok "keyword-insight update 후처리 완료"
+}
+cmd_doctor() { pxi-laravel doctor "$VMID"; }
+cmd_shell() { require_up; pct enter "$VMID"; }
+
+cmd_blackkiwi_open() {
+  local keyword="제주도 숙소 추천"
+  local url=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --keyword) keyword="$2"; shift 2 ;;
+      --url) url="$2"; shift 2 ;;
+      --xdesktop-vmid) XDESKTOP_VMID="$2"; shift 2 ;;
+      *) die "알 수 없는 blackkiwi open 옵션: $1" ;;
+    esac
+  done
+
+  pct config "$XDESKTOP_VMID" >/dev/null 2>&1 || die "xdesktop LXC $XDESKTOP_VMID 없음"
+  if [[ "$(pct status "$XDESKTOP_VMID" 2>/dev/null | awk '{print $2}')" != "running" ]]; then
+    pct start "$XDESKTOP_VMID" >/dev/null
+    sleep 3
+  fi
+
+  if [[ -z "$url" ]]; then
+    url="$(python3 - "$keyword" <<'PY'
+import sys
+from urllib.parse import quote
+keyword = sys.argv[1]
+print("https://blackkiwi.net/service/keyword-analysis?keyword="+quote(keyword)+"&platform=naver")
+PY
+)"
+  fi
+
+  pct exec "$XDESKTOP_VMID" -- bash -lc "
+    runuser -u xuser -- env DISPLAY=:100 XDG_RUNTIME_DIR=/run/user/1000 \
+      helium ${url@Q} >/tmp/blackkiwi-helium.log 2>&1 &
+  "
+
+  ok "BlackKiwi 브라우저 세션 준비 완료"
+  echo "열기: $XDESKTOP_URL"
+  echo "브라우저 안에서 reCAPTCHA 체크 후 로그인/검색을 직접 진행하세요."
+}
+
+usage() {
+  cat <<EOF
+pxi-keyword-insight — keyword-insight LXC + Playwright SERP 관리
+
+Usage:
+  pxi-keyword-insight install [pxi-laravel install args...] [--primary-domain D] [--naver-client-id ID] [--naver-client-secret SECRET] [--searxng-base-url URL] [--no-playwright]
+  pxi-keyword-insight status
+  pxi-keyword-insight logs [app|nginx|php|error]
+  pxi-keyword-insight artisan <args...>
+  pxi-keyword-insight update [--vmid N] [--searxng-base-url URL]
+  pxi-keyword-insight doctor
+  pxi-keyword-insight shell
+
+  pxi-keyword-insight keywords refresh [--limit N]
+  pxi-keyword-insight ranks track [--project ID]
+  pxi-keyword-insight ranks stats
+
+  pxi-keyword-insight blackkiwi open [--keyword K] [--url URL] [--xdesktop-vmid N]
+
+  pxi-keyword-insight playwright install
+  pxi-keyword-insight playwright status
+  pxi-keyword-insight playwright logs [N]
+  pxi-keyword-insight playwright restart
+
+환경변수:
+  KEYWORD_INSIGHT_VMID
+  KEYWORD_INSIGHT_PLAYWRIGHT_PORT
+  KEYWORD_INSIGHT_PROXY_SERVER
+  KEYWORD_INSIGHT_PROXY_USERNAME
+  KEYWORD_INSIGHT_PROXY_PASSWORD
+  KEYWORD_INSIGHT_XDESKTOP_VMID
+  KEYWORD_INSIGHT_XDESKTOP_URL
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  install) cmd_install "$@" ;;
+  status) cmd_status ;;
+  logs) cmd_logs "$@" ;;
+  artisan) cmd_artisan "$@" ;;
+  keywords)
+    sub="${1:-refresh}"
+    shift || true
+    case "$sub" in
+      refresh) cmd_keywords_refresh "$@" ;;
+      *) usage; die "알 수 없는 keywords 서브커맨드: $sub" ;;
+    esac
+    ;;
+  ranks|rank)
+    sub="${1:-stats}"
+    shift || true
+    case "$sub" in
+      track) cmd_ranks_track "$@" ;;
+      stats|status) cmd_ranks_stats "$@" ;;
+      *) usage; die "알 수 없는 ranks 서브커맨드: $sub" ;;
+    esac
+    ;;
+  update) cmd_update ;;
+  doctor) cmd_doctor ;;
+  shell) cmd_shell ;;
+  blackkiwi|bk)
+    sub="${1:-open}"
+    shift || true
+    case "$sub" in
+      open) cmd_blackkiwi_open "$@" ;;
+      *) usage; die "알 수 없는 blackkiwi 서브커맨드: $sub" ;;
+    esac
+    ;;
+  playwright|pw)
+    sub="${1:-status}"
+    shift || true
+    case "$sub" in
+      install) cmd_playwright_install ;;
+      status) cmd_playwright_status ;;
+      logs) cmd_playwright_logs "$@" ;;
+      restart) cmd_playwright_restart ;;
+      *) usage; die "알 수 없는 playwright 서브커맨드: $sub" ;;
+    esac
+    ;;
+  help|-h|--help|"") usage ;;
+  *) usage; die "알 수 없는 명령: $cmd" ;;
+esac

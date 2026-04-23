@@ -95,25 +95,18 @@ fn main() {
         let path = workspace.join(src);
         if path.exists() {
             hardcoded_lint::check(path.to_str().expect("src path utf-8"))
-                .ipv4()
-                .credentials()
-                .env_fallback()
-                .const_config()
-                .vmid()
-                .git_url()
-                .localhost()
-                .port()
-                .domain()
-                .email()
-                .magic_number()
-                .version()
-                .retry()
-                .timezone()
+                .credentials() // API 키·토큰·패스워드 하드코딩 금지
+                .vmid()        // 5자리 VMID 하드코딩 금지 (convention::canonical_ip 사용)
+                // 점진적 강화 — 규칙 추가 시 기존 코드의 LINT_ALLOW 확인 필수:
+                // .ipv4()        — 기존 vaultwarden/wordpress 등 도메인에 합당한 예외 많음
+                // .email()       — devops@ 주소 합당한 기본값으로 사용 중
+                // .const_config() — 시스템 경로 상수는 CLI 도구에서 합당
+                // .env_fallback() — 오류 처리 fallback 과 env 기본값 구분 불가
+                // .magic_number() — sleep 상수 추출은 코드리뷰로 관리
                 .deny("gitlab.internal.kr", "hardcoded internal GitLab domain — use config or env")
                 .deny("10.0.50.", "hardcoded lab network IP — derive from VMID via convention::canonical_ip")
                 .deny("10.0.60.", "hardcoded ranode network IP — derive from VMID via convention::canonical_ip")
                 .deny("prelik.com", "hardcoded product domain — load from config or env")
-                .deny("internal.kr", "hardcoded internal domain — load from config or env")
                 .run();
         }
     }

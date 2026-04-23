@@ -6,10 +6,14 @@ use pxi_core::common;
 use pxi_core::helpers;
 
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "pxi-workspace", about = "작업 환경 (tmux + shell 도구 + LXC 환경)")]
+#[command(
+    name = "pxi-workspace",
+    about = "작업 환경 (tmux + shell 도구 + LXC 환경)"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -21,6 +25,8 @@ enum Cmd {
     TmuxSetup,
     /// tmux 세션 시작 (계정별 윈도우)
     TmuxStart,
+    /// tmux 접근 진단 (서버/소켓/TTY/attach 가능성)
+    TmuxDoctor,
     /// shell alias + 편의 도구 설정 (BEGIN/END 마커 관리)
     ShellSetup,
     /// Markdown 전용 Neovim 프로필 설치 (mdnvim wrapper + Marksman + preview)
@@ -95,6 +101,11 @@ __pxi_tmux_jump() {
         target=$(tmux list-sessions -F '#{session_activity} #{session_name}' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
         [ -n "$target" ] && tmux switch-client -t ="$target"
     else
+        if ! [ -t 0 ] || ! [ -t 1 ]; then
+            printf '%s\n' 'pxi: 현재 셸은 TTY가 없어 tmux attach 를 할 수 없습니다. SSH/interactive shell에서 다시 실행하세요.' >&2
+            tmux list-sessions 2>/dev/null >&2 || true
+            return 1
+        fi
         tmux attach -t ="$n" 2>/dev/null && return
         target=$(tmux list-sessions -F '#{session_activity} #{session_name}' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
         if [ -n "$target" ]; then
@@ -113,8 +124,14 @@ unset _n
 
 const TMUX_PLUGINS: &[(&str, &str)] = &[
     ("tpm", "https://github.com/tmux-plugins/tpm"),
-    ("tmux-resurrect", "https://github.com/tmux-plugins/tmux-resurrect"),
-    ("tmux-continuum", "https://github.com/tmux-plugins/tmux-continuum"),
+    (
+        "tmux-resurrect",
+        "https://github.com/tmux-plugins/tmux-resurrect",
+    ),
+    (
+        "tmux-continuum",
+        "https://github.com/tmux-plugins/tmux-continuum",
+    ),
 ];
 
 const TMUX_CONF: &str = "\
@@ -158,7 +175,13 @@ const MDNVIM_APPNAME: &str = "mdnvim";
 const MDNVIM_WRAPPER: &str = "/usr/local/bin/mdnvim";
 const MDNVIM_MARKER: &str = "-- pxi-workspace mdnvim";
 const MDNVIM_PACKAGES: &[&str] = &[
-    "neovim", "git", "curl", "ripgrep", "fd-find", "unzip", "build-essential",
+    "neovim",
+    "git",
+    "curl",
+    "ripgrep",
+    "fd-find",
+    "unzip",
+    "build-essential",
 ];
 
 const LXC_GITHUB_TOOLS: &[(&str, &str)] = &[
@@ -174,12 +197,22 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::TmuxSetup => tmux_setup(),
         Cmd::TmuxStart => tmux_start(),
+        Cmd::TmuxDoctor => {
+            tmux_doctor();
+            Ok(())
+        }
         Cmd::ShellSetup => shell_setup(),
         Cmd::NvimMarkdown { profile } => nvim_markdown_setup(&profile),
         Cmd::LxcShell { vmid } => lxc_shell_setup(&vmid),
         Cmd::LxcTmux { vmid } => lxc_tmux_setup(&vmid),
-        Cmd::Status => { status(); Ok(()) }
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Status => {
+            status();
+            Ok(())
+        }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -198,8 +231,12 @@ fn tmux_setup() -> anyhow::Result<()> {
 
     let conf_path = home.join(".tmux.conf");
     if conf_path.exists() {
-        let backup = home.join(format!(".tmux.conf.pxi-backup-{}",
-            common::run("date", &["+%Y%m%d-%H%M%S"]).unwrap_or_default().trim()));
+        let backup = home.join(format!(
+            ".tmux.conf.pxi-backup-{}",
+            common::run("date", &["+%Y%m%d-%H%M%S"])
+                .unwrap_or_default()
+                .trim()
+        ));
         fs::copy(&conf_path, &backup)?;
         println!("  백업: {}", backup.display());
     }
@@ -237,9 +274,7 @@ fn tmux_start() -> anyhow::Result<()> {
     }
 
     // 기본 세션 생성
-    common::run_bash(&format!(
-        "tmux new-session -d -s {TMUX_SESSION} -n main"
-    ))?;
+    common::run_bash(&format!("tmux new-session -d -s {TMUX_SESSION} -n main"))?;
     println!("[tmux] 세션 '{TMUX_SESSION}' 생성 완료");
     println!("\n접속: tmux attach -t {TMUX_SESSION}");
     Ok(())
@@ -304,12 +339,17 @@ fn install_shell_tools() -> anyhow::Result<()> {
     }
     let pkgs = missing.iter().map(|p| **p).collect::<Vec<_>>().join(" ");
     println!("[apt] 셸 도구 설치 중: {pkgs}");
-    common::run_bash(&format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"))?;
+    common::run_bash(&format!(
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"
+    ))?;
     Ok(())
 }
 
 fn pkg_installed(pkg: &str) -> bool {
-    common::run_bash(&format!("dpkg -s {pkg} 2>/dev/null | grep -q 'Status.*installed'")).is_ok()
+    common::run_bash(&format!(
+        "dpkg -s {pkg} 2>/dev/null | grep -q 'Status.*installed'"
+    ))
+    .is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +384,12 @@ fn reconcile_bashrc(existing: &str) -> (String, ReconcileAction) {
     let had_legacy = stripped_old.len() != stripped_managed.len();
 
     let mut content = stripped_old;
-    while content.ends_with("\n\n") { content.pop(); }
-    if !content.is_empty() && !content.ends_with('\n') { content.push('\n'); }
+    while content.ends_with("\n\n") {
+        content.pop();
+    }
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
     content.push_str(ALIAS_BLOCK);
 
     if content == existing {
@@ -383,7 +427,9 @@ fn strip_block_between(input: &str, begin: &str, end: &str) -> String {
         return input[..block_start].to_string();
     };
     let abs_end = begin_pos + rel_end + end.len();
-    let tail_start = input[abs_end..].find('\n').map_or(input.len(), |i| abs_end + i + 1);
+    let tail_start = input[abs_end..]
+        .find('\n')
+        .map_or(input.len(), |i| abs_end + i + 1);
     let mut out = String::with_capacity(input.len());
     out.push_str(&input[..block_start]);
     out.push_str(&input[tail_start..]);
@@ -400,11 +446,17 @@ fn strip_legacy_tmux_loops(input: &str) -> String {
             let block_start = result[..pos].rfind('\n').map_or(0, |i| {
                 let line_before = result[..i].rfind('\n').map_or(0, |j| j + 1);
                 let line = &result[line_before..i];
-                if line.trim().starts_with('#') { line_before } else { i + 1 }
+                if line.trim().starts_with('#') {
+                    line_before
+                } else {
+                    i + 1
+                }
             });
             if let Some(end_pos) = result[pos..].find("unset _n") {
                 let abs_end = pos + end_pos + "unset _n".len();
-                let tail_start = result[abs_end..].find('\n').map_or(result.len(), |i| abs_end + i + 1);
+                let tail_start = result[abs_end..]
+                    .find('\n')
+                    .map_or(result.len(), |i| abs_end + i + 1);
                 result = format!("{}{}", &result[..block_start], &result[tail_start..]);
                 continue;
             }
@@ -414,7 +466,9 @@ fn strip_legacy_tmux_loops(input: &str) -> String {
             let block_start = result[..pos].rfind('\n').map_or(0, |i| i + 1);
             if let Some(end_pos) = result[pos..].find("unset _n") {
                 let abs_end = pos + end_pos + "unset _n".len();
-                let tail_start = result[abs_end..].find('\n').map_or(result.len(), |i| abs_end + i + 1);
+                let tail_start = result[abs_end..]
+                    .find('\n')
+                    .map_or(result.len(), |i| abs_end + i + 1);
                 result = format!("{}{}", &result[..block_start], &result[tail_start..]);
                 continue;
             }
@@ -444,10 +498,17 @@ fn nvim_markdown_setup(profile: &MarkdownProfile) -> anyhow::Result<()> {
 }
 
 fn install_mdnvim_packages() -> anyhow::Result<()> {
-    let missing: Vec<&&str> = MDNVIM_PACKAGES.iter().filter(|p| !pkg_installed(p)).collect();
-    if missing.is_empty() { return Ok(()); }
+    let missing: Vec<&&str> = MDNVIM_PACKAGES
+        .iter()
+        .filter(|p| !pkg_installed(p))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
     let pkgs = missing.iter().map(|p| **p).collect::<Vec<_>>().join(" ");
-    common::run_bash(&format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"))?;
+    common::run_bash(&format!(
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"
+    ))?;
     Ok(())
 }
 
@@ -703,7 +764,10 @@ fn lxc_shell_setup(vmid: &str) -> anyhow::Result<()> {
         let arch = match arch_raw.trim() {
             "x86_64" => "x86_64",
             "aarch64" | "arm64" => "arm64",
-            other => { eprintln!("[{name}] 지원하지 않는 아키텍처: {other}"); continue; }
+            other => {
+                eprintln!("[{name}] 지원하지 않는 아키텍처: {other}");
+                continue;
+            }
         };
         let script = format!(
             "TAG=$(curl -sL https://api.github.com/repos/{repo}/releases/latest | grep '\"tag_name\"' | head -1 | cut -d'\"' -f4) && \
@@ -738,10 +802,17 @@ fn lxc_shell_setup(vmid: &str) -> anyhow::Result<()> {
     let git_name = helpers::read_host_env("GIT_AUTHOR_NAME");
     let git_email = helpers::read_host_env("GIT_AUTHOR_EMAIL");
     if !git_name.is_empty() {
-        let current = lxc_exec(vmid, &["bash", "-c", "git config --global user.name 2>/dev/null"]).unwrap_or_default();
+        let current = lxc_exec(
+            vmid,
+            &["bash", "-c", "git config --global user.name 2>/dev/null"],
+        )
+        .unwrap_or_default();
         if current.trim() != git_name {
             lxc_exec(vmid, &["git", "config", "--global", "user.name", &git_name])?;
-            lxc_exec(vmid, &["git", "config", "--global", "user.email", &git_email])?;
+            lxc_exec(
+                vmid,
+                &["git", "config", "--global", "user.email", &git_email],
+            )?;
             println!("[git] author 설정 완료 ({git_name} <{git_email}>)");
         } else {
             println!("[git] author 이미 설정됨 ({git_name})");
@@ -783,8 +854,14 @@ fn lxc_tmux_setup(vmid: &str) -> anyhow::Result<()> {
     } else {
         println!("[tmux] .tmux.conf 배포 중...");
         let escaped = TMUX_CONF.replace('\'', "'\\''");
-        lxc_exec(vmid, &["bash", "-c",
-            &format!("printf '%s' '{escaped}' > /root/.tmux.conf")])?;
+        lxc_exec(
+            vmid,
+            &[
+                "bash",
+                "-c",
+                &format!("printf '%s' '{escaped}' > /root/.tmux.conf"),
+            ],
+        )?;
         println!("[tmux] .tmux.conf 배포 완료");
     }
 
@@ -801,7 +878,10 @@ fn status() {
 
     let home = match home_dir() {
         Ok(h) => h,
-        Err(e) => { eprintln!("HOME 미설정: {e}"); return; }
+        Err(e) => {
+            eprintln!("HOME 미설정: {e}");
+            return;
+        }
     };
 
     println!("[CLI 도구]");
@@ -811,10 +891,20 @@ fn status() {
 
     println!("\n[tmux]");
     let tmux_conf = home.join(".tmux.conf");
-    println!("  .tmux.conf: {}", if tmux_conf.exists() { "+" } else { "- (pxi run workspace tmux-setup)" });
+    println!(
+        "  .tmux.conf: {}",
+        if tmux_conf.exists() {
+            "+"
+        } else {
+            "- (pxi run workspace tmux-setup)"
+        }
+    );
 
     let session_ok = common::run("tmux", &["has-session", "-t", TMUX_SESSION]).is_ok();
-    println!("  세션 '{TMUX_SESSION}': {}", if session_ok { "+ 실행중" } else { "-" });
+    println!(
+        "  세션 '{TMUX_SESSION}': {}",
+        if session_ok { "+ 실행중" } else { "-" }
+    );
 
     if let Ok(out) = common::run_bash("tmux ls 2>/dev/null | wc -l") {
         println!("  tmux 세션 총: {}개", out.trim());
@@ -831,17 +921,161 @@ fn status() {
     if bashrc.exists() {
         let content = fs::read_to_string(&bashrc).unwrap_or_default();
         let has_block = content.contains(ALIAS_BEGIN);
-        println!("  managed block: {}", if has_block { "+" } else { "- (pxi run workspace shell-setup)" });
+        println!(
+            "  managed block: {}",
+            if has_block {
+                "+"
+            } else {
+                "- (pxi run workspace shell-setup)"
+            }
+        );
     } else {
         println!("  .bashrc: - (없음)");
     }
     let alias_file = home.join(".bashrc.d/pxi.sh");
-    println!("  bashrc.d/pxi.sh: {}", if alias_file.exists() { "+" } else { "-" });
+    println!(
+        "  bashrc.d/pxi.sh: {}",
+        if alias_file.exists() { "+" } else { "-" }
+    );
 
     println!("\n[mdnvim]");
-    println!("  wrapper ({}): {}", MDNVIM_WRAPPER, if Path::new(MDNVIM_WRAPPER).exists() { "+" } else { "-" });
+    println!(
+        "  wrapper ({}): {}",
+        MDNVIM_WRAPPER,
+        if Path::new(MDNVIM_WRAPPER).exists() {
+            "+"
+        } else {
+            "-"
+        }
+    );
     let mdnvim_config = home.join(format!(".config/{MDNVIM_APPNAME}/init.lua"));
-    println!("  config: {}", if mdnvim_config.exists() { "+" } else { "-" });
+    println!(
+        "  config: {}",
+        if mdnvim_config.exists() { "+" } else { "-" }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// tmux doctor
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum TmuxAccessState {
+    MissingBinary,
+    ServerUnavailable,
+    InsideTmuxNonTty,
+    OutsideTmuxNonTty,
+    InsideTmuxInteractive,
+    OutsideTmuxInteractive,
+}
+
+fn tmux_doctor() {
+    println!("=== pxi-workspace tmux-doctor ===");
+
+    let has_tmux = common::has_cmd("tmux");
+    println!("  {} tmux binary", if has_tmux { "+" } else { "-" });
+    if !has_tmux {
+        println!("\n진단: tmux 미설치");
+        println!("다음 단계: sudo apt install -y tmux");
+        return;
+    }
+
+    let tmux_env = std::env::var("TMUX").ok();
+    let inside_tmux = tmux_env.is_some();
+    let stdin_tty = io::stdin().is_terminal();
+    let stdout_tty = io::stdout().is_terminal();
+    let stderr_tty = io::stderr().is_terminal();
+    let interactive_tty = stdin_tty && stdout_tty;
+    let socket_hint = tmux_env.as_deref().and_then(tmux_socket_from_env);
+    let server_reachable = common::run("tmux", &["ls"]).is_ok();
+    let session_ok = common::run("tmux", &["has-session", "-t", TMUX_SESSION]).is_ok();
+
+    println!(
+        "  {} tmux server reachable",
+        if server_reachable { "+" } else { "-" }
+    );
+    if let Some(socket) = socket_hint {
+        println!("  + TMUX env socket: {socket}");
+    } else {
+        println!("  - TMUX env socket");
+    }
+    println!("  {} inside tmux env", if inside_tmux { "+" } else { "-" });
+    println!(
+        "  {} stdin tty / {} stdout tty / {} stderr tty",
+        if stdin_tty { "+" } else { "-" },
+        if stdout_tty { "+" } else { "-" },
+        if stderr_tty { "+" } else { "-" }
+    );
+    println!(
+        "  {} session '{TMUX_SESSION}'",
+        if session_ok { "+ running" } else { "- missing" }
+    );
+
+    match tmux_access_state(has_tmux, server_reachable, inside_tmux, interactive_tty) {
+        TmuxAccessState::MissingBinary => unreachable!(),
+        TmuxAccessState::ServerUnavailable => {
+            println!("\n진단: tmux 서버/세션 접근 불가");
+            println!("설명: attach 실패의 원인이 TTY가 아니라 서버/세션 부재일 가능성이 큽니다.");
+            println!(
+                "다음 단계: `pxi run workspace tmux-start` 또는 `tmux new-session -d -s {TMUX_SESSION}`"
+            );
+        }
+        TmuxAccessState::InsideTmuxNonTty => {
+            println!("\n진단: tmux 내부 컨텍스트이지만 현재 프로세스는 비TTY");
+            println!(
+                "설명: 서버와 소켓은 살아 있지만, 현재 실행 경로(훅/자동화/비대화식 runner)는 attach/switch-client 같은 클라이언트 동작을 수행할 터미널이 없습니다."
+            );
+            println!(
+                "다음 단계: 진단은 이 프로세스에서 계속하고, attach 는 실제 SSH 셸이나 터미널에서 실행하세요."
+            );
+        }
+        TmuxAccessState::OutsideTmuxNonTty => {
+            println!("\n진단: 현재 프로세스는 비TTY라 tmux attach 불가");
+            println!(
+                "설명: tmux 서버는 응답하지만, 지금 프로세스에는 붙을 terminal 이 없어 `open terminal failed: not a terminal` 이 발생합니다."
+            );
+            println!(
+                "다음 단계: SSH/interactive shell에서 `tmux attach -t {TMUX_SESSION}` 또는 `tmux attach -t <session>` 실행"
+            );
+        }
+        TmuxAccessState::InsideTmuxInteractive => {
+            println!("\n진단: interactive tmux 내부");
+            println!(
+                "설명: attach 보다 `tmux switch-client`, `tmux new-window`, `tmux select-window` 계열이 더 맞습니다."
+            );
+        }
+        TmuxAccessState::OutsideTmuxInteractive => {
+            println!("\n진단: interactive shell에서 tmux attach 가능");
+            println!(
+                "설명: 현재 프로세스는 terminal 을 갖고 있어 attach 자체는 가능한 상태입니다. 세션 이름/소켓/권한만 맞으면 됩니다."
+            );
+            println!("다음 단계: `tmux attach -t {TMUX_SESSION}` 또는 `tmux ls` 로 세션명 확인");
+        }
+    }
+}
+
+fn tmux_socket_from_env(tmux_env: &str) -> Option<&str> {
+    tmux_env.split(',').next().filter(|value| !value.is_empty())
+}
+
+fn tmux_access_state(
+    has_tmux: bool,
+    server_reachable: bool,
+    inside_tmux: bool,
+    interactive_tty: bool,
+) -> TmuxAccessState {
+    if !has_tmux {
+        return TmuxAccessState::MissingBinary;
+    }
+    if !server_reachable {
+        return TmuxAccessState::ServerUnavailable;
+    }
+    match (inside_tmux, interactive_tty) {
+        (true, false) => TmuxAccessState::InsideTmuxNonTty,
+        (false, false) => TmuxAccessState::OutsideTmuxNonTty,
+        (true, true) => TmuxAccessState::InsideTmuxInteractive,
+        (false, true) => TmuxAccessState::OutsideTmuxInteractive,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -864,7 +1098,35 @@ fn doctor() {
     ] {
         println!("  {} {name}", if common::has_cmd(cmd) { "+" } else { "-" });
     }
+    println!();
+    tmux_doctor();
     println!("\n선택 도구 설치: sudo apt install -y bat eza fd-find fzf zoxide");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tmux_access_state, tmux_socket_from_env, TmuxAccessState};
+
+    #[test]
+    fn parse_tmux_socket_from_env() {
+        assert_eq!(
+            tmux_socket_from_env("/tmp/tmux-0/default,3390920,0"),
+            Some("/tmp/tmux-0/default")
+        );
+        assert_eq!(tmux_socket_from_env(""), None);
+    }
+
+    #[test]
+    fn classify_non_tty_outside_tmux() {
+        let state = tmux_access_state(true, true, false, false);
+        assert!(matches!(state, TmuxAccessState::OutsideTmuxNonTty));
+    }
+
+    #[test]
+    fn classify_non_tty_inside_tmux() {
+        let state = tmux_access_state(true, true, true, false);
+        assert!(matches!(state, TmuxAccessState::InsideTmuxNonTty));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -895,8 +1157,7 @@ fn lxc_install_packages(vmid: &str, packages: &[&str]) -> anyhow::Result<()> {
 
 /// Pure base64 encoder (RFC 4648).
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;

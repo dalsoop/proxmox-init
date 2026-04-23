@@ -9,7 +9,10 @@ pub fn is_installed() -> bool {
 }
 
 pub fn encrypt(env_path: &Path) -> anyhow::Result<()> {
-    common::run("dotenvx", &["encrypt", "-f", &env_path.display().to_string()])?;
+    common::run(
+        "dotenvx",
+        &["encrypt", "-f", &env_path.display().to_string()],
+    )?;
     Ok(())
 }
 

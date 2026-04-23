@@ -42,9 +42,13 @@ enum Cmd {
         force: bool,
     },
     /// 스냅샷 삭제
-    Delete { id: String },
+    Delete {
+        id: String,
+    },
     /// audit log에 메시지 추가
-    AuditLog { message: String },
+    AuditLog {
+        message: String,
+    },
     /// audit log tail
     AuditShow {
         #[arg(long, default_value = "20")]
@@ -79,12 +83,26 @@ fn main() -> anyhow::Result<()> {
 
 fn doctor() -> anyhow::Result<()> {
     println!("=== pxi-recovery doctor ===");
-    println!("  snapshot dir : {} ({})", SNAPSHOT_DIR, mark(Path::new(SNAPSHOT_DIR).exists()));
-    println!("  audit log    : {} ({})", AUDIT_LOG, mark(Path::new(AUDIT_LOG).exists()));
+    println!(
+        "  snapshot dir : {} ({})",
+        SNAPSHOT_DIR,
+        mark(Path::new(SNAPSHOT_DIR).exists())
+    );
+    println!(
+        "  audit log    : {} ({})",
+        AUDIT_LOG,
+        mark(Path::new(AUDIT_LOG).exists())
+    );
     println!("  pvecm        : {}", mark(common::has_cmd("pvecm")));
     Ok(())
 }
-fn mark(b: bool) -> &'static str { if b { "✓" } else { "✗" } }
+fn mark(b: bool) -> &'static str {
+    if b {
+        "✓"
+    } else {
+        "✗"
+    }
+}
 
 fn ensure_dirs() -> anyhow::Result<()> {
     fs::create_dir_all(SNAPSHOT_DIR)?;
@@ -95,7 +113,10 @@ fn ensure_dirs() -> anyhow::Result<()> {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn snapshot_path(id: &str) -> anyhow::Result<PathBuf> {
@@ -110,11 +131,17 @@ fn reserve_snapshot_id() -> anyhow::Result<String> {
     use std::os::unix::fs::OpenOptionsExt;
     let base = now_secs();
     for n in 0u32..1000 {
-        let id = if n == 0 { base.to_string() } else { format!("{base}-{n}") };
+        let id = if n == 0 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
         let p = PathBuf::from(SNAPSHOT_DIR).join(format!("{id}.json"));
         // O_EXCL: 이미 존재하면 실패 — 동시 create 경합에서 한 쪽만 성공.
         let res = fs::OpenOptions::new()
-            .write(true).create_new(true).mode(0o600)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
             .open(&p);
         match res {
             Ok(_) => return Ok(id),
@@ -133,13 +160,16 @@ fn collect_lxc_configs(node: &str) -> anyhow::Result<HashMap<String, String>> {
     let mut map = HashMap::new();
     // 개별 entry/read 실패도 fail-fast — 부분 백업으로 '안전망' 위장 금지.
     for entry in entries {
-        let entry = entry
-            .map_err(|e| anyhow::anyhow!("디렉토리 entry 읽기 실패 {dir}: {e}"))?;
+        let entry = entry.map_err(|e| anyhow::anyhow!("디렉토리 entry 읽기 실패 {dir}: {e}"))?;
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("conf") { continue; }
+        if path.extension().and_then(|e| e.to_str()) != Some("conf") {
+            continue;
+        }
         let content = fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("config 읽기 실패 {}: {e}", path.display()))?;
-        let name = path.file_name().and_then(|n| n.to_str())
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
             .ok_or_else(|| anyhow::anyhow!("config filename 추출 실패: {}", path.display()))?
             .to_string();
         map.insert(name, content);
@@ -149,11 +179,16 @@ fn collect_lxc_configs(node: &str) -> anyhow::Result<HashMap<String, String>> {
 
 // 노드 이름 검증 — '.'/'..' 와 path separator 차단.
 fn validate_node(node: &str) -> anyhow::Result<()> {
-    if node.is_empty() { anyhow::bail!("node 이름 비어 있음"); }
+    if node.is_empty() {
+        anyhow::bail!("node 이름 비어 있음");
+    }
     if node == "." || node == ".." {
         anyhow::bail!("node 이름이 디렉토리 참조: {node:?}");
     }
-    if !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !node
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         anyhow::bail!("node 이름은 [A-Za-z0-9_-]만 허용 (.도 차단): {node:?}");
     }
     Ok(())
@@ -163,10 +198,14 @@ fn validate_node(node: &str) -> anyhow::Result<()> {
 // fallback으로 /etc/hostname.
 fn detect_node() -> anyhow::Result<String> {
     if common::has_cmd("pvesh") {
-        let out = common::run("pvesh", &["get", "/cluster/status", "--output-format", "json"]);
+        let out = common::run(
+            "pvesh",
+            &["get", "/cluster/status", "--output-format", "json"],
+        );
         if let Ok(text) = out {
             if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&text) {
-                if let Some(local) = arr.iter()
+                if let Some(local) = arr
+                    .iter()
                     .find(|v| v["type"].as_str() == Some("node") && v["local"].as_i64() == Some(1))
                     .and_then(|v| v["name"].as_str())
                 {
@@ -176,14 +215,21 @@ fn detect_node() -> anyhow::Result<String> {
         }
     }
     let h = fs::read_to_string("/etc/hostname")?.trim().to_string();
-    if h.is_empty() { anyhow::bail!("노드 이름 감지 실패 (/etc/hostname 비어 있음)"); }
+    if h.is_empty() {
+        anyhow::bail!("노드 이름 감지 실패 (/etc/hostname 비어 있음)");
+    }
     Ok(h)
 }
 
 // id는 안전한 문자만 허용 — path traversal/외부 디렉토리 접근 차단.
 fn validate_id(id: &str) -> anyhow::Result<()> {
-    if id.is_empty() { anyhow::bail!("snapshot id가 비어 있음"); }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if id.is_empty() {
+        anyhow::bail!("snapshot id가 비어 있음");
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         anyhow::bail!("snapshot id는 [A-Za-z0-9_-]만 허용: {id:?}");
     }
     Ok(())
@@ -191,7 +237,9 @@ fn validate_id(id: &str) -> anyhow::Result<()> {
 
 // snapshot 내부 LXC config filename 검증 — Path::file_name과 일치해야 traversal 차단.
 fn validate_config_filename(name: &str) -> anyhow::Result<()> {
-    if name.is_empty() { anyhow::bail!("config filename 비어 있음"); }
+    if name.is_empty() {
+        anyhow::bail!("config filename 비어 있음");
+    }
     let p = Path::new(name);
     if p.file_name().and_then(|n| n.to_str()) != Some(name) {
         anyhow::bail!("config filename에 경로 구성요소 포함: {name:?}");
@@ -255,20 +303,30 @@ fn create(action: &str, node: Option<&str>, json: bool) -> anyhow::Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&safe)?);
     } else {
-        println!("✓ 스냅샷 생성: id={id} action={action} ({} LXC configs)", snap.lxc_configs.len());
+        println!(
+            "✓ 스냅샷 생성: id={id} action={action} ({} LXC configs)",
+            snap.lxc_configs.len()
+        );
     }
     Ok(())
 }
 
 fn list_snapshot_files() -> anyhow::Result<Vec<Snapshot>> {
     let dir = Path::new(SNAPSHOT_DIR);
-    if !dir.exists() { return Ok(vec![]); }
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
     let mut snaps = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-        match fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Snapshot>(&t).ok()) {
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        match fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Snapshot>(&t).ok())
+        {
             Some(s) => snaps.push(s),
             None => eprintln!("⚠ 스냅샷 파싱 실패: {}", path.display()),
         }
@@ -281,13 +339,18 @@ fn list(json: bool) -> anyhow::Result<()> {
     let snaps = list_snapshot_files()?;
     if json {
         // 큰 lxc_configs/cluster_nodes 본문은 제외 — 메타데이터만.
-        let summaries: Vec<serde_json::Value> = snaps.iter().map(|s| serde_json::json!({
-            "id": s.id,
-            "created_at": s.created_at,
-            "action": s.action,
-            "node": s.node,
-            "lxc_config_count": s.lxc_configs.len(),
-        })).collect();
+        let summaries: Vec<serde_json::Value> = snaps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "created_at": s.created_at,
+                    "action": s.action,
+                    "node": s.node,
+                    "lxc_config_count": s.lxc_configs.len(),
+                })
+            })
+            .collect();
         println!("{}", serde_json::to_string_pretty(&summaries)?);
         return Ok(());
     }
@@ -295,9 +358,18 @@ fn list(json: bool) -> anyhow::Result<()> {
         println!("(스냅샷 없음 — {SNAPSHOT_DIR})");
         return Ok(());
     }
-    println!("{:<12} {:<20} {:<10} {}", "ID", "ACTION", "LXC#", "CREATED_AT");
+    println!(
+        "{:<12} {:<20} {:<10} {}",
+        "ID", "ACTION", "LXC#", "CREATED_AT"
+    );
     for s in &snaps {
-        println!("{:<12} {:<20} {:<10} {}", s.id, s.action, s.lxc_configs.len(), s.created_at);
+        println!(
+            "{:<12} {:<20} {:<10} {}",
+            s.id,
+            s.action,
+            s.lxc_configs.len(),
+            s.created_at
+        );
     }
     Ok(())
 }
@@ -312,15 +384,22 @@ fn restore(id: &str, force: bool) -> anyhow::Result<()> {
         anyhow::bail!(
             "복원은 --force 필요. 스냅샷 id={} action={} ({} LXC configs)를 \
              /etc/pve/nodes/<node>/lxc 에 덮어씁니다.",
-            snap.id, snap.action, snap.lxc_configs.len()
+            snap.id,
+            snap.action,
+            snap.lxc_configs.len()
         );
     }
-    let node = snap.node.as_deref()
+    let node = snap
+        .node
+        .as_deref()
         .ok_or_else(|| anyhow::anyhow!("스냅샷에 노드 이름 없음 — restore 불가"))?;
     validate_node(node)?;
     let target_dir = PathBuf::from(format!("/etc/pve/nodes/{node}/lxc"));
     if !target_dir.exists() {
-        anyhow::bail!("대상 디렉토리 없음 (Proxmox 아닌 환경?): {}", target_dir.display());
+        anyhow::bail!(
+            "대상 디렉토리 없음 (Proxmox 아닌 환경?): {}",
+            target_dir.display()
+        );
     }
     let mut restored = 0;
     for (name, content) in &snap.lxc_configs {
@@ -361,7 +440,8 @@ fn audit_log_internal(message: &str) -> anyhow::Result<()> {
     ensure_dirs()?;
     use std::io::Write;
     let mut f = fs::OpenOptions::new()
-        .create(true).append(true)
+        .create(true)
+        .append(true)
         .open(AUDIT_LOG)?;
     writeln!(f, "{}\t{message}", now_secs())?;
     Ok(())
@@ -369,7 +449,11 @@ fn audit_log_internal(message: &str) -> anyhow::Result<()> {
 
 fn audit_show(tail: usize, json: bool) -> anyhow::Result<()> {
     if !Path::new(AUDIT_LOG).exists() {
-        if json { println!("[]"); } else { println!("(audit log 없음)"); }
+        if json {
+            println!("[]");
+        } else {
+            println!("(audit log 없음)");
+        }
         return Ok(());
     }
     let raw = fs::read_to_string(AUDIT_LOG)?;
@@ -377,16 +461,21 @@ fn audit_show(tail: usize, json: bool) -> anyhow::Result<()> {
     let start = lines.len().saturating_sub(tail);
     let recent = &lines[start..];
     if json {
-        let entries: Vec<serde_json::Value> = recent.iter().filter_map(|l| {
-            let (ts, msg) = l.split_once('\t')?;
-            Some(serde_json::json!({
-                "timestamp": ts.parse::<u64>().ok(),
-                "message": msg,
-            }))
-        }).collect();
+        let entries: Vec<serde_json::Value> = recent
+            .iter()
+            .filter_map(|l| {
+                let (ts, msg) = l.split_once('\t')?;
+                Some(serde_json::json!({
+                    "timestamp": ts.parse::<u64>().ok(),
+                    "message": msg,
+                }))
+            })
+            .collect();
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
-        for l in recent { println!("{l}"); }
+        for l in recent {
+            println!("{l}");
+        }
     }
     Ok(())
 }

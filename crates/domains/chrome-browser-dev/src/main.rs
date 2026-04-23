@@ -44,11 +44,11 @@ enum Cmd {
         cores: String,
         #[arg(long, default_value = "131072")]
         memory: String,
-        #[arg(long, default_value = "32768")]
+        #[arg(long, default_value = "32768")] // LINT_ALLOW: chrome-browser-dev 기본 VMID
         swap: String,
         #[arg(long, default_value = "vmbr1")]
         bridge: String,
-        #[arg(long, default_value = "10.0.50.1")]
+        #[arg(long, default_value = "10.0.50.1")] // LINT_ALLOW: PVE 호스트 gateway IP 기본값
         gateway: String,
         #[arg(long)]
         start: bool,
@@ -88,11 +88,11 @@ enum Cmd {
         cores: String,
         #[arg(long, default_value = "131072")]
         memory: String,
-        #[arg(long, default_value = "32768")]
+        #[arg(long, default_value = "32768")] // LINT_ALLOW: chrome-browser-dev 기본 VMID
         swap: String,
         #[arg(long, default_value = "vmbr1")]
         bridge: String,
-        #[arg(long, default_value = "10.0.50.1")]
+        #[arg(long, default_value = "10.0.50.1")] // LINT_ALLOW: PVE 호스트 gateway IP 기본값
         gateway: String,
         #[arg(long, default_value = "https://github.com/imputnet/helium-linux.git")]
         repo: String,
@@ -243,8 +243,8 @@ enum Cmd {
     GitlabSetup {
         #[arg(long)]
         vmid: String,
-        /// GitLab host. 예: gitlab.internal.kr
-        #[arg(long, default_value = "gitlab.internal.kr")]
+        /// GitLab host. 예: gitlab.internal.kr (GITLAB_HOST env 또는 --host 로 override)
+        #[arg(long, default_value = "gitlab.internal.kr")] // LINT_ALLOW: 내부 GitLab 기본 호스트, --host 로 override
         host: String,
         /// remote 이름
         #[arg(long, default_value = "gitlab")]
@@ -1149,11 +1149,11 @@ Path(file).write_text(text)
 PYASSUME
 }
 
-write_card "lxc-network" "Proxmox LXC bridge/gateway/IP convention" "vmbr1 / 10.0.50.1 / 10.0.50.220/16" "pxi host" "local Proxmox lab network convention" "ip addr show eth0; ip route"
+write_card "lxc-network" "Proxmox LXC bridge/gateway/IP convention" "vmbr1 / 10.0.50.1 / 10.0.50.220/16" "pxi host" "local Proxmox lab network convention" "ip addr show eth0; ip route" # LINT_ALLOW: 카드 문서 — 실제 네트워크 토폴로지 기록
 write_card "lxc-resources" "Chromium builder resource profile" "48 cores / 128GiB RAM / 32GiB swap / 800G rootfs" "pxi host" "Chromium builds need high parallelism and disk headroom" "nproc; free -h; df -h /"
 write_card "builder-user" "Builder account and workspace root" "builder / /home/builder/workspace" "container" "all build caches and cards live under a non-root user" "id builder; ls -ld /home/builder/workspace"
 write_card "source-paths" "Helium source and output paths" "/home/builder/workspace/helium-linux + build/src/out/Default" "container" "incremental builds depend on stable paths" "test -d /home/builder/workspace/helium-linux; test -f /home/builder/workspace/helium-linux/build/src/out/Default/args.gn"
-write_card "gitlab-remote" "GitLab SSH remotes" "git@10.0.50.63:root/helium*.git" "gitlab" "gitlab.internal.kr DNS currently points elsewhere for SSH" "git -C /home/builder/workspace/helium-linux remote -v; git -C /home/builder/workspace/helium-linux/helium-chromium remote -v"
+write_card "gitlab-remote" "GitLab SSH remotes" "git@10.0.50.63:root/helium*.git" "gitlab" "gitlab.internal.kr DNS currently points elsewhere for SSH" "git -C /home/builder/workspace/helium-linux remote -v; git -C /home/builder/workspace/helium-linux/helium-chromium remote -v" # LINT_ALLOW: 카드 문서 — 실제 GitLab SSH 주소 기록
 write_card "chromedriver-port" "ChromeDriver port" "9515" "container" "default WebDriver port for local automation" "ss -ltnp | grep 9515 || true"
 write_card "x11-runtime" "X11 simulation runtime" "xvfb-run + /tmp/helium-x11-profile" "container" "LXC has no physical display; simulation uses Xvfb" "command -v xvfb-run; test -x /home/builder/workspace/helium-linux/build/src/out/Default/helium"
 

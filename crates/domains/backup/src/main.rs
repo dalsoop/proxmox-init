@@ -69,14 +69,25 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("vzdump 없음 — Proxmox 호스트 필요");
     }
     match cli.cmd {
-        Cmd::Now { vmid, storage, mode } => now(&vmid, &storage, &mode),
+        Cmd::Now {
+            vmid,
+            storage,
+            mode,
+        } => now(&vmid, &storage, &mode),
         Cmd::List { vmid, dir } => list(vmid.as_deref(), &dir),
-        Cmd::ScheduleAdd { schedule, vmid, storage, keep } => {
-            schedule_add(&schedule, vmid.as_deref(), &storage, &keep)
-        }
+        Cmd::ScheduleAdd {
+            schedule,
+            vmid,
+            storage,
+            keep,
+        } => schedule_add(&schedule, vmid.as_deref(), &storage, &keep),
         Cmd::ScheduleList => schedule_list(),
         Cmd::ScheduleRemove { id } => schedule_remove(&id),
-        Cmd::Restore { file, vmid, storage } => restore(&file, &vmid, &storage),
+        Cmd::Restore {
+            file,
+            vmid,
+            storage,
+        } => restore(&file, &vmid, &storage),
         Cmd::Doctor => {
             doctor();
             Ok(())
@@ -86,9 +97,18 @@ fn main() -> anyhow::Result<()> {
 
 fn now(vmid: &str, storage: &str, mode: &str) -> anyhow::Result<()> {
     println!("=== 즉시 백업: VMID {vmid} → {storage} ({mode}) ===");
-    common::run("vzdump", &[
-        vmid, "--storage", storage, "--mode", mode, "--compress", "zstd",
-    ])?;
+    common::run(
+        "vzdump",
+        &[
+            vmid,
+            "--storage",
+            storage,
+            "--mode",
+            mode,
+            "--compress",
+            "zstd",
+        ],
+    )?;
     println!("✓ 백업 완료");
     Ok(())
 }
@@ -109,9 +129,7 @@ fn list(vmid: Option<&str>, dir: &str) -> anyhow::Result<()> {
             .collect(),
     };
     let pattern = globs.join(" ");
-    let cmd = format!(
-        "ls -lah {pattern} 2>/dev/null | awk '{{print $NF, \"(\", $5, \")\"}}'"
-    );
+    let cmd = format!("ls -lah {pattern} 2>/dev/null | awk '{{print $NF, \"(\", $5, \")\"}}'");
     match common::run_bash(&cmd) {
         Ok(out) => {
             if out.trim().is_empty() {
@@ -127,7 +145,12 @@ fn list(vmid: Option<&str>, dir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn schedule_add(schedule: &str, vmid: Option<&str>, storage: &str, keep: &str) -> anyhow::Result<()> {
+fn schedule_add(
+    schedule: &str,
+    vmid: Option<&str>,
+    storage: &str,
+    keep: &str,
+) -> anyhow::Result<()> {
     println!("=== 백업 스케줄 추가 ===");
     // Proxmox backup job API: pvesh create /cluster/backup
     let target = vmid.unwrap_or("all");
@@ -137,13 +160,20 @@ fn schedule_add(schedule: &str, vmid: Option<&str>, storage: &str, keep: &str) -
     };
 
     let mut args: Vec<String> = vec![
-        "create".into(), "/cluster/backup".into(),
-        "--schedule".into(), schedule.to_string(),
-        "--storage".into(), storage.to_string(),
-        "--mode".into(), "snapshot".into(),
-        "--compress".into(), "zstd".into(),
-        "--prune-backups".into(), format!("keep-last={keep}"),
-        "--enabled".into(), "1".into(),
+        "create".into(),
+        "/cluster/backup".into(),
+        "--schedule".into(),
+        schedule.to_string(),
+        "--storage".into(),
+        storage.to_string(),
+        "--mode".into(),
+        "snapshot".into(),
+        "--compress".into(),
+        "zstd".into(),
+        "--prune-backups".into(),
+        format!("keep-last={keep}"),
+        "--enabled".into(),
+        "1".into(),
     ];
     args.extend(vmid_arg);
 
@@ -155,7 +185,10 @@ fn schedule_add(schedule: &str, vmid: Option<&str>, storage: &str, keep: &str) -
 
 fn schedule_list() -> anyhow::Result<()> {
     println!("=== 백업 스케줄 목록 ===");
-    let out = common::run_str("pvesh", &["get", "/cluster/backup", "--output-format", "yaml"])?;
+    let out = common::run_str(
+        "pvesh",
+        &["get", "/cluster/backup", "--output-format", "yaml"],
+    )?;
     println!("{out}");
     Ok(())
 }

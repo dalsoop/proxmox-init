@@ -103,9 +103,12 @@ fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Doctor => doctor(),
         Cmd::List { storage } => list(storage.as_deref(), json),
-        Cmd::StorageAddNfs { id, server, export, nfs_version } => {
-            storage_add_nfs(&id, &server, &export, &nfs_version)
-        }
+        Cmd::StorageAddNfs {
+            id,
+            server,
+            export,
+            nfs_version,
+        } => storage_add_nfs(&id, &server, &export, &nfs_version),
         Cmd::StorageAddCifs {
             id,
             server,
@@ -113,11 +116,21 @@ fn main() -> anyhow::Result<()> {
             username,
             password,
             smb_version,
-        } => storage_add_cifs(&id, &server, &share, &username, password.as_deref(), &smb_version),
+        } => storage_add_cifs(
+            &id,
+            &server,
+            &share,
+            &username,
+            password.as_deref(),
+            &smb_version,
+        ),
         Cmd::StorageRemove { id } => storage_remove(&id),
-        Cmd::Download { filename, url, storage, checksum } => {
-            download(&filename, &url, &storage, checksum.as_deref())
-        }
+        Cmd::Download {
+            filename,
+            url,
+            storage,
+            checksum,
+        } => download(&filename, &url, &storage, checksum.as_deref()),
         Cmd::Remove { volid } => remove(&volid),
     }
 }
@@ -125,7 +138,14 @@ fn main() -> anyhow::Result<()> {
 fn doctor() -> anyhow::Result<()> {
     println!("=== pxi-iso doctor ===");
     let pvesm = which("pvesm");
-    println!("  pvesm     : {}", if pvesm { "✓" } else { "✗ (Proxmox 호스트 필요)" });
+    println!(
+        "  pvesm     : {}",
+        if pvesm {
+            "✓"
+        } else {
+            "✗ (Proxmox 호스트 필요)"
+        }
+    );
     if !pvesm {
         println!("\n참고: pxi-iso는 Proxmox VE 호스트에서만 동작합니다.");
     }
@@ -141,7 +161,9 @@ fn which(bin: &str) -> bool {
 fn parse_pvesm_status(text: &str) -> anyhow::Result<Vec<StorageRow>> {
     let mut rows = Vec::new();
     for line in text.lines().skip(1) {
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let p: Vec<&str> = line.split_whitespace().collect();
         if p.len() < 3 {
             anyhow::bail!("pvesm status 라인 파싱 실패 (컬럼 {}개): {line:?}", p.len());
@@ -159,12 +181,15 @@ fn parse_pvesm_status(text: &str) -> anyhow::Result<Vec<StorageRow>> {
 fn parse_pvesm_list(text: &str) -> anyhow::Result<Vec<IsoFile>> {
     let mut rows = Vec::new();
     for line in text.lines().skip(1) {
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let p: Vec<&str> = line.split_whitespace().collect();
         if p.len() < 4 {
             anyhow::bail!("pvesm list 라인 파싱 실패 (컬럼 {}개): {line:?}", p.len());
         }
-        let size: u64 = p[3].parse()
+        let size: u64 = p[3]
+            .parse()
             .map_err(|_| anyhow::anyhow!("pvesm list size 컬럼이 숫자 아님: {line:?}"))?;
         rows.push(IsoFile {
             volid: p[0].into(),
@@ -186,7 +211,9 @@ fn list(filter_storage: Option<&str>, json: bool) -> anyhow::Result<()> {
             return Ok(());
         }
         for s in &storages {
-            if filter_storage.is_some_and(|f| f != s) { continue; }
+            if filter_storage.is_some_and(|f| f != s) {
+                continue;
+            }
             println!("\n--- {s} ---");
             let _ = common::run("pvesm", &["list", s, "--content", "iso"]);
         }
@@ -198,10 +225,15 @@ fn list(filter_storage: Option<&str>, json: bool) -> anyhow::Result<()> {
     let storages = parse_pvesm_status(&status_out)?;
     let mut files = Vec::new();
     for s in &storages {
-        if filter_storage.is_some_and(|f| f != s.name) { continue; }
+        if filter_storage.is_some_and(|f| f != s.name) {
+            continue;
+        }
         let list_out = run_pvesm(&["list", &s.name, "--content", "iso"])?;
         let entries = parse_pvesm_list(&list_out)?;
-        files.push(IsoFileGroup { storage: s.name.clone(), files: entries });
+        files.push(IsoFileGroup {
+            storage: s.name.clone(),
+            files: entries,
+        });
     }
     let snap = ListSnap { storages, files };
     println!("{}", serde_json::to_string_pretty(&snap)?);
@@ -211,14 +243,20 @@ fn list(filter_storage: Option<&str>, json: bool) -> anyhow::Result<()> {
 fn run_pvesm(args: &[&str]) -> anyhow::Result<String> {
     let out = std::process::Command::new("pvesm").args(args).output()?;
     if !out.status.success() {
-        anyhow::bail!("pvesm {args:?} 실패: {}", String::from_utf8_lossy(&out.stderr));
+        anyhow::bail!(
+            "pvesm {args:?} 실패: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn list_iso_storage_ids() -> anyhow::Result<Vec<String>> {
     let text = run_pvesm(&["status", "--content", "iso"])?;
-    Ok(parse_pvesm_status(&text)?.into_iter().map(|r| r.name).collect())
+    Ok(parse_pvesm_status(&text)?
+        .into_iter()
+        .map(|r| r.name)
+        .collect())
 }
 
 fn storage_add_nfs(id: &str, server: &str, export: &str, nfs_version: &str) -> anyhow::Result<()> {
@@ -226,11 +264,17 @@ fn storage_add_nfs(id: &str, server: &str, export: &str, nfs_version: &str) -> a
     common::run(
         "pvesm",
         &[
-            "add", "nfs", id,
-            "--server", server,
-            "--export", export,
-            "--content", "iso",
-            "--options", &format!("vers={nfs_version}"),
+            "add",
+            "nfs",
+            id,
+            "--server",
+            server,
+            "--export",
+            export,
+            "--content",
+            "iso",
+            "--options",
+            &format!("vers={nfs_version}"),
         ],
     )?;
     println!("✓ {id} 등록 완료 (참조: {id}:iso/<filename>.iso)");
@@ -255,13 +299,21 @@ fn storage_add_cifs(
     common::run_secret(
         "pvesm",
         &[
-            "add", "cifs", id,
-            "--server", server,
-            "--share", share,
-            "--username", username,
-            "--password", &pw,
-            "--content", "iso",
-            "--smbversion", smb_version,
+            "add",
+            "cifs",
+            id,
+            "--server",
+            server,
+            "--share",
+            share,
+            "--username",
+            username,
+            "--password",
+            &pw,
+            "--content",
+            "iso",
+            "--smbversion",
+            smb_version,
         ],
         &format!("pvesm add cifs {id}"),
     )?;
@@ -277,14 +329,15 @@ fn storage_remove(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn download(filename: &str, url: &str, storage: &str, checksum: Option<&str>) -> anyhow::Result<()> {
+fn download(
+    filename: &str,
+    url: &str,
+    storage: &str,
+    checksum: Option<&str>,
+) -> anyhow::Result<()> {
     println!("=== ISO 다운로드: {filename} → {storage} ===");
     println!("URL: {url}");
-    let mut args: Vec<String> = vec![
-        "download-url".into(),
-        "--content".into(),
-        "iso".into(),
-    ];
+    let mut args: Vec<String> = vec!["download-url".into(), "--content".into(), "iso".into()];
     if let Some(c) = checksum {
         args.push("--checksum".into());
         args.push(c.to_string());
@@ -323,9 +376,14 @@ mod tests {
                     truenas-iso         nfs     active     4022270    14919  4020779     0.04%\n";
         let rows = parse_pvesm_status(text).unwrap();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], StorageRow {
-            name: "local".into(), storage_type: "dir".into(), status: "active".into(),
-        });
+        assert_eq!(
+            rows[0],
+            StorageRow {
+                name: "local".into(),
+                storage_type: "dir".into(),
+                status: "active".into(),
+            }
+        );
         assert_eq!(rows[1].name, "truenas-iso");
         assert_eq!(rows[1].storage_type, "nfs");
     }
@@ -355,15 +413,19 @@ mod tests {
 
     #[test]
     fn list_basic() {
-        let text = "Volid                                       Format  Type            Size VMID\n\
+        let text =
+            "Volid                                       Format  Type            Size VMID\n\
                     local:iso/linuxmint-22.iso                  iso     iso       3091660800\n";
         let rows = parse_pvesm_list(text).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0], IsoFile {
-            volid: "local:iso/linuxmint-22.iso".into(),
-            format: "iso".into(),
-            size: 3091660800,
-        });
+        assert_eq!(
+            rows[0],
+            IsoFile {
+                volid: "local:iso/linuxmint-22.iso".into(),
+                format: "iso".into(),
+                size: 3091660800,
+            }
+        );
     }
 
     #[test]
@@ -400,6 +462,8 @@ mod tests {
 
     #[test]
     fn list_only_header_returns_empty() {
-        assert!(parse_pvesm_list("Volid Format Type Size").unwrap().is_empty());
+        assert!(parse_pvesm_list("Volid Format Type Size")
+            .unwrap()
+            .is_empty());
     }
 }

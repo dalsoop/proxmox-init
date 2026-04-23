@@ -3,7 +3,7 @@
 # 패턴: pxi-wordpress 미러. nginx + php-fpm + mariadb + composer + node + Traefik.
 #
 # Usage:
-#   pxi-laravel install --vmid N --hostname HN --domain D --repo URL [opts]
+#   pxi-laravel install --vmid N --hostname HN --domain D (--repo URL | --source-dir PATH) [opts]
 #   pxi-laravel setup    <vmid>           # composer/npm/migrate/cache 재실행
 #   pxi-laravel update   <vmid>           # git pull + setup + opcache 재시작
 #   pxi-laravel artisan  <vmid> <args...>
@@ -60,7 +60,7 @@ LXC 생성 + nginx + PHP-FPM + MariaDB + Composer + Node + Laravel 앱 배포 + 
 
 Usage:
   pxi-laravel install \
-    --vmid <VMID> --hostname <HN> --domain <DOMAIN> --repo <URL> \
+    --vmid <VMID> --hostname <HN> --domain <DOMAIN> (--repo <URL> | --source-dir <PATH>) \
     [--ip 10.0.50.XX] [--branch main] [--app-name "name"] \
     [--disk 16] [--cores 2] [--memory 2048] \
     [--db-name laravel] [--db-user laravel] [--db-password PW] \
@@ -73,11 +73,15 @@ Usage:
     --vmid 50183 --hostname ranode-seo --domain ranode-seo.50.internal.kr \
     --repo http://gitlab.internal.kr/dalsoop/legacy/ranode-seo.git \
     --db-name ranode_seo --db-user ranode_seo
+
+  pxi-laravel install \
+    --vmid 50187 --hostname keyword-insight --domain keyword-insight.50.internal.kr \
+    --source-dir /root/workspace/keyword-insight
 EOF
 }
 
 cmd_install() {
-  local vmid="" hostname="" domain="" repo="" branch="main"
+  local vmid="" hostname="" domain="" repo="" source_dir="" branch="main"
   local ip="" app_name=""
   local disk="16" cores="2" memory="2048"
   local db_name="" db_user="" db_password=""
@@ -92,6 +96,7 @@ cmd_install() {
       --hostname)    hostname="$2"; shift 2 ;;
       --domain)      domain="$2"; shift 2 ;;
       --repo)        repo="$2"; shift 2 ;;
+      --source-dir)  source_dir="$2"; shift 2 ;;
       --branch)      branch="$2"; shift 2 ;;
       --ip)          ip="$2"; shift 2 ;;
       --app-name)    app_name="$2"; shift 2 ;;
@@ -113,8 +118,20 @@ cmd_install() {
     esac
   done
 
-  [[ -n "$vmid" && -n "$hostname" && -n "$domain" && -n "$repo" ]] \
-    || { usage_install; die "--vmid/--hostname/--domain/--repo 는 필수"; }
+  [[ -n "$vmid" && -n "$hostname" && -n "$domain" ]] \
+    || { usage_install; die "--vmid/--hostname/--domain 는 필수"; }
+  if [[ -n "$repo" && -n "$source_dir" ]]; then
+    usage_install
+    die "--repo 와 --source-dir 는 동시에 사용할 수 없음"
+  fi
+  if [[ -z "$repo" && -z "$source_dir" ]]; then
+    usage_install
+    die "--repo 또는 --source-dir 중 하나는 필수"
+  fi
+  if [[ -n "$source_dir" ]]; then
+    [[ -d "$source_dir" ]] || die "source-dir 없음: $source_dir"
+    [[ -f "$source_dir/composer.json" ]] || die "Laravel 앱이 아님: $source_dir/composer.json 없음"
+  fi
 
   [[ -z "$app_name"    ]] && app_name="$hostname"
   [[ -z "$db_name"     ]] && db_name="$(echo "$hostname" | tr '-' '_')"
@@ -129,13 +146,20 @@ cmd_install() {
   fi
   [[ -n "$ip" ]] || die "IP 자동 할당 실패 — --ip 로 지정하세요"
 
+  local source_label
+  if [[ -n "$source_dir" ]]; then
+    source_label="source-dir: $source_dir"
+  else
+    source_label="repo: $repo (branch=$branch)"
+  fi
+
   log "설치 요약:"
   cat <<EOF >&2
   VMID:       $vmid
   Hostname:   $hostname
   Domain:     $domain
   IP:         $ip$NETMASK (gw $GW, $BRIDGE)
-  Repo:       $repo  (branch=$branch)
+  Source:     $source_label
   Resources:  ${cores}c / ${memory}MB / ${disk}GB
   PHP:        $php_ver        Node: $node_ver
   DB:         $db_name / user=$db_user
@@ -222,14 +246,19 @@ EOF
   " >&2
   ok "MariaDB 준비"
 
-  # ── 7. 리포 클론 + .env ──────────────────────────────────────────────────
-  log "[7/9] 리포 클론 ($repo @ $branch)"
-  in_lxc "$vmid" "
-    rm -rf $APP_ROOT
-    git clone --branch '$branch' --depth 1 '$repo' $APP_ROOT
-    cd $APP_ROOT
-    [ -f .env ] || cp .env.example .env
-  " >&2
+  # ── 7. 앱 소스 배치 + .env ───────────────────────────────────────────────
+  if [[ -n "$source_dir" ]]; then
+    log "[7/9] 로컬 소스 배치 ($source_dir)"
+    _deploy_source_dir "$vmid" "$source_dir"
+  else
+    log "[7/9] 리포 클론 ($repo @ $branch)"
+    in_lxc "$vmid" "
+      rm -rf $APP_ROOT
+      git clone --branch '$branch' --depth 1 '$repo' $APP_ROOT
+      cd $APP_ROOT
+      [ -f .env ] || cp .env.example .env
+    " >&2
+  fi
 
   # composer.json 에서 패키지 제거 (dead private repo 대응)
   if [[ -n "$composer_remove" ]]; then
@@ -315,7 +344,9 @@ HOSTNAME=$hostname
 DOMAIN=$domain
 IP=$ip
 REPO=$repo
+SOURCE_DIR=$source_dir
 BRANCH=$branch
+INSTALL_MODE=$([[ -n "$source_dir" ]] && echo source-dir || echo repo)
 APP_ROOT=$APP_ROOT
 PHP_VER=$php_ver
 NODE_VER=$node_ver
@@ -342,12 +373,65 @@ META
 EOF
 }
 
+_deploy_source_dir() {
+  local vmid="$1" source_dir="$2"
+  local tarball
+  tarball="$(mktemp /tmp/pxi-laravel-src.XXXXXX.tar.gz)"
+
+  tar -C "$source_dir" \
+    --exclude=".git" \
+    --exclude="vendor" \
+    --exclude="node_modules" \
+    --exclude=".env" \
+    --exclude="database/database.sqlite" \
+    --exclude="bootstrap/cache/*.php" \
+    -czf "$tarball" .
+
+  pct push "$vmid" "$tarball" /tmp/pxi-laravel-src.tar.gz >/dev/null
+  rm -f "$tarball"
+
+  in_lxc "$vmid" "
+    tmp_env=\$(mktemp /tmp/pxi-laravel-env.XXXXXX)
+    tmp_storage=\$(mktemp -d /tmp/pxi-laravel-storage.XXXXXX)
+    if [[ -f $APP_ROOT/.env ]]; then
+      cp $APP_ROOT/.env \$tmp_env
+    else
+      rm -f \$tmp_env
+    fi
+    if [[ -d $APP_ROOT/storage ]]; then
+      cp -a $APP_ROOT/storage/. \$tmp_storage/
+    fi
+    rm -rf $APP_ROOT
+    mkdir -p $APP_ROOT
+    tar -xzf /tmp/pxi-laravel-src.tar.gz -C $APP_ROOT
+    rm -f /tmp/pxi-laravel-src.tar.gz
+    cd $APP_ROOT
+    if [[ -f \$tmp_env ]]; then
+      cp \$tmp_env .env
+      rm -f \$tmp_env
+    elif [[ ! -f .env && -f .env.example ]]; then
+      cp .env.example .env
+    fi
+    if [[ -d \$tmp_storage ]]; then
+      mkdir -p storage
+      cp -a \$tmp_storage/. storage/ 2>/dev/null || true
+      rm -rf \$tmp_storage
+    fi
+  " >&2
+}
+
 # ── app setup: composer + key + migrate + npm ──────────────────────────────
 _run_setup() {
   local vmid="$1" do_npm="$2" do_migrate="$3"
 
   # Laravel storage 서브디렉토리 보장 (git 은 이것들을 추적 안 함)
   in_lxc "$vmid" "mkdir -p $APP_ROOT/storage/framework/{cache/data,sessions,views,testing} $APP_ROOT/storage/logs $APP_ROOT/bootstrap/cache" >&2
+  in_lxc "$vmid" "
+    if [[ -f $APP_ROOT/.env ]]; then
+      chown root:www-data $APP_ROOT/.env
+      chmod 640 $APP_ROOT/.env
+    fi
+  " >&2
 
   in_lxc "$vmid" "cd $APP_ROOT && composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress" \
     || die "composer install 실패. pct enter $vmid 로 들어가서 composer.json 확인 후 pxi-laravel setup $vmid 로 재시도"
@@ -361,8 +445,14 @@ _run_setup() {
 
   if [[ "$do_npm" == "yes" ]]; then
     if in_lxc "$vmid" "test -f $APP_ROOT/package.json"; then
-      in_lxc "$vmid" "cd $APP_ROOT && npm ci --no-audit --no-fund" \
-        || die "npm ci 실패"
+      if in_lxc "$vmid" "test -f $APP_ROOT/package-lock.json"; then
+        in_lxc "$vmid" "cd $APP_ROOT && npm ci --no-audit --no-fund" \
+          || die "npm ci 실패"
+      else
+        warn "package-lock.json 없음 — npm install 로 대체"
+        in_lxc "$vmid" "cd $APP_ROOT && npm install --no-audit --no-fund" \
+          || die "npm install 실패"
+      fi
       in_lxc "$vmid" "cd $APP_ROOT && npm run build" \
         || warn "npm run build 실패 — build 스크립트 확인"
     else
@@ -455,8 +545,19 @@ cmd_setup() {
 cmd_update() {
   local vmid="${1:-}"; [[ -n "$vmid" ]] || die "사용법: pxi-laravel update <vmid>"
   require_laravel "$vmid"
-  log "git pull"
-  in_lxc "$vmid" "cd $APP_ROOT && php artisan down || true; git fetch --all && git reset --hard @{u}" >&2
+  local install_mode source_dir
+  install_mode="$(in_lxc "$vmid" "awk -F= '/^INSTALL_MODE=/{print \$2}' /etc/pxi/laravel.meta 2>/dev/null" || true)"
+  if [[ "$install_mode" == "source-dir" ]]; then
+    source_dir="$(in_lxc "$vmid" "awk -F= '/^SOURCE_DIR=/{print substr(\$0, index(\$0, \"=\")+1)}' /etc/pxi/laravel.meta 2>/dev/null" || true)"
+    [[ -n "$source_dir" ]] || die "source-dir 설치지만 SOURCE_DIR 메타가 비어 있음"
+    [[ -d "$source_dir" ]] || die "source-dir 경로가 호스트에 없음: $source_dir"
+    log "source-dir 동기화: $source_dir"
+    in_lxc "$vmid" "cd $APP_ROOT && php artisan down || true" >&2
+    _deploy_source_dir "$vmid" "$source_dir"
+  else
+    log "git pull"
+    in_lxc "$vmid" "cd $APP_ROOT && php artisan down || true; git fetch --all && git reset --hard @{u}" >&2
+  fi
   _run_setup "$vmid" "yes" "yes"
   in_lxc "$vmid" "cd $APP_ROOT && php artisan up || true; systemctl reload php*-fpm nginx || true" >&2
   ok "update 완료"

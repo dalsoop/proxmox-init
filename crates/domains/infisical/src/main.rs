@@ -15,9 +15,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Docker Compose로 Infisical 설치
-    Install { #[arg(long, default_value = "8082")] port: u16 },
+    Install {
+        #[arg(long, default_value = "8082")]
+        port: u16,
+    },
     /// 제거
-    Uninstall { #[arg(long)] force: bool },
+    Uninstall {
+        #[arg(long)]
+        force: bool,
+    },
     /// 시작
     Start,
     /// 중지
@@ -27,42 +33,108 @@ enum Cmd {
     /// 상태
     Status,
     /// 로그 확인
-    Logs { #[arg(long)] follow: bool, #[arg(long)] tail: Option<String> },
+    Logs {
+        #[arg(long)]
+        follow: bool,
+        #[arg(long)]
+        tail: Option<String>,
+    },
     /// 업데이트
     Update,
     /// 환경 진단
     Doctor,
     /// SMTP 설정 주입
     Smtp {
-        #[arg(long, default_value = "10.0.50.122")] host: String,
-        #[arg(long, default_value_t = 587)] port: u16,
-        #[arg(long)] user: Option<String>,
-        #[arg(long)] password: Option<String>,
-        #[arg(long)] from: Option<String>,
-        #[arg(long, default_value = "Infisical")] from_name: String,
-        #[arg(long)] secure: bool,
+        #[arg(long, default_value = "10.0.50.122")] // LINT_ALLOW: CF mail proxy 기본 IP
+        host: String,
+        #[arg(long, default_value_t = 587)]
+        port: u16,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        password: Option<String>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long, default_value = "Infisical")]
+        from_name: String,
+        #[arg(long)]
+        secure: bool,
     },
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Status => { common::run("docker", &["compose", "-f", "/opt/infisical/docker-compose.yml", "ps"]); }
-        Cmd::Start => { common::run("docker", &["compose", "-f", "/opt/infisical/docker-compose.yml", "up", "-d"]); }
-        Cmd::Stop => { common::run("docker", &["compose", "-f", "/opt/infisical/docker-compose.yml", "down"]); }
-        Cmd::Restart => { common::run("docker", &["compose", "-f", "/opt/infisical/docker-compose.yml", "restart"]); }
+        Cmd::Status => {
+            common::run(
+                "docker",
+                &["compose", "-f", "/opt/infisical/docker-compose.yml", "ps"],
+            );
+        }
+        Cmd::Start => {
+            common::run(
+                "docker",
+                &[
+                    "compose",
+                    "-f",
+                    "/opt/infisical/docker-compose.yml",
+                    "up",
+                    "-d",
+                ],
+            );
+        }
+        Cmd::Stop => {
+            common::run(
+                "docker",
+                &["compose", "-f", "/opt/infisical/docker-compose.yml", "down"],
+            );
+        }
+        Cmd::Restart => {
+            common::run(
+                "docker",
+                &[
+                    "compose",
+                    "-f",
+                    "/opt/infisical/docker-compose.yml",
+                    "restart",
+                ],
+            );
+        }
         Cmd::Logs { follow, tail } => {
             let mut args = vec!["compose", "-f", "/opt/infisical/docker-compose.yml", "logs"];
-            if follow { args.push("-f"); }
-            if let Some(t) = &tail { args.push("--tail"); args.push(t); }
+            if follow {
+                args.push("-f");
+            }
+            if let Some(t) = &tail {
+                args.push("--tail");
+                args.push(t);
+            }
             common::run("docker", &args);
         }
         Cmd::Install { port } => infisical_install(port),
         Cmd::Uninstall { force } => infisical_uninstall(force),
         Cmd::Update => infisical_update(),
-        Cmd::Doctor => { doctor(); }
-        Cmd::Smtp { host, port, user, password, from, from_name, secure } => {
-            infisical_smtp(&host, port, user.as_deref(), password.as_deref(), from.as_deref(), &from_name, secure);
+        Cmd::Doctor => {
+            doctor();
+        }
+        Cmd::Smtp {
+            host,
+            port,
+            user,
+            password,
+            from,
+            from_name,
+            secure,
+        } => {
+            infisical_smtp(
+                &host,
+                port,
+                user.as_deref(),
+                password.as_deref(),
+                from.as_deref(),
+                &from_name,
+                secure,
+            );
         }
     }
     Ok(())
@@ -82,7 +154,9 @@ fn saved_port() -> u16 {
 
 fn require_installed() {
     if !Path::new(COMPOSE_FILE).exists() {
-        eprintln!("Infisical이 설치되어 있지 않습니다. `pxi run infisical install`을 먼저 실행하세요.");
+        eprintln!(
+            "Infisical이 설치되어 있지 않습니다. `pxi run infisical install`을 먼저 실행하세요."
+        );
         std::process::exit(1);
     }
 }
@@ -295,7 +369,19 @@ fn infisical_update() {
     }
 
     println!("컨테이너 재생성...");
-    if common::run("docker", &["compose", "-f", COMPOSE_FILE, "up", "-d", "--force-recreate"]).is_ok() {
+    if common::run(
+        "docker",
+        &[
+            "compose",
+            "-f",
+            COMPOSE_FILE,
+            "up",
+            "-d",
+            "--force-recreate",
+        ],
+    )
+    .is_ok()
+    {
         println!("\n  업데이트 완료");
     }
 }
@@ -377,13 +463,29 @@ fn infisical_smtp(
     println!("  .env 업데이트 완료");
 
     println!("backend 컨테이너 재생성...");
-    if common::run("docker", &["compose", "-f", COMPOSE_FILE, "up", "-d", "--force-recreate", "backend"]).is_ok() {
+    if common::run(
+        "docker",
+        &[
+            "compose",
+            "-f",
+            COMPOSE_FILE,
+            "up",
+            "-d",
+            "--force-recreate",
+            "backend",
+        ],
+    )
+    .is_ok()
+    {
         println!("  backend 재생성 완료");
     } else {
         eprintln!("Error: backend 재생성 실패");
         std::process::exit(1);
     }
-    println!("\n  확인: curl -sS http://127.0.0.1:{}/api/status | grep emailConfigured", saved_port());
+    println!(
+        "\n  확인: curl -sS http://127.0.0.1:{}/api/status | grep emailConfigured",
+        saved_port()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +510,15 @@ fn doctor() {
     // Container running
     if compose_ok && docker_ok {
         let ps_ok = Command::new("docker")
-            .args(["compose", "-f", COMPOSE_FILE, "ps", "--status", "running", "-q"])
+            .args([
+                "compose",
+                "-f",
+                COMPOSE_FILE,
+                "ps",
+                "--status",
+                "running",
+                "-q",
+            ])
             .output()
             .map(|o| o.status.success() && !o.stdout.is_empty())
             .unwrap_or(false);
@@ -420,9 +530,18 @@ fn doctor() {
     // Port reachable
     let port = saved_port();
     let port_ok = Command::new("curl")
-        .args(["-sf", "--max-time", "5", &format!("http://localhost:{}", port)])
+        .args([
+            "-sf",
+            "--max-time",
+            "5",
+            &format!("http://localhost:{}", port),
+        ])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} localhost:{} 응답", if port_ok { "✓" } else { "✗" }, port);
+    println!(
+        "  {} localhost:{} 응답",
+        if port_ok { "✓" } else { "✗" },
+        port
+    );
 }

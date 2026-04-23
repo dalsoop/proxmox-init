@@ -10,6 +10,7 @@ let domains_map = {
   account     = import "../crates/domains/account/domain.ncl",
   ai          = import "../crates/domains/ai/domain.ncl",
   backup      = import "../crates/domains/backup/domain.ncl",
+  chrome-browser-dev = import "../crates/domains/chrome-browser-dev/domain.ncl",
   bootstrap   = import "../crates/domains/bootstrap/domain.ncl",
   cloudflare  = import "../crates/domains/cloudflare/domain.ncl",
   code-server = import "../crates/domains/code-server/domain.ncl",

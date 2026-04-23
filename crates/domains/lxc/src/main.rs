@@ -105,15 +105,9 @@ enum Cmd {
     /// LXC 스냅샷 목록
     SnapshotList { vmid: String },
     /// LXC 스냅샷 복원
-    SnapshotRestore {
-        vmid: String,
-        name: String,
-    },
+    SnapshotRestore { vmid: String, name: String },
     /// LXC 스냅샷 삭제
-    SnapshotDelete {
-        vmid: String,
-        name: String,
-    },
+    SnapshotDelete { vmid: String, name: String },
     /// LXC 리소스 변경 (CPU/RAM/disk)
     Resize {
         vmid: String,
@@ -137,7 +131,10 @@ enum Cmd {
         #[arg(long, default_value = "Asia/Seoul")]
         timezone: String,
         /// 설치할 기본 패키지 목록 (콤마 분리).
-        #[arg(long, default_value = "git,curl,wget,rsync,tmux,jq,htop,tree,unzip,locales")]
+        #[arg(
+            long,
+            default_value = "git,curl,wget,rsync,tmux,jq,htop,tree,unzip,locales"
+        )]
         packages: String,
     },
     /// LXC 설정 상세 표시
@@ -245,8 +242,12 @@ fn main() -> anyhow::Result<()> {
             // config.toml [lxc] 는 **lazy load** — 명시 안 된 필드가 있을 때만.
             // 모든 플래그 explicit 이면 config 건드리지 않음 (codex #42 P2: 깨진 config 가
             // explicit 호출도 깨뜨리는 regression 방지).
-            let need_config = template.is_none() || storage.is_none() || disk.is_none()
-                || cores.is_none() || memory.is_none() || bridge.is_none();
+            let need_config = template.is_none()
+                || storage.is_none()
+                || disk.is_none()
+                || cores.is_none()
+                || memory.is_none()
+                || bridge.is_none();
             let cfg = if need_config {
                 pxi_core::config::Config::load()?
             } else {
@@ -271,19 +272,51 @@ fn main() -> anyhow::Result<()> {
         Cmd::Reboot { vmid } => restart(&vmid),
         Cmd::Delete { vmid, force } => delete(&vmid, force),
         Cmd::Enter { vmid } => enter(&vmid),
-        Cmd::Backup { vmid, storage, mode } => backup(&vmid, &storage, &mode),
-        Cmd::SnapshotCreate { vmid, name, description } => snapshot_create(&vmid, &name, description.as_deref()),
+        Cmd::Backup {
+            vmid,
+            storage,
+            mode,
+        } => backup(&vmid, &storage, &mode),
+        Cmd::SnapshotCreate {
+            vmid,
+            name,
+            description,
+        } => snapshot_create(&vmid, &name, description.as_deref()),
         Cmd::SnapshotList { vmid } => snapshot_list(&vmid, json),
         Cmd::SnapshotRestore { vmid, name } => snapshot_restore(&vmid, &name),
         Cmd::SnapshotDelete { vmid, name } => snapshot_delete(&vmid, &name),
-        Cmd::Resize { vmid, cores, memory, disk_expand } => resize(&vmid, cores.as_deref(), memory.as_deref(), disk_expand.as_deref()),
-        Cmd::Init { vmid, locale, timezone, packages } => init_lxc(&vmid, &locale, &timezone, &packages),
+        Cmd::Resize {
+            vmid,
+            cores,
+            memory,
+            disk_expand,
+        } => resize(
+            &vmid,
+            cores.as_deref(),
+            memory.as_deref(),
+            disk_expand.as_deref(),
+        ),
+        Cmd::Init {
+            vmid,
+            locale,
+            timezone,
+            packages,
+        } => init_lxc(&vmid, &locale, &timezone, &packages),
         Cmd::Config { vmid } => config(&vmid),
-        Cmd::AlignVmidIp { hostname_prefix, start_vmid, apply } => {
+        Cmd::AlignVmidIp {
+            hostname_prefix,
+            start_vmid,
+            apply,
+        } => {
             align_vmid_ip(&hostname_prefix, &start_vmid, apply);
             Ok(())
         }
-        Cmd::Mount { vmid, index, source, target } => mount(&vmid, &index, &source, &target),
+        Cmd::Mount {
+            vmid,
+            index,
+            source,
+            target,
+        } => mount(&vmid, &index, &source, &target),
         Cmd::Unmount { vmid, index } => unmount(&vmid, &index),
         Cmd::Bootstrap { vmid } => bootstrap(&vmid),
         Cmd::GatewayFix { node, apply } => {
@@ -298,9 +331,17 @@ fn main() -> anyhow::Result<()> {
             route_audit_watch(&action);
             Ok(())
         }
-        Cmd::MgmtSetup { vmid, hostname, storage, disk, cores, memory, bootstrap } => {
-            mgmt_setup(&vmid, &hostname, &storage, &disk, &cores, &memory, bootstrap)
-        }
+        Cmd::MgmtSetup {
+            vmid,
+            hostname,
+            storage,
+            disk,
+            cores,
+            memory,
+            bootstrap,
+        } => mgmt_setup(
+            &vmid, &hostname, &storage, &disk, &cores, &memory, bootstrap,
+        ),
         Cmd::Doctor => {
             doctor();
             Ok(())
@@ -354,17 +395,17 @@ fn get_lxc_ip(vmid: &str) -> String {
 /// SSH/exec로 보내는 명령에서 인프라 파괴 패턴을 차단
 fn detect_dangerous_command(cmd: &str) -> Option<&'static str> {
     let patterns = [
-        ("rm -rf /etc/corosync",          "corosync 디렉토리 삭제"),
-        ("rm -rf /var/lib/corosync",      "corosync 데이터 삭제"),
-        ("rm /etc/pve/corosync.conf",     "cluster 설정 삭제"),
-        ("rm -f /etc/pve/corosync.conf",  "cluster 설정 삭제"),
-        ("killall pmxcfs",                "pmxcfs 종료"),
-        ("killall -9 pmxcfs",             "pmxcfs 강제 종료"),
-        ("pmxcfs -l",                     "local mode 시작"),
-        ("systemctl stop pve-cluster",    "pmxcfs 정지"),
-        ("fusermount -u /etc/pve",        "/etc/pve 강제 unmount"),
-        ("rm -rf /etc/pve",               "/etc/pve 통째 삭제"),
-        ("rm -rf /root/.ssh",             "SSH 키 통째 삭제"),
+        ("rm -rf /etc/corosync", "corosync 디렉토리 삭제"),
+        ("rm -rf /var/lib/corosync", "corosync 데이터 삭제"),
+        ("rm /etc/pve/corosync.conf", "cluster 설정 삭제"),
+        ("rm -f /etc/pve/corosync.conf", "cluster 설정 삭제"),
+        ("killall pmxcfs", "pmxcfs 종료"),
+        ("killall -9 pmxcfs", "pmxcfs 강제 종료"),
+        ("pmxcfs -l", "local mode 시작"),
+        ("systemctl stop pve-cluster", "pmxcfs 정지"),
+        ("fusermount -u /etc/pve", "/etc/pve 강제 unmount"),
+        ("rm -rf /etc/pve", "/etc/pve 통째 삭제"),
+        ("rm -rf /root/.ssh", "SSH 키 통째 삭제"),
         ("rm /root/.ssh/authorized_keys", "authorized_keys 삭제"),
     ];
     for (pattern, reason) in &patterns {
@@ -407,13 +448,24 @@ fn lxc_exec_on(node: Option<&str>, vmid: &str, cmd: &[&str]) -> (bool, String) {
                 .join(" ")
         );
         Command::new("ssh")
-            .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"), &pct_cmd])
+            .args([
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                &format!("root@{node_ip}"),
+                &pct_cmd,
+            ])
             .output()
             .expect("ssh pct exec 실패")
     };
     let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let combined = if err.is_empty() { out } else { format!("{out}\n{err}") };
+    let combined = if err.is_empty() {
+        out
+    } else {
+        format!("{out}\n{err}")
+    };
     (output.status.success(), combined)
 }
 
@@ -431,7 +483,12 @@ fn local_node_name() -> String {
 fn node_ip_from_name(node: &str) -> String {
     let output = cmd_output(
         "pvesh",
-        &["get", &format!("/nodes/{node}/network"), "--output-format", "json"],
+        &[
+            "get",
+            &format!("/nodes/{node}/network"),
+            "--output-format",
+            "json",
+        ],
     );
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
         if let Some(ifaces) = parsed.as_array() {
@@ -449,7 +506,17 @@ fn node_ip_from_name(node: &str) -> String {
 }
 
 fn shell_escape(s: &str) -> String {
-    if s.contains(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == '$' || c == '`' || c == '\\' || c == '!' || c == '(' || c == ')') {
+    if s.contains(|c: char| {
+        c.is_whitespace()
+            || c == '\''
+            || c == '"'
+            || c == '$'
+            || c == '`'
+            || c == '\\'
+            || c == '!'
+            || c == '('
+            || c == ')'
+    }) {
         format!("'{}'", s.replace('\'', "'\\''"))
     } else {
         s.to_string()
@@ -467,7 +534,14 @@ fn lxc_install_packages(vmid: &str, packages: &[&str], tag: &str) {
 
     if statuses.iter().any(|(_, installed)| !installed) {
         println!("[{tag}] apt 업데이트 중...");
-        lxc_exec(vmid, &["bash", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq"]);
+        lxc_exec(
+            vmid,
+            &[
+                "bash",
+                "-c",
+                "DEBIAN_FRONTEND=noninteractive apt-get update -qq",
+            ],
+        );
     }
 
     for (pkg, installed) in &statuses {
@@ -477,7 +551,11 @@ fn lxc_install_packages(vmid: &str, packages: &[&str], tag: &str) {
             println!("[{tag}] {pkg} - 설치 중...");
             let (ok, _) = lxc_exec(
                 vmid,
-                &["bash", "-c", &format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkg}")],
+                &[
+                    "bash",
+                    "-c",
+                    &format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkg}"),
+                ],
             );
             if ok {
                 println!("[{tag}] {pkg} - 설치 완료");
@@ -507,28 +585,43 @@ fn snapshot_create(vmid: &str, name: &str, description: Option<&str>) -> anyhow:
 fn parse_pct_listsnapshot(out: &str) -> anyhow::Result<Vec<SnapshotRow>> {
     let mut rows = Vec::new();
     for l in out.lines() {
-        let trimmed = l.trim_start_matches(|c: char| {
-            c == '`' || c == '-' || c == '>' || c.is_whitespace()
-        });
-        if trimmed.is_empty() { continue; }
+        let trimmed =
+            l.trim_start_matches(|c: char| c == '`' || c == '-' || c == '>' || c.is_whitespace());
+        if trimmed.is_empty() {
+            continue;
+        }
         let toks: Vec<&str> = trimmed.split_whitespace().collect();
-        if toks.is_empty() { continue; }
+        if toks.is_empty() {
+            continue;
+        }
         let name = toks[0].to_string();
-        if name == "current" { continue; }
-        let date_ok = toks.get(1).map(|t| {
-            let b = t.as_bytes();
-            t.len() == 10 && b[4] == b'-' && b[7] == b'-'
-                && b[..4].iter().all(|c| c.is_ascii_digit())
-                && b[5..7].iter().all(|c| c.is_ascii_digit())
-                && b[8..10].iter().all(|c| c.is_ascii_digit())
-        }).unwrap_or(false);
-        let time_ok = toks.get(2).map(|t| {
-            let b = t.as_bytes();
-            t.len() == 8 && b[2] == b':' && b[5] == b':'
-                && b[..2].iter().all(|c| c.is_ascii_digit())
-                && b[3..5].iter().all(|c| c.is_ascii_digit())
-                && b[6..8].iter().all(|c| c.is_ascii_digit())
-        }).unwrap_or(false);
+        if name == "current" {
+            continue;
+        }
+        let date_ok = toks
+            .get(1)
+            .map(|t| {
+                let b = t.as_bytes();
+                t.len() == 10
+                    && b[4] == b'-'
+                    && b[7] == b'-'
+                    && b[..4].iter().all(|c| c.is_ascii_digit())
+                    && b[5..7].iter().all(|c| c.is_ascii_digit())
+                    && b[8..10].iter().all(|c| c.is_ascii_digit())
+            })
+            .unwrap_or(false);
+        let time_ok = toks
+            .get(2)
+            .map(|t| {
+                let b = t.as_bytes();
+                t.len() == 8
+                    && b[2] == b':'
+                    && b[5] == b':'
+                    && b[..2].iter().all(|c| c.is_ascii_digit())
+                    && b[3..5].iter().all(|c| c.is_ascii_digit())
+                    && b[6..8].iter().all(|c| c.is_ascii_digit())
+            })
+            .unwrap_or(false);
         if !date_ok || !time_ok {
             anyhow::bail!(
                 "pct listsnapshot 라인 파싱 실패 (timestamp가 YYYY-MM-DD HH:MM:SS 아님): {l:?}"
@@ -536,7 +629,11 @@ fn parse_pct_listsnapshot(out: &str) -> anyhow::Result<Vec<SnapshotRow>> {
         }
         let timestamp = format!("{} {}", toks[1], toks[2]);
         let description = toks.iter().skip(3).copied().collect::<Vec<_>>().join(" ");
-        rows.push(SnapshotRow { name, timestamp, description });
+        rows.push(SnapshotRow {
+            name,
+            timestamp,
+            description,
+        });
     }
     Ok(rows)
 }
@@ -566,7 +663,12 @@ fn snapshot_delete(vmid: &str, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resize(vmid: &str, cores: Option<&str>, memory: Option<&str>, disk_expand: Option<&str>) -> anyhow::Result<()> {
+fn resize(
+    vmid: &str,
+    cores: Option<&str>,
+    memory: Option<&str>,
+    disk_expand: Option<&str>,
+) -> anyhow::Result<()> {
     println!("=== LXC {vmid} 리소스 변경 ===");
     if cores.is_none() && memory.is_none() && disk_expand.is_none() {
         anyhow::bail!("--cores / --memory / --disk-expand 중 최소 하나 필요");
@@ -598,17 +700,26 @@ fn require_proxmox() -> anyhow::Result<()> {
 fn parse_pct_list(out: &str) -> anyhow::Result<Vec<LxcRow>> {
     let mut rows = Vec::new();
     for l in out.lines().skip(1) {
-        if l.trim().is_empty() { continue; }
+        if l.trim().is_empty() {
+            continue;
+        }
         let p: Vec<&str> = l.split_whitespace().collect();
         let row = match p.len() {
             4 => LxcRow {
-                vmid: p[0].into(), status: p[1].into(),
-                lock: if p[2] == "-" { String::new() } else { p[2].into() },
+                vmid: p[0].into(),
+                status: p[1].into(),
+                lock: if p[2] == "-" {
+                    String::new()
+                } else {
+                    p[2].into()
+                },
                 name: p[3].into(),
             },
             3 => LxcRow {
-                vmid: p[0].into(), status: p[1].into(),
-                lock: String::new(), name: p[2].into(),
+                vmid: p[0].into(),
+                status: p[1].into(),
+                lock: String::new(),
+                name: p[2].into(),
             },
             _ => anyhow::bail!("pct list 라인 파싱 실패 (컬럼 {}개): {l:?}", p.len()),
         };
@@ -644,7 +755,8 @@ fn parse_pct_status(raw: &str) -> anyhow::Result<&str> {
     if body.contains('\n') {
         anyhow::bail!("pct status 출력이 단일 라인이 아님: {raw:?}");
     }
-    let value = body.strip_prefix("status: ")
+    let value = body
+        .strip_prefix("status: ")
         .ok_or_else(|| anyhow::anyhow!("pct status 출력 형식이 'status: <value>' 아님: {raw:?}"))?;
     if !STATUS_KNOWN.contains(&value) {
         anyhow::bail!("pct status 값이 알 수 없는 형태: {value:?} (허용: {STATUS_KNOWN:?})");
@@ -660,7 +772,10 @@ fn status(vmid: &str, json: bool) -> anyhow::Result<()> {
     }
     let output = Command::new("pct").args(["status", vmid]).output()?;
     if !output.status.success() {
-        anyhow::bail!("pct status {vmid} 실패: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "pct status {vmid} 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     let raw = String::from_utf8(output.stdout)?;
     let value = parse_pct_status(&raw)?;
@@ -693,13 +808,19 @@ fn create(
         .skip(1)
         .find(|l| l.contains(template))
         .and_then(|l| l.split_whitespace().next())
-        .ok_or_else(|| anyhow::anyhow!("템플릿 '{template}' 을 찾을 수 없음 (pveam list local 확인)"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("템플릿 '{template}' 을 찾을 수 없음 (pveam list local 확인)")
+        })?;
 
     let ip_cidr = if ip.contains('/') {
         ip.to_string()
     } else {
         let cfg = pxi_core::config::Config::load().unwrap_or_default();
-        let subnet = if cfg.network.subnet > 0 { cfg.network.subnet } else { 24 };
+        let subnet = if cfg.network.subnet > 0 {
+            cfg.network.subnet
+        } else {
+            24
+        };
         format!("{ip}/{subnet}")
     };
 
@@ -729,16 +850,27 @@ fn create(
     common::run(
         "pct",
         &[
-            "create", vmid, full_template,
-            "--hostname", hostname,
-            "--storage", storage,
-            "--rootfs", &format!("{storage}:{disk}"),
-            "--cores", cores,
-            "--memory", memory,
-            "--net0", &net0,
-            "--features", "nesting=1",
-            "--unprivileged", "1",
-            "--start", "1",
+            "create",
+            vmid,
+            full_template,
+            "--hostname",
+            hostname,
+            "--storage",
+            storage,
+            "--rootfs",
+            &format!("{storage}:{disk}"),
+            "--cores",
+            cores,
+            "--memory",
+            memory,
+            "--net0",
+            &net0,
+            "--features",
+            "nesting=1",
+            "--unprivileged",
+            "1",
+            "--start",
+            "1",
         ],
     )?;
     println!("  LXC {vmid} 생성 + 시작 완료");
@@ -779,9 +911,7 @@ fn delete(vmid: &str, force: bool) -> anyhow::Result<()> {
 }
 
 fn enter(vmid: &str) -> anyhow::Result<()> {
-    let status = Command::new("pct")
-        .args(["enter", vmid])
-        .status()?;
+    let status = Command::new("pct").args(["enter", vmid]).status()?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
@@ -789,7 +919,15 @@ fn backup(vmid: &str, storage: &str, mode: &str) -> anyhow::Result<()> {
     println!("=== LXC {vmid} 백업 ({storage}, {mode}) ===");
     common::run(
         "vzdump",
-        &[vmid, "--storage", storage, "--mode", mode, "--compress", "zstd"],
+        &[
+            vmid,
+            "--storage",
+            storage,
+            "--mode",
+            mode,
+            "--compress",
+            "zstd",
+        ],
     )?;
     println!("  백업 완료");
     Ok(())
@@ -804,7 +942,11 @@ fn config(vmid: &str) -> anyhow::Result<()> {
     let output = cmd_output("pct", &["config", vmid]);
     println!("=== LXC {vmid} 설정 ===\n");
     let parsed: pxi_core::types::LxcStatus = status_out.parse().unwrap();
-    let state = if parsed.is_running() { "running" } else { "stopped" };
+    let state = if parsed.is_running() {
+        "running"
+    } else {
+        "stopped"
+    };
     println!("[상태] {state}");
     println!("[IP] {}", get_lxc_ip(vmid));
     println!();
@@ -830,10 +972,16 @@ fn bootstrap(vmid: &str) -> anyhow::Result<()> {
     let (_, locale_out) = lxc_exec(vmid, &["bash", "-c", "locale 2>&1"]);
     if locale_out.contains("Cannot set") {
         println!("[locale] ko_KR.UTF-8 설정 중...");
-        lxc_exec(vmid, &["bash", "-c",
-            "apt-get install -y -qq locales 2>/dev/null && \
+        lxc_exec(
+            vmid,
+            &[
+                "bash",
+                "-c",
+                "apt-get install -y -qq locales 2>/dev/null && \
              sed -i '/ko_KR.UTF-8/s/^# //' /etc/locale.gen && \
-             locale-gen && echo 'LANG=ko_KR.UTF-8' > /etc/default/locale"]);
+             locale-gen && echo 'LANG=ko_KR.UTF-8' > /etc/default/locale",
+            ],
+        );
         // fallback
         let (_, verify) = lxc_exec(vmid, &["bash", "-c", "locale 2>&1"]);
         if verify.contains("Cannot set") {
@@ -893,7 +1041,10 @@ fn mount(vmid: &str, mp_index: &str, source: &str, target: &str) -> anyhow::Resu
 fn unmount(vmid: &str, mp_index: &str) -> anyhow::Result<()> {
     println!("=== LXC {vmid} 마운트 해제 ===");
     let config = cmd_output("pct", &["config", vmid]);
-    if !config.lines().any(|l| l.starts_with(&format!("mp{mp_index}:"))) {
+    if !config
+        .lines()
+        .any(|l| l.starts_with(&format!("mp{mp_index}:")))
+    {
         println!("[unmount] mp{mp_index} 없음, 스킵");
         return Ok(());
     }
@@ -939,15 +1090,24 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
 
     for line in list_output.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 { continue; }
-        let Ok(vmid) = parts[0].parse::<u32>() else { continue; };
+        if parts.len() < 2 {
+            continue;
+        }
+        let Ok(vmid) = parts[0].parse::<u32>() else {
+            continue;
+        };
         let status = parts[1].to_string();
         let config = cmd_output("pct", &["config", parts[0]]);
         let hostname = extract_config_value(&config, "hostname").unwrap_or_default();
-        if !hostname.starts_with(hostname_prefix) { continue; }
+        if !hostname.starts_with(hostname_prefix) {
+            continue;
+        }
 
         let old_ip_cidr = extract_static_ip_cidr(&config).unwrap_or_else(|| {
-            eprintln!("[align] LXC {} ({}) 에 static IPv4 ip= 값이 없습니다.", vmid, hostname);
+            eprintln!(
+                "[align] LXC {} ({}) 에 static IPv4 ip= 값이 없습니다.",
+                vmid, hostname
+            );
             std::process::exit(1);
         });
 
@@ -963,9 +1123,16 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
         let new_conf_path = PathBuf::from(format!("/etc/pve/lxc/{new_vmid}.conf"));
 
         discovered.push(LxcAlignTarget {
-            old_vmid: vmid, new_vmid, hostname, status,
-            old_ip_cidr, new_ip_cidr, old_ip, new_ip,
-            old_conf_path, new_conf_path,
+            old_vmid: vmid,
+            new_vmid,
+            hostname,
+            status,
+            old_ip_cidr,
+            new_ip_cidr,
+            old_ip,
+            new_ip,
+            old_conf_path,
+            new_conf_path,
         });
     }
 
@@ -974,7 +1141,10 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
         target.new_vmid = start_vmid_num + index as u32;
         target.new_ip_cidr = build_aligned_ip_cidr(&target.old_ip_cidr, target.new_vmid)
             .unwrap_or_else(|err| {
-                eprintln!("[align] LXC {} ({}) IP 계산 실패: {}", target.old_vmid, target.hostname, err);
+                eprintln!(
+                    "[align] LXC {} ({}) IP 계산 실패: {}",
+                    target.old_vmid, target.hostname, err
+                );
                 std::process::exit(1);
             });
         target.new_ip = strip_cidr(&target.new_ip_cidr);
@@ -982,7 +1152,10 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
     }
 
     if discovered.is_empty() {
-        eprintln!("[align] hostname-prefix '{}' 와 일치하는 LXC를 찾지 못했습니다.", hostname_prefix);
+        eprintln!(
+            "[align] hostname-prefix '{}' 와 일치하는 LXC를 찾지 못했습니다.",
+            hostname_prefix
+        );
         std::process::exit(1);
     }
 
@@ -990,20 +1163,26 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
 
     println!(
         "[align] 대상 prefix: '{}', 시작 VMID: {}, apply: {}",
-        hostname_prefix, start_vmid_num,
+        hostname_prefix,
+        start_vmid_num,
         if apply { "yes" } else { "no (dry-run)" }
     );
     println!();
     for target in &discovered {
         println!(
             "  {} ({}) [{}]  {} -> {}  |  {} -> {}",
-            target.old_vmid, target.hostname, target.status,
-            target.old_vmid, target.new_vmid,
-            target.old_ip_cidr, target.new_ip_cidr
+            target.old_vmid,
+            target.hostname,
+            target.status,
+            target.old_vmid,
+            target.new_vmid,
+            target.old_ip_cidr,
+            target.new_ip_cidr
         );
     }
 
-    let exact_ip_map: Vec<(String, String)> = discovered.iter()
+    let exact_ip_map: Vec<(String, String)> = discovered
+        .iter()
         .filter(|t| t.old_ip != t.new_ip)
         .map(|t| (t.old_ip.clone(), t.new_ip.clone()))
         .collect();
@@ -1016,7 +1195,10 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
             hostname_prefix, start_vmid_num
         );
         if !exact_ip_map.is_empty() {
-            println!("[align] /etc/pve/nodes/**/*.conf 내 exact IP 참조도 함께 치환됩니다 ({}개).", exact_ip_map.len());
+            println!(
+                "[align] /etc/pve/nodes/**/*.conf 내 exact IP 참조도 함께 치환됩니다 ({}개).",
+                exact_ip_map.len()
+            );
         }
         return;
     }
@@ -1029,30 +1211,50 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
     }
     println!("\n[align] 백업 디렉토리: {}", backup_root.display());
 
-    let previously_running: Vec<&LxcAlignTarget> = discovered.iter()
+    let previously_running: Vec<&LxcAlignTarget> = discovered
+        .iter()
         .filter(|t| t.status == "running")
         .collect();
 
     for target in &previously_running {
-        run_pct_checked(&["stop", &target.old_vmid.to_string()], &format!("LXC {} 정지", target.old_vmid));
+        run_pct_checked(
+            &["stop", &target.old_vmid.to_string()],
+            &format!("LXC {} 정지", target.old_vmid),
+        );
     }
 
     for target in &discovered {
         if !target.old_conf_path.exists() {
-            eprintln!("[align] 설정 파일이 없습니다: {}", target.old_conf_path.display());
+            eprintln!(
+                "[align] 설정 파일이 없습니다: {}",
+                target.old_conf_path.display()
+            );
             std::process::exit(1);
         }
         fs::rename(&target.old_conf_path, &target.new_conf_path).unwrap_or_else(|err| {
-            eprintln!("[align] 설정 파일 rename 실패: {} -> {} ({})", target.old_conf_path.display(), target.new_conf_path.display(), err);
+            eprintln!(
+                "[align] 설정 파일 rename 실패: {} -> {} ({})",
+                target.old_conf_path.display(),
+                target.new_conf_path.display(),
+                err
+            );
             std::process::exit(1);
         });
         let content = fs::read_to_string(&target.new_conf_path).unwrap_or_else(|err| {
-            eprintln!("[align] 설정 파일 읽기 실패: {} ({})", target.new_conf_path.display(), err);
+            eprintln!(
+                "[align] 설정 파일 읽기 실패: {} ({})",
+                target.new_conf_path.display(),
+                err
+            );
             std::process::exit(1);
         });
         let updated = rewrite_net0_ip(&content, &target.new_ip_cidr);
         fs::write(&target.new_conf_path, updated).unwrap_or_else(|err| {
-            eprintln!("[align] 설정 파일 쓰기 실패: {} ({})", target.new_conf_path.display(), err);
+            eprintln!(
+                "[align] 설정 파일 쓰기 실패: {} ({})",
+                target.new_conf_path.display(),
+                err
+            );
             std::process::exit(1);
         });
     }
@@ -1076,24 +1278,34 @@ fn align_vmid_ip(hostname_prefix: &str, start_vmid: &str, apply: bool) {
     }
 
     for target in previously_running {
-        run_pct_checked(&["start", &target.new_vmid.to_string()], &format!("LXC {} 시작", target.new_vmid));
+        run_pct_checked(
+            &["start", &target.new_vmid.to_string()],
+            &format!("LXC {} 시작", target.new_vmid),
+        );
     }
 
     println!();
-    println!("[align] 완료: {}개 LXC 재배치, 참조 치환 파일 {}개", discovered.len(), updated_files);
+    println!(
+        "[align] 완료: {}개 LXC 재배치, 참조 치환 파일 {}개",
+        discovered.len(),
+        updated_files
+    );
 }
 
 // --- align helpers ---
 
 fn extract_config_value(config: &str, key: &str) -> Option<String> {
-    config.lines()
+    config
+        .lines()
         .find_map(|line| line.strip_prefix(&format!("{key}:")))
         .map(|v| v.trim().to_string())
 }
 
 fn extract_static_ip_cidr(config: &str) -> Option<String> {
     for line in config.lines() {
-        if !line.starts_with("net0:") { continue; }
+        if !line.starts_with("net0:") {
+            continue;
+        }
         for part in line.split(',') {
             let trimmed = part.trim();
             if let Some(value) = trimmed.strip_prefix("ip=") {
@@ -1108,7 +1320,8 @@ fn extract_static_ip_cidr(config: &str) -> Option<String> {
 }
 
 fn build_aligned_ip_cidr(old_ip_cidr: &str, new_vmid: u32) -> Result<String, String> {
-    let (old_ip, cidr) = old_ip_cidr.split_once('/')
+    let (old_ip, cidr) = old_ip_cidr
+        .split_once('/')
         .ok_or_else(|| format!("CIDR 형식이 아닙니다: {old_ip_cidr}"))?;
     let octets: Vec<&str> = old_ip.split('.').collect();
     if octets.len() != 4 {
@@ -1116,9 +1329,15 @@ fn build_aligned_ip_cidr(old_ip_cidr: &str, new_vmid: u32) -> Result<String, Str
     }
     let new_host = new_vmid % 1000;
     if !(1..=255).contains(&new_host) {
-        return Err(format!("VMID {} 는 마지막 옥텟으로 안전하게 매핑할 수 없습니다.", new_vmid));
+        return Err(format!(
+            "VMID {} 는 마지막 옥텟으로 안전하게 매핑할 수 없습니다.",
+            new_vmid
+        ));
     }
-    Ok(format!("{}.{}.{}.{}/{}", octets[0], octets[1], octets[2], new_host, cidr))
+    Ok(format!(
+        "{}.{}.{}.{}/{}",
+        octets[0], octets[1], octets[2], new_host, cidr
+    ))
 }
 
 fn strip_cidr(ip_cidr: &str) -> String {
@@ -1130,14 +1349,23 @@ fn validate_align_targets(targets: &[LxcAlignTarget], existing_vmids: &HashSet<u
     let mut target_new_ids = HashSet::new();
     for target in targets {
         if !target_new_ids.insert(target.new_vmid) {
-            eprintln!("[align] 중복 대상 VMID가 생성되었습니다: {}", target.new_vmid);
+            eprintln!(
+                "[align] 중복 대상 VMID가 생성되었습니다: {}",
+                target.new_vmid
+            );
             std::process::exit(1);
         }
         if existing_vmids.contains(&target.new_vmid) && target.new_vmid != target.old_vmid {
             if target_old_ids.contains(&target.new_vmid) {
-                eprintln!("[align] 대상 VMID {} 가 현재 다른 대상 LXC의 VMID와 겹칩니다.", target.new_vmid);
+                eprintln!(
+                    "[align] 대상 VMID {} 가 현재 다른 대상 LXC의 VMID와 겹칩니다.",
+                    target.new_vmid
+                );
             } else {
-                eprintln!("[align] 대상 VMID {} 가 이미 다른 LXC에서 사용 중입니다.", target.new_vmid);
+                eprintln!(
+                    "[align] 대상 VMID {} 가 이미 다른 LXC에서 사용 중입니다.",
+                    target.new_vmid
+                );
             }
             std::process::exit(1);
         }
@@ -1173,7 +1401,9 @@ fn rewrite_net0_ip(config: &str, new_ip_cidr: &str) -> String {
                     parts.push(trimmed.to_string());
                 }
             }
-            if !replaced { parts.push(format!("ip={new_ip_cidr}")); }
+            if !replaced {
+                parts.push(format!("ip={new_ip_cidr}"));
+            }
             out.push(format!("net0: {}", parts.join(",")));
         } else {
             out.push(line.to_string());
@@ -1183,14 +1413,24 @@ fn rewrite_net0_ip(config: &str, new_ip_cidr: &str) -> String {
 }
 
 fn exact_ip_sub(text: &str, old: &str, new: &str) -> String {
-    if old.is_empty() || old == new { return text.to_string(); }
+    if old.is_empty() || old == new {
+        return text.to_string();
+    }
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;
     while let Some(relative) = text[cursor..].find(old) {
         let start = cursor + relative;
         let end = start + old.len();
-        let left_digit = text[..start].chars().next_back().map(|c| c.is_ascii_digit()).unwrap_or(false);
-        let right_digit = text[end..].chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false);
+        let left_digit = text[..start]
+            .chars()
+            .next_back()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false);
+        let right_digit = text[end..]
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false);
         if left_digit || right_digit {
             out.push_str(&text[cursor..end]);
         } else {
@@ -1204,7 +1444,9 @@ fn exact_ip_sub(text: &str, old: &str, new: &str) -> String {
 }
 
 fn collect_conf_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else { return; };
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -1216,28 +1458,42 @@ fn collect_conf_files(root: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn backup_file(path: &Path, backup_root: &Path) {
-    let Ok(relative) = path.strip_prefix("/") else { return; };
+    let Ok(relative) = path.strip_prefix("/") else {
+        return;
+    };
     let dest = backup_root.join(relative);
-    if let Some(parent) = dest.parent() { let _ = fs::create_dir_all(parent); }
+    if let Some(parent) = dest.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let _ = fs::copy(path, dest);
 }
 
 fn build_backup_root() -> PathBuf {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let path = PathBuf::from(format!("/root/pxi-lxc-align-backup-{ts}"));
     let _ = fs::create_dir_all(&path);
     path
 }
 
 fn run_pct_checked(args: &[&str], label: &str) {
-    let output = Command::new("pct").args(args).output().unwrap_or_else(|err| {
-        eprintln!("[align] pct 실행 실패 ({label}): {err}");
-        std::process::exit(1);
-    });
+    let output = Command::new("pct")
+        .args(args)
+        .output()
+        .unwrap_or_else(|err| {
+            eprintln!("[align] pct 실행 실패 ({label}): {err}");
+            std::process::exit(1);
+        });
     if output.status.success() {
         println!("[align] {} 완료", label);
     } else {
-        eprintln!("[align] {} 실패: {}", label, String::from_utf8_lossy(&output.stderr).trim());
+        eprintln!(
+            "[align] {} 실패: {}",
+            label,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
         std::process::exit(1);
     }
 }
@@ -1253,7 +1509,9 @@ fn gateway_fix(node: Option<&str>, dry_run: bool) {
         let output = cmd_output("pvesh", &["get", "/nodes", "--output-format", "json"]);
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
             parsed.as_array().map_or(vec![], |arr| {
-                arr.iter().filter_map(|n| n["node"].as_str().map(|s| s.to_string())).collect()
+                arr.iter()
+                    .filter_map(|n| n["node"].as_str().map(|s| s.to_string()))
+                    .collect()
             })
         } else {
             eprintln!("[gateway-fix] 노드 목록을 가져올 수 없습니다.");
@@ -1280,15 +1538,31 @@ fn gateway_fix(node: Option<&str>, dry_run: bool) {
         let mut node_fixes = vec![];
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("conf") { continue; }
-            let vmid = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            let content = match fs::read_to_string(&path) { Ok(c) => c, Err(_) => continue };
+            if path.extension().and_then(|e| e.to_str()) != Some("conf") {
+                continue;
+            }
+            let vmid = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
 
             for line in content.lines() {
-                if !line.starts_with("net") || !line.contains("gw=") { continue; }
+                if !line.starts_with("net") || !line.contains("gw=") {
+                    continue;
+                }
                 if let Some(gw) = line.split(',').find_map(|p| p.strip_prefix("gw=")) {
                     if !gw.is_empty() && gw != correct_gw {
-                        node_fixes.push((vmid.clone(), path.clone(), gw.to_string(), line.to_string()));
+                        node_fixes.push((
+                            vmid.clone(),
+                            path.clone(),
+                            gw.to_string(),
+                            line.to_string(),
+                        ));
                     } else {
                         total_skipped += 1;
                     }
@@ -1300,7 +1574,10 @@ fn gateway_fix(node: Option<&str>, dry_run: bool) {
             println!("[gateway-fix] {node_name}: 수정 필요 없음 (GW={correct_gw})");
             continue;
         }
-        println!("[gateway-fix] {node_name}: GW={correct_gw}, {}개 LXC 수정 필요", node_fixes.len());
+        println!(
+            "[gateway-fix] {node_name}: GW={correct_gw}, {}개 LXC 수정 필요",
+            node_fixes.len()
+        );
 
         for (vmid, path, old_gw, old_line) in &node_fixes {
             let new_line = old_line.replace(&format!("gw={old_gw}"), &format!("gw={correct_gw}"));
@@ -1314,9 +1591,15 @@ fn gateway_fix(node: Option<&str>, dry_run: bool) {
                     continue;
                 }
                 // runtime apply for running LXCs
-                let status = cmd_output("pvesh", &[
-                    "get", &format!("/nodes/{node_name}/lxc/{vmid}/status/current"), "--output-format", "json"
-                ]);
+                let status = cmd_output(
+                    "pvesh",
+                    &[
+                        "get",
+                        &format!("/nodes/{node_name}/lxc/{vmid}/status/current"),
+                        "--output-format",
+                        "json",
+                    ],
+                );
                 if status.contains("\"status\":\"running\"") {
                     let node_ip = node_ip_from_name(node_name);
                     let _ = Command::new("ssh")
@@ -1341,7 +1624,15 @@ fn gateway_fix(node: Option<&str>, dry_run: bool) {
 }
 
 fn get_node_vmbr1_ip(node: &str) -> String {
-    let output = cmd_output("pvesh", &["get", &format!("/nodes/{node}/network"), "--output-format", "json"]);
+    let output = cmd_output(
+        "pvesh",
+        &[
+            "get",
+            &format!("/nodes/{node}/network"),
+            "--output-format",
+            "json",
+        ],
+    );
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
         if let Some(ifaces) = parsed.as_array() {
             for iface in ifaces {
@@ -1360,13 +1651,24 @@ fn get_node_vmbr1_ip(node: &str) -> String {
 // Route Audit
 // =============================================================================
 
-const WEB_PORTS: &[u16] = &[80, 443, 8080, 8443, 3000, 3100, 4173, 4200, 5000, 8000, 8065, 8088, 8188, 8189, 8384, 8888, 9000, 9090, 18789, 2283];
+const WEB_PORTS: &[u16] = &[
+    80, 443, 8080, 8443, 3000, 3100, 4173, 4200, 5000, 8000, 8065, 8088, 8188, 8189, 8384, 8888,
+    9000, 9090, 18789, 2283,
+];
 
 const INFRA_NAMES: &[&str] = &[
-    "traefik", "host-ops", "proxmox-host-ops",
-    "dalcenter", "dalcenter-rs", "maddy", "mailpit",
-    "android-dev", "vhost-mysql-dev", "vhost-php-dev",
-    "vhost-gitlab-sub-traefik", "agent-orchestrator",
+    "traefik",
+    "host-ops",
+    "proxmox-host-ops",
+    "dalcenter",
+    "dalcenter-rs",
+    "maddy",
+    "mailpit",
+    "android-dev",
+    "vhost-mysql-dev",
+    "vhost-php-dev",
+    "vhost-gitlab-sub-traefik",
+    "agent-orchestrator",
 ];
 
 fn route_audit(node: Option<&str>, fix: bool) {
@@ -1382,10 +1684,15 @@ fn route_audit(node: Option<&str>, fix: bool) {
         vec![n.to_string()]
     } else {
         let output = cmd_output("pvesh", &["get", "/nodes", "--output-format", "json"]);
-        serde_json::from_str::<serde_json::Value>(&output).ok()
-            .and_then(|v| v.as_array().map(|arr| {
-                arr.iter().filter_map(|n| n["node"].as_str().map(|s| s.to_string())).collect()
-            }))
+        serde_json::from_str::<serde_json::Value>(&output)
+            .ok()
+            .and_then(|v| {
+                v.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|n| n["node"].as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+            })
             .unwrap_or_default()
     };
 
@@ -1394,12 +1701,22 @@ fn route_audit(node: Option<&str>, fix: bool) {
     let mut infra_skipped = 0u32;
 
     for node_name in &nodes {
-        let output = cmd_output("pvesh", &["get", &format!("/nodes/{node_name}/lxc"), "--output-format", "json"]);
+        let output = cmd_output(
+            "pvesh",
+            &[
+                "get",
+                &format!("/nodes/{node_name}/lxc"),
+                "--output-format",
+                "json",
+            ],
+        );
         let lxcs: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap_or_default();
 
         for lxc in &lxcs {
             let status = lxc["status"].as_str().unwrap_or("");
-            if status != "running" { continue; }
+            if status != "running" {
+                continue;
+            }
             let vmid = lxc["vmid"].as_u64().unwrap_or(0);
             let name = lxc["name"].as_str().unwrap_or("");
 
@@ -1409,17 +1726,23 @@ fn route_audit(node: Option<&str>, fix: bool) {
             }
 
             let conf_path = format!("/etc/pve/nodes/{node_name}/lxc/{vmid}.conf");
-            let ip = fs::read_to_string(&conf_path).ok()
+            let ip = fs::read_to_string(&conf_path)
+                .ok()
                 .and_then(|content| {
-                    content.lines().find(|l| l.starts_with("net0:")).and_then(|line| {
-                        line.split(',').find_map(|p| p.strip_prefix("ip=")).map(|ip| {
-                            ip.split('/').next().unwrap_or(ip).to_string()
+                    content
+                        .lines()
+                        .find(|l| l.starts_with("net0:"))
+                        .and_then(|line| {
+                            line.split(',')
+                                .find_map(|p| p.strip_prefix("ip="))
+                                .map(|ip| ip.split('/').next().unwrap_or(ip).to_string())
                         })
-                    })
                 })
                 .unwrap_or_default();
 
-            if ip.is_empty() { continue; }
+            if ip.is_empty() {
+                continue;
+            }
 
             let has_route = all_backends.iter().any(|b| b.contains(&ip));
             if has_route {
@@ -1442,7 +1765,10 @@ fn route_audit(node: Option<&str>, fix: bool) {
     for (node_name, vmid, name, ip) in &unregistered {
         println!("  {:<12} {:<8} {:<25} {}", node_name, vmid, name, ip);
     }
-    println!("\n  등록: {registered} | 미등록: {} | 인프라(스킵): {infra_skipped}", unregistered.len());
+    println!(
+        "\n  등록: {registered} | 미등록: {} | 인프라(스킵): {infra_skipped}",
+        unregistered.len()
+    );
 
     if !fix {
         println!("\n  자동 등록: pxi-lxc route-audit --fix");
@@ -1466,7 +1792,11 @@ fn route_audit(node: Option<&str>, fix: bool) {
             let traefik_vmid = find_traefik_vmid();
             if !traefik_vmid.is_empty() {
                 let yml = build_route_yml(name, &domain, &backend);
-                write_to_lxc(&traefik_vmid, &format!("/opt/traefik/dynamic/{name}.yml"), &yml);
+                write_to_lxc(
+                    &traefik_vmid,
+                    &format!("/opt/traefik/dynamic/{name}.yml"),
+                    &yml,
+                );
             }
             fixed += 1;
         } else {
@@ -1477,31 +1807,54 @@ fn route_audit(node: Option<&str>, fix: bool) {
 }
 
 fn detect_web_port(node: &str, vmid: &str, ip: &str) -> Option<u16> {
-    let (ok, output) = lxc_exec_on(Some(node), vmid, &["bash", "-lc",
-        "ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE '[0-9]+$' | sort -un"]);
+    let (ok, output) = lxc_exec_on(
+        Some(node),
+        vmid,
+        &[
+            "bash",
+            "-lc",
+            "ss -tlnp 2>/dev/null | awk 'NR>1 {print $4}' | grep -oE '[0-9]+$' | sort -un",
+        ],
+    );
     if ok {
-        let listen_ports: Vec<u16> = output.lines()
+        let listen_ports: Vec<u16> = output
+            .lines()
             .filter_map(|l| l.trim().parse::<u16>().ok())
             .collect();
         for &web_port in WEB_PORTS {
-            if listen_ports.contains(&web_port) { return Some(web_port); }
+            if listen_ports.contains(&web_port) {
+                return Some(web_port);
+            }
         }
         for port in &listen_ports {
-            if *port >= 1024 && *port != 22 { return Some(*port); }
+            if *port >= 1024 && *port != 22 {
+                return Some(*port);
+            }
         }
     }
     // fallback: host-side port probe
     for &port in &WEB_PORTS[..5] {
-        let check = cmd_output("bash", &["-c",
-            &format!("timeout 1 bash -c 'echo > /dev/tcp/{ip}/{port}' 2>/dev/null && echo open")]);
-        if check.contains("open") { return Some(port); }
+        let check = cmd_output(
+            "bash",
+            &[
+                "-c",
+                &format!(
+                    "timeout 1 bash -c 'echo > /dev/tcp/{ip}/{port}' 2>/dev/null && echo open"
+                ),
+            ],
+        );
+        if check.contains("open") {
+            return Some(port);
+        }
     }
     None
 }
 
 fn extract_prefix_from_ip(ip: &str) -> String {
     let parts: Vec<&str> = ip.split('.').collect();
-    if parts.len() == 4 && parts[0] == "10" { return parts[2].to_string(); }
+    if parts.len() == 4 && parts[0] == "10" {
+        return parts[2].to_string();
+    }
     "50".to_string()
 }
 
@@ -1516,7 +1869,8 @@ fn load_route_backends_from_dir(node: &str) -> Vec<String> {
     for p in &paths {
         if let Ok(data) = fs::read_to_string(p) {
             if let Ok(routes) = serde_json::from_str::<Vec<serde_json::Value>>(&data) {
-                return routes.iter()
+                return routes
+                    .iter()
                     .filter_map(|r| r["backend"].as_str().map(|s| s.to_string()))
                     .collect();
             }
@@ -1529,7 +1883,10 @@ fn find_traefik_vmid() -> String {
     let output = cmd_output("pct", &["list"]);
     for line in output.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 && parts[1] == "running" && parts.last().map_or(false, |n| *n == "traefik") {
+        if parts.len() >= 3
+            && parts[1] == "running"
+            && parts.last().map_or(false, |n| *n == "traefik")
+        {
             return parts[0].to_string();
         }
     }
@@ -1543,7 +1900,9 @@ fn build_route_yml(name: &str, domain: &str, backend: &str) -> String {
 fn write_to_lxc(vmid: &str, path: &str, content: &str) {
     let tmp = format!("/tmp/pxi-lxc-{}", path.replace('/', "_"));
     let _ = fs::write(&tmp, content);
-    let _ = Command::new("pct").args(["push", vmid, &tmp, path]).status();
+    let _ = Command::new("pct")
+        .args(["push", vmid, &tmp, path])
+        .status();
     let _ = fs::remove_file(&tmp);
 }
 
@@ -1596,8 +1955,12 @@ WantedBy=timers.target\n";
             println!("  로그: journalctl -u pxi-route-audit.service -f");
         }
         "uninstall" => {
-            let _ = Command::new("systemctl").args(["stop", "pxi-route-audit.timer"]).status();
-            let _ = Command::new("systemctl").args(["disable", "pxi-route-audit.timer"]).status();
+            let _ = Command::new("systemctl")
+                .args(["stop", "pxi-route-audit.timer"])
+                .status();
+            let _ = Command::new("systemctl")
+                .args(["disable", "pxi-route-audit.timer"])
+                .status();
             let _ = fs::remove_file(service_unit);
             let _ = fs::remove_file(timer_unit);
             let _ = Command::new("systemctl").args(["daemon-reload"]).status();
@@ -1610,13 +1973,24 @@ WantedBy=timers.target\n";
             println!("  active:  {}", timer_status);
             println!("  enabled: {}", timer_enabled);
 
-            let next_run = cmd_output("systemctl", &["show", "pxi-route-audit.timer", "--property=NextElapseUSecRealtime", "--value"]);
+            let next_run = cmd_output(
+                "systemctl",
+                &[
+                    "show",
+                    "pxi-route-audit.timer",
+                    "--property=NextElapseUSecRealtime",
+                    "--value",
+                ],
+            );
             if !next_run.is_empty() {
                 println!("  next run: {}", next_run);
             }
 
             println!("\n[route-audit-watch] recent logs:");
-            let logs = cmd_output("journalctl", &["-u", "pxi-route-audit.service", "-n", "10", "--no-pager"]);
+            let logs = cmd_output(
+                "journalctl",
+                &["-u", "pxi-route-audit.service", "-n", "10", "--no-pager"],
+            );
             println!("{}", logs);
         }
         _ => {
@@ -1629,7 +2003,12 @@ WantedBy=timers.target\n";
 // Init (locale + timezone + packages)
 // =============================================================================
 
-fn init_lxc(vmid: &str, locale_v: &str, timezone_v: &str, packages_csv: &str) -> anyhow::Result<()> {
+fn init_lxc(
+    vmid: &str,
+    locale_v: &str,
+    timezone_v: &str,
+    packages_csv: &str,
+) -> anyhow::Result<()> {
     println!("=== LXC {vmid} 초기화 ===");
     require_proxmox()?;
     let status_out = common::run_str("pct", &["status", vmid])?;
@@ -1639,10 +2018,20 @@ fn init_lxc(vmid: &str, locale_v: &str, timezone_v: &str, packages_csv: &str) ->
         common::run_str("pct", &["start", vmid])?;
     }
 
-    if locale_v != "none" { setup_locale(vmid, locale_v)?; }
-    if timezone_v != "none" { setup_timezone(vmid, timezone_v)?; }
-    let pkgs: Vec<&str> = packages_csv.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    if !pkgs.is_empty() { install_base_packages(vmid, &pkgs)?; }
+    if locale_v != "none" {
+        setup_locale(vmid, locale_v)?;
+    }
+    if timezone_v != "none" {
+        setup_timezone(vmid, timezone_v)?;
+    }
+    let pkgs: Vec<&str> = packages_csv
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !pkgs.is_empty() {
+        install_base_packages(vmid, &pkgs)?;
+    }
     println!("  LXC {vmid} 초기화 완료");
     Ok(())
 }
@@ -1652,7 +2041,10 @@ fn pct_exec(vmid: &str, script: &str) -> anyhow::Result<String> {
 }
 
 fn setup_locale(vmid: &str, locale_v: &str) -> anyhow::Result<()> {
-    if !locale_v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+    if !locale_v
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
         anyhow::bail!("locale 값이 비정상: {locale_v:?}");
     }
     let current = pct_exec(vmid, "locale 2>&1 || true").unwrap_or_default();
@@ -1679,13 +2071,20 @@ fn setup_locale(vmid: &str, locale_v: &str) -> anyhow::Result<()> {
 }
 
 fn setup_timezone(vmid: &str, tz: &str) -> anyhow::Result<()> {
-    if !tz.chars().all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '_' || c == '-' || c == '+') {
+    if !tz
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '_' || c == '-' || c == '+')
+    {
         anyhow::bail!("timezone 값이 비정상: {tz:?}");
     }
     if tz.contains("..") || tz.starts_with('/') {
         anyhow::bail!("timezone 값에 '..' 또는 선행 '/' 금지: {tz:?}");
     }
-    let check = pct_exec(vmid, &format!("test -f /usr/share/zoneinfo/{tz} && echo ok")).unwrap_or_default();
+    let check = pct_exec(
+        vmid,
+        &format!("test -f /usr/share/zoneinfo/{tz} && echo ok"),
+    )
+    .unwrap_or_default();
     if !check.contains("ok") {
         anyhow::bail!("LXC {vmid} 안에 /usr/share/zoneinfo/{tz} 파일 없음");
     }
@@ -1695,15 +2094,23 @@ fn setup_timezone(vmid: &str, tz: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     println!("[tz] {tz} 설정 중...");
-    pct_exec(vmid, &format!("ln -sf /usr/share/zoneinfo/{tz} /etc/localtime && echo '{tz}' > /etc/timezone"))?;
+    pct_exec(
+        vmid,
+        &format!("ln -sf /usr/share/zoneinfo/{tz} /etc/localtime && echo '{tz}' > /etc/timezone"),
+    )?;
     println!("[tz] {tz} 완료");
     Ok(())
 }
 
 fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
     for p in pkgs {
-        if p.starts_with('-') { anyhow::bail!("패키지 이름이 '-'로 시작할 수 없음: {p:?}"); }
-        if !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '+') {
+        if p.starts_with('-') {
+            anyhow::bail!("패키지 이름이 '-'로 시작할 수 없음: {p:?}");
+        }
+        if !p
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '+')
+        {
             anyhow::bail!("패키지 이름이 비정상: {p:?}");
         }
     }
@@ -1715,11 +2122,17 @@ fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
     for p in pkgs {
         let matched = out.lines().find_map(|line| {
             let (name, status) = line.split_once('\t')?;
-            if name == *p { Some(status) } else { None }
+            if name == *p {
+                Some(status)
+            } else {
+                None
+            }
         });
         match matched {
             Some(status) => {
-                if !status.contains("install ok installed") { missing.push(p); }
+                if !status.contains("install ok installed") {
+                    missing.push(p);
+                }
             }
             None => anyhow::bail!("dpkg-query probe 출력에 '{p}' 라인 없음"),
         }
@@ -1730,10 +2143,13 @@ fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
     }
     let joined = missing.join(" ");
     println!("[packages] 누락 설치: {joined}");
-    pct_exec(vmid, &format!(
-        "DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+    pct_exec(
+        vmid,
+        &format!(
+            "DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -- {joined}"
-    ))?;
+        ),
+    )?;
     println!("[packages] {} 개 설치 완료", missing.len());
     Ok(())
 }
@@ -1744,11 +2160,42 @@ fn install_base_packages(vmid: &str, pkgs: &[&str]) -> anyhow::Result<()> {
 
 fn doctor() {
     println!("=== pxi-lxc doctor ===");
-    println!("  pct:       {}", if common::has_cmd("pct") { "ok" } else { "missing" });
-    println!("  vzdump:    {}", if common::has_cmd("vzdump") { "ok" } else { "missing" });
-    println!("  pveam:     {}", if common::has_cmd("pveam") { "ok" } else { "missing" });
-    println!("  pvesh:     {}", if common::has_cmd("pvesh") { "ok" } else { "missing" });
-    println!("  proxmox:   {}", if os::is_proxmox() { "ok" } else { "no" });
+    println!(
+        "  pct:       {}",
+        if common::has_cmd("pct") {
+            "ok"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  vzdump:    {}",
+        if common::has_cmd("vzdump") {
+            "ok"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  pveam:     {}",
+        if common::has_cmd("pveam") {
+            "ok"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  pvesh:     {}",
+        if common::has_cmd("pvesh") {
+            "ok"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  proxmox:   {}",
+        if os::is_proxmox() { "ok" } else { "no" }
+    );
 }
 
 // =============================================================================
@@ -1756,8 +2203,13 @@ fn doctor() {
 // =============================================================================
 
 fn mgmt_setup(
-    vmid: &str, hostname: &str, storage: &str, disk: &str,
-    cores: &str, _memory: &str, bootstrap: bool,
+    vmid: &str,
+    hostname: &str,
+    storage: &str,
+    disk: &str,
+    cores: &str,
+    _memory: &str,
+    bootstrap: bool,
 ) -> anyhow::Result<()> {
     println!("=== 관리 LXC 생성: {vmid} ({hostname}) ===\n");
 
@@ -1765,7 +2217,18 @@ fn mgmt_setup(
 
     // 1. Create LXC
     println!("[mgmt] 1/5 LXC 생성...");
-    create(vmid, hostname, &ip, "debian-13", storage, disk, cores, "2048", None, "vmbr1")?;
+    create(
+        vmid,
+        hostname,
+        &ip,
+        "debian-13",
+        storage,
+        disk,
+        cores,
+        "2048",
+        None,
+        "vmbr1",
+    )?;
 
     if bootstrap {
         println!("\n{}\n", "─".repeat(50));
@@ -1786,15 +2249,29 @@ fn mgmt_setup(
     // 4. SSH key setup (LXC -> host)
     println!("\n[mgmt] 4/5 SSH 키 설정...");
     let host_ip = cmd_output("bash", &["-c", "hostname -I | awk '{print $1}'"]);
-    let host_ip = if host_ip.is_empty() { "127.0.0.1".to_string() } else { host_ip };
+    let host_ip = if host_ip.is_empty() {
+        "127.0.0.1".to_string()
+    } else {
+        host_ip
+    };
 
     let (has_key, _) = lxc_exec(vmid, &["test", "-f", "/root/.ssh/id_ed25519"]);
     if !has_key {
         lxc_exec(vmid, &["mkdir", "-p", "/root/.ssh"]);
-        lxc_exec(vmid, &[
-            "ssh-keygen", "-t", "ed25519", "-f", "/root/.ssh/id_ed25519",
-            "-N", "", "-C", &format!("mgmt-lxc-{vmid}"),
-        ]);
+        lxc_exec(
+            vmid,
+            &[
+                "ssh-keygen",
+                "-t",
+                "ed25519",
+                "-f",
+                "/root/.ssh/id_ed25519",
+                "-N",
+                "",
+                "-C",
+                &format!("mgmt-lxc-{vmid}"),
+            ],
+        );
     }
 
     // Read pubkey and add to host authorized_keys
@@ -1818,9 +2295,14 @@ fn mgmt_setup(
     let ssh_config = format!(
         "Host host\n  HostName {host_ip}\n  User root\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n"
     );
-    lxc_exec(vmid, &["bash", "-c",
-        &format!("cat > /root/.ssh/config << 'SSHEOF'\n{ssh_config}SSHEOF")
-    ]);
+    lxc_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            &format!("cat > /root/.ssh/config << 'SSHEOF'\n{ssh_config}SSHEOF"),
+        ],
+    );
     lxc_exec(vmid, &["chmod", "600", "/root/.ssh/config"]);
 
     // 5. Proxmox API token
@@ -1832,22 +2314,37 @@ fn mgmt_setup(
         .output();
 
     let token_out = Command::new("pveum")
-        .args(["user", "token", "add", "root@pam", &token_id,
-            "--privsep", "0", "--output-format", "json"])
+        .args([
+            "user",
+            "token",
+            "add",
+            "root@pam",
+            &token_id,
+            "--privsep",
+            "0",
+            "--output-format",
+            "json",
+        ])
         .output()?;
 
     if token_out.status.success() {
         let stdout = String::from_utf8_lossy(&token_out.stdout);
-        if let Some(val) = stdout.lines()
+        if let Some(val) = stdout
+            .lines()
             .find(|l| l.contains("value"))
             .and_then(|l| l.split('"').nth(3))
         {
             let api_env = format!(
                 "PVE_API_URL=https://{host_ip}:8006/api2/json\nPVE_API_TOKEN=root@pam!{token_id}={val}\n"
             );
-            lxc_exec(vmid, &["bash", "-c",
-                &format!("cat > /etc/proxmox-api.env << 'ENVEOF'\n{api_env}ENVEOF")
-            ]);
+            lxc_exec(
+                vmid,
+                &[
+                    "bash",
+                    "-c",
+                    &format!("cat > /etc/proxmox-api.env << 'ENVEOF'\n{api_env}ENVEOF"),
+                ],
+            );
             lxc_exec(vmid, &["chmod", "600", "/etc/proxmox-api.env"]);
             println!("[mgmt] API 토큰 발급 완료");
         }
@@ -1861,7 +2358,14 @@ fn mgmt_setup(
 
 /// VMID에서 IP를 유추 (10.0.50.{vmid 뒤 숫자}/16)
 fn vmid_to_ip(vmid: &str) -> String {
-    let last3: String = vmid.chars().rev().take(3).collect::<String>().chars().rev().collect();
+    let last3: String = vmid
+        .chars()
+        .rev()
+        .take(3)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     let num: u32 = last3.parse().unwrap_or(0);
     let third = num / 256;
     let fourth = num % 256;

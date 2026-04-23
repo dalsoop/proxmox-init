@@ -102,20 +102,54 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Create { name, sudo, ssh_key, shell } => create(&name, sudo, ssh_key.as_deref(), &shell),
+        Cmd::Create {
+            name,
+            sudo,
+            ssh_key,
+            shell,
+        } => create(&name, sudo, ssh_key.as_deref(), &shell),
         Cmd::Remove { name, purge } => remove(&name, purge),
         Cmd::Teardown { names } => teardown(&names),
-        Cmd::List => { list(); Ok(()) }
-        Cmd::Status { name } => { status(&name); Ok(()) }
+        Cmd::List => {
+            list();
+            Ok(())
+        }
+        Cmd::Status { name } => {
+            status(&name);
+            Ok(())
+        }
         Cmd::SshKeyAdd { name, key } => ssh_key_add(&name, &key),
         Cmd::RolesInit => roles_init(),
         Cmd::RolesApply => roles_apply(),
-        Cmd::RolesStatus => { roles_status(); Ok(()) }
-        Cmd::ProxmoxSilo { userid, pool, vmids, name_prefix, tags, role, comment, password, allow_move } => {
-            proxmox_silo(&userid, &pool, vmids.as_deref(), name_prefix.as_deref(),
-                tags.as_deref(), &role, Some(&comment), password.as_deref(), allow_move)
+        Cmd::RolesStatus => {
+            roles_status();
+            Ok(())
         }
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::ProxmoxSilo {
+            userid,
+            pool,
+            vmids,
+            name_prefix,
+            tags,
+            role,
+            comment,
+            password,
+            allow_move,
+        } => proxmox_silo(
+            &userid,
+            &pool,
+            vmids.as_deref(),
+            name_prefix.as_deref(),
+            tags.as_deref(),
+            &role,
+            Some(&comment),
+            password.as_deref(),
+            allow_move,
+        ),
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -156,7 +190,10 @@ fn setup_sudoers_for(name: &str) -> anyhow::Result<()> {
     // visudo 검증
     let visudo = find_visudo();
     common::run(&visudo, &["-cf", &tmp])?;
-    common::run("install", &["-m", "440", "-o", "root", "-g", "root", &tmp, &sudoers_file])?;
+    common::run(
+        "install",
+        &["-m", "440", "-o", "root", "-g", "root", &tmp, &sudoers_file],
+    )?;
     println!("  + sudo 권한: {sudoers_file}");
     Ok(())
 }
@@ -198,7 +235,11 @@ fn remove(name: &str, purge: bool) -> anyhow::Result<()> {
 
 fn teardown(names_csv: &str) -> anyhow::Result<()> {
     println!("=== 계정 일괄 삭제 ===\n");
-    let names: Vec<&str> = names_csv.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let names: Vec<&str> = names_csv
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     for name in &names {
         if common::run("id", &[name]).is_err() {
@@ -259,7 +300,10 @@ fn status(name: &str) {
     println!("=== {name} 상태 ===");
     match common::run("id", &[name]) {
         Ok(out) => println!("  id:    {}", out.trim()),
-        Err(_) => { println!("  - 존재하지 않음"); return; }
+        Err(_) => {
+            println!("  - 존재하지 않음");
+            return;
+        }
     }
     if let Ok(home) = common::run("getent", &["passwd", name]) {
         if let Some(h) = home.split(':').nth(5) {
@@ -267,13 +311,20 @@ fn status(name: &str) {
         }
     }
     let sudoers = format!("/etc/sudoers.d/pxi-{name}");
-    println!("  sudo:  {}", if Path::new(&sudoers).exists() { "+" } else { "-" });
+    println!(
+        "  sudo:  {}",
+        if Path::new(&sudoers).exists() {
+            "+"
+        } else {
+            "-"
+        }
+    );
 
     if let Ok(home) = common::run_bash(&format!("getent passwd {name} | cut -d: -f6")) {
         let auth_keys = format!("{}/.ssh/authorized_keys", home.trim());
         if Path::new(&auth_keys).exists() {
-            let count = common::run_bash(&format!("wc -l < {auth_keys} 2>/dev/null"))
-                .unwrap_or_default();
+            let count =
+                common::run_bash(&format!("wc -l < {auth_keys} 2>/dev/null")).unwrap_or_default();
             println!("  ssh keys: + ({} 줄)", count.trim());
         } else {
             println!("  ssh keys: -");
@@ -301,8 +352,12 @@ fn ssh_key_add(name: &str, key: &str) -> anyhow::Result<()> {
 
     println!("=== {name}에 SSH 키 추가 ===");
 
-    let home = common::run_bash(&format!("getent passwd {name} | cut -d: -f6"))?.trim().to_string();
-    if home.is_empty() { anyhow::bail!("{name} 홈 디렉토리 조회 실패"); }
+    let home = common::run_bash(&format!("getent passwd {name} | cut -d: -f6"))?
+        .trim()
+        .to_string();
+    if home.is_empty() {
+        anyhow::bail!("{name} 홈 디렉토리 조회 실패");
+    }
 
     let ssh_dir = format!("{home}/.ssh");
     let auth_keys = format!("{ssh_dir}/authorized_keys");
@@ -396,7 +451,9 @@ fn roles_apply() -> anyhow::Result<()> {
 fn apply_sudoers(roles: &std::collections::HashMap<String, RoleConfig>) -> anyhow::Result<()> {
     println!("[sudoers] 역할 기반 sudoers 생성...");
     let sudoers_file = "/etc/sudoers.d/pxi-roles";
-    let mut content = String::from("# pxi-account RBAC sudoers (자동 생성)\n# 수동 편집 금지 -- roles-apply로 재생성\n\n");
+    let mut content = String::from(
+        "# pxi-account RBAC sudoers (자동 생성)\n# 수동 편집 금지 -- roles-apply로 재생성\n\n",
+    );
 
     for (account, role) in roles {
         if role.domains.contains(&"*".to_string()) {
@@ -411,7 +468,10 @@ fn apply_sudoers(roles: &std::collections::HashMap<String, RoleConfig>) -> anyho
     let visudo = find_visudo();
     match common::run(&visudo, &["-cf", &tmp]) {
         Ok(_) => {
-            common::run("install", &["-m", "440", "-o", "root", "-g", "root", &tmp, sudoers_file])?;
+            common::run(
+                "install",
+                &["-m", "440", "-o", "root", "-g", "root", &tmp, sudoers_file],
+            )?;
             println!("[sudoers] 적용 완료 (검증 통과)");
         }
         Err(e) => {
@@ -421,15 +481,29 @@ fn apply_sudoers(roles: &std::collections::HashMap<String, RoleConfig>) -> anyho
     Ok(())
 }
 
-fn apply_proxmox_pools(roles: &std::collections::HashMap<String, RoleConfig>) -> anyhow::Result<()> {
+fn apply_proxmox_pools(
+    roles: &std::collections::HashMap<String, RoleConfig>,
+) -> anyhow::Result<()> {
     println!("[proxmox] Pool 생성...");
     for (account, role) in roles {
-        if role.pool.is_empty() { continue; }
+        if role.pool.is_empty() {
+            continue;
+        }
         let exists = common::run("pvesh", &["get", &format!("/pools/{}", role.pool)]).is_ok();
         if exists {
             println!("[proxmox] Pool '{}' 이미 존재", role.pool);
         } else {
-            match common::run("pvesh", &["create", "/pools", "--poolid", &role.pool, "--comment", &role.description]) {
+            match common::run(
+                "pvesh",
+                &[
+                    "create",
+                    "/pools",
+                    "--poolid",
+                    &role.pool,
+                    "--comment",
+                    &role.description,
+                ],
+            ) {
                 Ok(_) => println!("[proxmox] Pool '{}' 생성 완료 ({})", role.pool, account),
                 Err(_) => eprintln!("[proxmox] Pool '{}' 생성 실패", role.pool),
             }
@@ -441,13 +515,32 @@ fn apply_proxmox_pools(roles: &std::collections::HashMap<String, RoleConfig>) ->
 fn apply_proxmox_acl(roles: &std::collections::HashMap<String, RoleConfig>) -> anyhow::Result<()> {
     println!("[proxmox] ACL 적용...");
     for (account, role) in roles {
-        if role.pool.is_empty() || role.proxmox_role.is_empty() { continue; }
+        if role.pool.is_empty() || role.proxmox_role.is_empty() {
+            continue;
+        }
         let pve_user = format!("{account}@pam");
         // 사용자 생성 (이미 있으면 무시)
-        let _ = common::run("pveum", &["user", "add", &pve_user, "--comment", &role.description]);
+        let _ = common::run(
+            "pveum",
+            &["user", "add", &pve_user, "--comment", &role.description],
+        );
         let path = format!("/pool/{}", role.pool);
-        match common::run("pveum", &["acl", "modify", &path, "--users", &pve_user, "--roles", &role.proxmox_role]) {
-            Ok(_) => println!("[proxmox] ACL: {account} -> {} ({})", role.pool, role.proxmox_role),
+        match common::run(
+            "pveum",
+            &[
+                "acl",
+                "modify",
+                &path,
+                "--users",
+                &pve_user,
+                "--roles",
+                &role.proxmox_role,
+            ],
+        ) {
+            Ok(_) => println!(
+                "[proxmox] ACL: {account} -> {} ({})",
+                role.pool, role.proxmox_role
+            ),
             Err(_) => eprintln!("[proxmox] ACL 적용 실패: {account}"),
         }
     }
@@ -474,9 +567,8 @@ fn roles_status() {
         return;
     }
 
-    let caller = std::env::var("SUDO_USER").unwrap_or_else(|_|
-        common::run("whoami", &[]).unwrap_or_else(|_| "unknown".to_string())
-    );
+    let caller = std::env::var("SUDO_USER")
+        .unwrap_or_else(|_| common::run("whoami", &[]).unwrap_or_else(|_| "unknown".to_string()));
     println!("[현재 사용자] {caller}\n");
 
     println!("[역할 정의]");
@@ -492,8 +584,14 @@ fn roles_status() {
             "-".to_string()
         };
         let pool_mark = if !role.pool.is_empty() && common::has_cmd("pvesh") {
-            if common::run("pvesh", &["get", &format!("/pools/{}", role.pool)]).is_ok() { "+" } else { "-" }
-        } else { "=" };
+            if common::run("pvesh", &["get", &format!("/pools/{}", role.pool)]).is_ok() {
+                "+"
+            } else {
+                "-"
+            }
+        } else {
+            "="
+        };
 
         println!(
             "  {account:<20} role:{:<14} domains:{domains:<25} vmid:{vmid:<10} pool:{pool_mark} {}",
@@ -546,7 +644,9 @@ fn proxmox_silo(
     println!("[silo] pool: {}", pool);
     println!("[silo] role: {}", role);
     println!("[silo] vmids: {:?}", vmids);
-    if allow_move { println!("[silo] allow-move: true"); }
+    if allow_move {
+        println!("[silo] allow-move: true");
+    }
 
     // Pool 생성/확인
     ensure_pool(pool, comment_value)?;
@@ -556,8 +656,16 @@ fn proxmox_silo(
     ensure_proxmox_user(userid, comment_value, generated_password.as_deref())?;
     // ACL 적용
     let acl_path = format!("/pool/{}", pool);
-    common::run("pveum", &["acl", "modify", &acl_path, "--users", userid, "--roles", role])?;
-    println!("[silo] ACL 적용 완료: {} -> {} ({})", userid, acl_path, role);
+    common::run(
+        "pveum",
+        &[
+            "acl", "modify", &acl_path, "--users", userid, "--roles", role,
+        ],
+    )?;
+    println!(
+        "[silo] ACL 적용 완료: {} -> {} ({})",
+        userid, acl_path, role
+    );
 
     println!("\n=== Proxmox Silo 완료 ===");
     if let Some(pw) = generated_password {
@@ -574,12 +682,17 @@ fn ensure_pool(pool: &str, comment: &str) -> anyhow::Result<()> {
     if exists {
         println!("[silo] Pool '{}' 이미 존재", pool);
         if !comment.is_empty() {
-            let _ = common::run("pvesh", &["set", "/pools", "--poolid", pool, "--comment", comment]);
+            let _ = common::run(
+                "pvesh",
+                &["set", "/pools", "--poolid", pool, "--comment", comment],
+            );
         }
         return Ok(());
     }
     let mut args = vec!["create", "/pools", "--poolid", pool];
-    if !comment.is_empty() { args.extend(["--comment", comment]); }
+    if !comment.is_empty() {
+        args.extend(["--comment", comment]);
+    }
     common::run("pvesh", &args)?;
     println!("[silo] Pool '{}' 생성 완료", pool);
     Ok(())
@@ -587,21 +700,37 @@ fn ensure_pool(pool: &str, comment: &str) -> anyhow::Result<()> {
 
 fn assign_pool_members(pool: &str, vmids: &[u32], allow_move: bool) -> anyhow::Result<()> {
     let existing = current_pool_vmids(pool);
-    let to_add: Vec<u32> = vmids.iter().copied().filter(|v| !existing.contains(v)).collect();
+    let to_add: Vec<u32> = vmids
+        .iter()
+        .copied()
+        .filter(|v| !existing.contains(v))
+        .collect();
     if to_add.is_empty() {
-        println!("[silo] Pool '{}' 에 이미 대상 VM이 모두 포함되어 있습니다.", pool);
+        println!(
+            "[silo] Pool '{}' 에 이미 대상 VM이 모두 포함되어 있습니다.",
+            pool
+        );
         return Ok(());
     }
-    let vmid_list = to_add.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+    let vmid_list = to_add
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let mut args = vec!["set", "/pools", "--poolid", pool, "--vms", &vmid_list];
-    if allow_move { args.extend(["--allow-move", "1"]); }
+    if allow_move {
+        args.extend(["--allow-move", "1"]);
+    }
     common::run("pvesh", &args)?;
     println!("[silo] Pool '{}' 멤버 반영 완료: {}", pool, vmid_list);
     Ok(())
 }
 
 fn current_pool_vmids(pool: &str) -> Vec<u32> {
-    let out = match common::run("pvesh", &["get", &format!("/pools/{pool}"), "--output-format", "json"]) {
+    let out = match common::run(
+        "pvesh",
+        &["get", &format!("/pools/{pool}"), "--output-format", "json"],
+    ) {
         Ok(o) => o,
         Err(_) => return Vec::new(),
     };
@@ -609,20 +738,31 @@ fn current_pool_vmids(pool: &str) -> Vec<u32> {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
-    parsed.get("members").and_then(|v| v.as_array()).into_iter().flatten()
+    parsed
+        .get("members")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
         .filter_map(|item| item.get("vmid").and_then(|v| v.as_u64()))
-        .map(|v| v as u32).collect()
+        .map(|v| v as u32)
+        .collect()
 }
 
 fn proxmox_user_exists(userid: &str) -> bool {
-    common::run("pveum", &["user", "list"]).map(|o| o.lines().any(|l| l.contains(userid))).unwrap_or(false)
+    common::run("pveum", &["user", "list"])
+        .map(|o| o.lines().any(|l| l.contains(userid)))
+        .unwrap_or(false)
 }
 
 fn ensure_proxmox_user(userid: &str, comment: &str, password: Option<&str>) -> anyhow::Result<()> {
     if !proxmox_user_exists(userid) {
         let mut args = vec!["user", "add", userid];
-        if !comment.is_empty() { args.extend(["--comment", comment]); }
-        if let Some(pw) = password { args.extend(["--password", pw]); }
+        if !comment.is_empty() {
+            args.extend(["--comment", comment]);
+        }
+        if let Some(pw) = password {
+            args.extend(["--password", pw]);
+        }
         common::run("pveum", &args)?;
         println!("[silo] 사용자 '{}' 생성 완료", userid);
     } else {
@@ -647,7 +787,17 @@ struct ClusterVmResource {
 }
 
 fn cluster_vm_resources() -> anyhow::Result<Vec<ClusterVmResource>> {
-    let out = common::run("pvesh", &["get", "/cluster/resources", "--type", "vm", "--output-format", "json"])?;
+    let out = common::run(
+        "pvesh",
+        &[
+            "get",
+            "/cluster/resources",
+            "--type",
+            "vm",
+            "--output-format",
+            "json",
+        ],
+    )?;
     let resources: Vec<ClusterVmResource> = serde_json::from_str(&out)?;
     Ok(resources)
 }
@@ -663,8 +813,12 @@ fn resolve_target_vmids(
     if let Some(raw) = vmids_csv {
         for chunk in raw.split(',') {
             let trimmed = chunk.trim();
-            if trimmed.is_empty() { continue; }
-            let vmid: u32 = trimmed.parse().map_err(|_| anyhow::anyhow!("잘못된 VMID: {}", trimmed))?;
+            if trimmed.is_empty() {
+                continue;
+            }
+            let vmid: u32 = trimmed
+                .parse()
+                .map_err(|_| anyhow::anyhow!("잘못된 VMID: {}", trimmed))?;
             selected.push(vmid);
         }
     }
@@ -672,17 +826,38 @@ fn resolve_target_vmids(
     if let Some(prefix) = name_prefix {
         let prefix = prefix.trim();
         if !prefix.is_empty() {
-            selected.extend(resources.iter().filter(|r| r.name.starts_with(prefix)).map(|r| r.vmid));
+            selected.extend(
+                resources
+                    .iter()
+                    .filter(|r| r.name.starts_with(prefix))
+                    .map(|r| r.vmid),
+            );
         }
     }
 
     if let Some(tags_raw) = tags_csv {
-        let tag_filters: Vec<String> = tags_raw.split([',', ';']).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let tag_filters: Vec<String> = tags_raw
+            .split([',', ';'])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !tag_filters.is_empty() {
-            selected.extend(resources.iter().filter(|r| {
-                let rtags: Vec<&str> = r.tags.split(';').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
-                tag_filters.iter().all(|wanted| rtags.iter().any(|t| *t == wanted))
-            }).map(|r| r.vmid));
+            selected.extend(
+                resources
+                    .iter()
+                    .filter(|r| {
+                        let rtags: Vec<&str> = r
+                            .tags
+                            .split(';')
+                            .map(|t| t.trim())
+                            .filter(|t| !t.is_empty())
+                            .collect();
+                        tag_filters
+                            .iter()
+                            .all(|wanted| rtags.iter().any(|t| *t == wanted))
+                    })
+                    .map(|r| r.vmid),
+            );
         }
     }
 
@@ -705,7 +880,10 @@ fn generate_password(len: usize) -> String {
     let mut file = fs::File::open("/dev/urandom").expect("/dev/urandom 열기 실패");
     let mut bytes = vec![0u8; len];
     file.read_exact(&mut bytes).expect("랜덤 바이트 읽기 실패");
-    bytes.into_iter().map(|b| alphabet[(b as usize) % alphabet.len()] as char).collect()
+    bytes
+        .into_iter()
+        .map(|b| alphabet[(b as usize) % alphabet.len()] as char)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -731,7 +909,11 @@ fn load_roles() -> anyhow::Result<std::collections::HashMap<String, RoleConfig>>
     let roles_path = config_dir.join("roles.toml");
 
     // Fallback paths
-    let paths = [roles_path.clone(), std::path::PathBuf::from("/etc/pxi/roles.toml"), std::path::PathBuf::from("/etc/proxmox-host-setup/roles.toml")];
+    let paths = [
+        roles_path.clone(),
+        std::path::PathBuf::from("/etc/pxi/roles.toml"),
+        std::path::PathBuf::from("/etc/proxmox-host-setup/roles.toml"),
+    ];
     for p in &paths {
         if p.exists() {
             let content = fs::read_to_string(p)?;
@@ -750,7 +932,10 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() || name.len() > 32 {
         anyhow::bail!("사용자명 길이 1~32자 필요");
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         anyhow::bail!("사용자명은 영숫자 + -_ 만 허용");
     }
     if let Some(first) = name.chars().next() {
@@ -763,7 +948,9 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
 
 fn find_visudo() -> String {
     for path in ["/usr/sbin/visudo", "/sbin/visudo", "/usr/bin/visudo"] {
-        if Path::new(path).exists() { return path.to_string(); }
+        if Path::new(path).exists() {
+            return path.to_string();
+        }
     }
     if let Ok(out) = common::run("which", &["visudo"]) {
         return out.trim().to_string();

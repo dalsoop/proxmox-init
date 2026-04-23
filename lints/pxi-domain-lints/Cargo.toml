@@ -1,0 +1,17 @@
+[package]
+name = "pxi-domain-lints"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", branch = "master" }
+dylint_linting = "3"
+
+[dev-dependencies]
+dylint_testing = "3"
+
+# dylint 빌드는 nightly 필요 — `cargo +nightly dylint --all` 로 실행
+# 설치: cargo install cargo-dylint dylint-link

@@ -44,6 +44,5 @@ impl Distro {
 }
 
 pub fn is_proxmox() -> bool {
-    std::path::Path::new("/usr/sbin/pct").exists()
-        || std::path::Path::new("/etc/pve").exists()
+    std::path::Path::new("/usr/sbin/pct").exists() || std::path::Path::new("/etc/pve").exists()
 }

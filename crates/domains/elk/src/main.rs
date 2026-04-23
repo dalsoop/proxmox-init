@@ -54,7 +54,7 @@ enum Cmd {
     /// LXC에 ELK 설치 (Elasticsearch + Kibana + Logstash)
     Install {
         /// 대상 LXC VMID (기본: 50190)
-        #[arg(long, default_value = "50190")]
+        #[arg(long, default_value = "50190")] // LINT_ALLOW: elk 기본 VMID
         vmid: String,
     },
     /// ELK 스택 진단
@@ -81,10 +81,22 @@ fn main() -> anyhow::Result<()> {
             println!("=== Elasticsearch ===");
             common::run("curl", &["-sS", &format!("{}/_cluster/health?pretty", es)]);
             println!("\n=== Kibana ===");
-            common::run("curl", &["-sS", "-o", "/dev/null", "-w", "HTTP %{http_code}\n",
-                                  &format!("{}/api/status", kibana)]);
+            common::run(
+                "curl",
+                &[
+                    "-sS",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "HTTP %{http_code}\n",
+                    &format!("{}/api/status", kibana),
+                ],
+            );
             println!("\n=== Logstash ===");
-            common::run("pct", &["exec", ELK_VMID, "--", "systemctl", "is-active", "logstash"]);
+            common::run(
+                "pct",
+                &["exec", ELK_VMID, "--", "systemctl", "is-active", "logstash"],
+            );
         }
         Cmd::Open => {
             println!("Kibana: {}", kibana);
@@ -101,14 +113,29 @@ fn main() -> anyhow::Result<()> {
             println!("✓ LXC {} → ELK ({}:5514) 연결됨", vmid, ELK_IP);
         }
         Cmd::Disconnect { vmid } => {
-            common::run("pct", &["exec", &vmid, "--", "bash", "-c",
-                        "rm -f /etc/rsyslog.d/90-elk.conf && systemctl restart rsyslog"]);
+            common::run(
+                "pct",
+                &[
+                    "exec",
+                    &vmid,
+                    "--",
+                    "bash",
+                    "-c",
+                    "rm -f /etc/rsyslog.d/90-elk.conf && systemctl restart rsyslog",
+                ],
+            );
             println!("✓ LXC {} ELK 연결 해제됨", vmid);
         }
-        Cmd::Search { query, minutes, limit } => {
+        Cmd::Search {
+            query,
+            minutes,
+            limit,
+        } => {
             let body = format!(
                 r#"{{"size":{},"sort":[{{"@timestamp":"desc"}}],"query":{{"bool":{{"must":[{{"query_string":{{"query":"{}"}}}},{{"range":{{"@timestamp":{{"gte":"now-{}m"}}}}}}]}}}}}}"#,
-                limit, query.replace('"', "\\\""), minutes
+                limit,
+                query.replace('"', "\\\""),
+                minutes
             );
             let script = format!(
                 "curl -sS '{}/syslog-*/_search' -H 'Content-Type: application/json' -d '{}' | \
@@ -122,7 +149,16 @@ fn main() -> anyhow::Result<()> {
             common::run("bash", &["-c", &script]);
         }
         Cmd::Indices => {
-            common::run("curl", &["-sS", &format!("{}/_cat/indices?v&h=index,docs.count,store.size&s=index", es)]);
+            common::run(
+                "curl",
+                &[
+                    "-sS",
+                    &format!(
+                        "{}/_cat/indices?v&h=index,docs.count,store.size&s=index",
+                        es
+                    ),
+                ],
+            );
         }
         Cmd::Cleanup { days } => {
             println!("{}일 이전 syslog-* 인덱스 삭제 중...", days);
@@ -137,12 +173,25 @@ fn main() -> anyhow::Result<()> {
             common::run("bash", &["-c", &script]);
         }
         Cmd::Restart => {
-            common::run("pct", &["exec", ELK_VMID, "--", "bash", "-c",
-                        "systemctl restart elasticsearch kibana logstash && \
-                         sleep 5 && systemctl is-active elasticsearch kibana logstash"]);
+            common::run(
+                "pct",
+                &[
+                    "exec",
+                    ELK_VMID,
+                    "--",
+                    "bash",
+                    "-c",
+                    "systemctl restart elasticsearch kibana logstash && \
+                         sleep 5 && systemctl is-active elasticsearch kibana logstash",
+                ],
+            );
         }
-        Cmd::Install { vmid } => { install(&vmid)?; }
-        Cmd::Doctor => { doctor(); }
+        Cmd::Install { vmid } => {
+            install(&vmid)?;
+        }
+        Cmd::Doctor => {
+            doctor();
+        }
     }
     Ok(())
 }
@@ -156,7 +205,10 @@ fn install(vmid: &str) -> anyhow::Result<()> {
 
     // 1. Kibana encryption keys
     println!("[1/4] Kibana encryption keys");
-    let check_key = pct_exec(vmid, "grep -q 'xpack.encryptedSavedObjects.encryptionKey' /etc/kibana/kibana.yml && echo exists");
+    let check_key = pct_exec(
+        vmid,
+        "grep -q 'xpack.encryptedSavedObjects.encryptionKey' /etc/kibana/kibana.yml && echo exists",
+    );
     if check_key.trim() == "exists" {
         println!("  이미 설정됨");
     } else {
@@ -183,9 +235,15 @@ echo done
     }
 
     // locale 설정
-    let locale_set = pct_exec(vmid, "grep -q '^i18n.locale' /etc/kibana/kibana.yml && echo yes");
+    let locale_set = pct_exec(
+        vmid,
+        "grep -q '^i18n.locale' /etc/kibana/kibana.yml && echo yes",
+    );
     if locale_set.trim() != "yes" {
-        pct_exec(vmid, "sed -i 's/#i18n.locale:.*/i18n.locale: \"ko-KR\"/' /etc/kibana/kibana.yml");
+        pct_exec(
+            vmid,
+            "sed -i 's/#i18n.locale:.*/i18n.locale: \"ko-KR\"/' /etc/kibana/kibana.yml",
+        );
         println!("  ✓ i18n.locale: ko-KR 설정");
     } else {
         println!("  이미 설정됨");
@@ -194,17 +252,23 @@ echo done
     // supportedLocale에 ko-KR 추가
     let has_supported = pct_exec(vmid, "grep -q 'ko-KR' /usr/share/kibana/node_modules/@kbn/core-i18n-server-internal/src/constants.js 2>/dev/null && echo yes");
     if has_supported.trim() != "yes" && has_ko.trim() == "yes" {
-        pct_exec(vmid, r#"sed -i "s/\(supportedLocale.*\)\]/\1, 'ko-KR']/" /usr/share/kibana/node_modules/@kbn/core-i18n-server-internal/src/constants.js"#);
+        pct_exec(
+            vmid,
+            r#"sed -i "s/\(supportedLocale.*\)\]/\1, 'ko-KR']/" /usr/share/kibana/node_modules/@kbn/core-i18n-server-internal/src/constants.js"#,
+        );
         println!("  ✓ supportedLocale에 ko-KR 추가");
         // x-pack/.i18nrc.json 등록
-        pct_exec(vmid, r#"python3 -c "
+        pct_exec(
+            vmid,
+            r#"python3 -c "
 import json
 with open('/usr/share/kibana/x-pack/.i18nrc.json') as f: data = json.load(f)
 entry = '@kbn/translations-plugin/translations/ko-KR.json'
 if entry not in data.get('translations', []):
     data.setdefault('translations', []).append(entry)
     with open('/usr/share/kibana/x-pack/.i18nrc.json', 'w') as f: json.dump(data, f, indent=2)
-""#);
+""#,
+        );
         println!("  ✓ x-pack/.i18nrc.json 등록");
     }
 
@@ -214,26 +278,44 @@ if entry not in data.get('translations', []):
         .map(|c| c.network.internal_zone_pve())
         .unwrap_or_else(|_| "50.internal.kr".into());
     let elk_host = format!("elk.{zone}");
-    let check_cmd = format!("curl -sf --max-time 3 -o /dev/null -w '%{{http_code}}' https://{elk_host}/ 2>/dev/null");
+    let check_cmd = format!(
+        "curl -sf --max-time 3 -o /dev/null -w '%{{http_code}}' https://{elk_host}/ 2>/dev/null"
+    );
     let route_ok = Command::new("bash")
         .args(["-c", &check_cmd])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("302") || String::from_utf8_lossy(&o.stdout).contains("200"))
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout).contains("302")
+                || String::from_utf8_lossy(&o.stdout).contains("200")
+        })
         .unwrap_or(false);
     if route_ok {
         println!("  ✓ {elk_host} 접근 가능");
     } else {
         println!("  라우트 추가 중...");
-        common::run("pxi", &["run", "traefik", "add",
-            "--name", "elk",
-            "--domain", &elk_host,
-            "--backend", &format!("http://{}:5601", ELK_IP)]);
+        common::run(
+            "pxi",
+            &[
+                "run",
+                "traefik",
+                "add",
+                "--name",
+                "elk",
+                "--domain",
+                &elk_host,
+                "--backend",
+                &format!("http://{}:5601", ELK_IP),
+            ],
+        );
         println!("  ✓ 라우트 추가됨");
     }
 
     // 4. 재시작
     println!("[4/4] Kibana 재시작");
-    common::run("pct", &["exec", vmid, "--", "systemctl", "restart", "kibana"]);
+    common::run(
+        "pct",
+        &["exec", vmid, "--", "systemctl", "restart", "kibana"],
+    );
     println!("  ✓ 재시작 완료 (1-2분 후 접속 가능)");
 
     println!("\n=== 완료 ===");
@@ -263,15 +345,28 @@ fn doctor() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} Elasticsearch ({}:9200)", if es_ok { "✓" } else { "✗" }, ELK_IP);
+    println!(
+        "  {} Elasticsearch ({}:9200)",
+        if es_ok { "✓" } else { "✗" },
+        ELK_IP
+    );
 
     // 2. Kibana reachable
     let kibana_ok = Command::new("curl")
-        .args(["-sf", "--max-time", "5", &format!("http://{}:5601/api/status", ELK_IP)])
+        .args([
+            "-sf",
+            "--max-time",
+            "5",
+            &format!("http://{}:5601/api/status", ELK_IP),
+        ])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} Kibana ({}:5601)", if kibana_ok { "✓" } else { "✗" }, ELK_IP);
+    println!(
+        "  {} Kibana ({}:5601)",
+        if kibana_ok { "✓" } else { "✗" },
+        ELK_IP
+    );
 
     // 3. Logstash running
     let logstash_ok = Command::new("pct")
@@ -279,11 +374,19 @@ fn doctor() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} Logstash (systemctl)", if logstash_ok { "✓" } else { "✗" });
+    println!(
+        "  {} Logstash (systemctl)",
+        if logstash_ok { "✓" } else { "✗" }
+    );
 
     // 4. syslog-* index count
     let idx_output = Command::new("curl")
-        .args(["-sf", "--max-time", "5", &format!("http://{}:9200/_cat/indices/syslog-*?h=index", ELK_IP)])
+        .args([
+            "-sf",
+            "--max-time",
+            "5",
+            &format!("http://{}:9200/_cat/indices/syslog-*?h=index", ELK_IP),
+        ])
         .output();
     match idx_output {
         Ok(o) if o.status.success() => {
@@ -295,11 +398,24 @@ fn doctor() {
     }
 
     // 5. Encryption keys
-    let enc_ok = pct_exec(ELK_VMID, "grep -q 'xpack.encryptedSavedObjects.encryptionKey' /etc/kibana/kibana.yml && echo yes");
-    println!("  {} encryption keys", if enc_ok.trim() == "yes" { "✓" } else { "✗ 누락 — `pxi run elk install` 실행" });
+    let enc_ok = pct_exec(
+        ELK_VMID,
+        "grep -q 'xpack.encryptedSavedObjects.encryptionKey' /etc/kibana/kibana.yml && echo yes",
+    );
+    println!(
+        "  {} encryption keys",
+        if enc_ok.trim() == "yes" {
+            "✓"
+        } else {
+            "✗ 누락 — `pxi run elk install` 실행"
+        }
+    );
 
     // 6. Locale
-    let locale = pct_exec(ELK_VMID, "grep '^i18n.locale' /etc/kibana/kibana.yml 2>/dev/null | head -1");
+    let locale = pct_exec(
+        ELK_VMID,
+        "grep '^i18n.locale' /etc/kibana/kibana.yml 2>/dev/null | head -1",
+    );
     let locale = locale.trim();
     if locale.is_empty() {
         println!("  ✗ i18n.locale 미설정 (기본 영어)");
@@ -309,7 +425,14 @@ fn doctor() {
 
     // 7. ko-KR translation file
     let ko_exists = pct_exec(ELK_VMID, "test -f /usr/share/kibana/node_modules/@kbn/translations-plugin/translations/ko-KR.json && echo yes");
-    println!("  {} ko-KR.json", if ko_exists.trim() == "yes" { "✓" } else { "✗ 없음 — homelab-i18n/kibana/deploy.sh" });
+    println!(
+        "  {} ko-KR.json",
+        if ko_exists.trim() == "yes" {
+            "✓"
+        } else {
+            "✗ 없음 — homelab-i18n/kibana/deploy.sh"
+        }
+    );
 
     // 8. Traefik route — host 동적 구성
     let zone = pxi_core::config::Config::load()
@@ -322,5 +445,8 @@ fn doctor() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    println!("  {} Traefik 라우트 ({elk_host})", if route_ok { "✓" } else { "✗" });
+    println!(
+        "  {} Traefik 라우트 ({elk_host})",
+        if route_ok { "✓" } else { "✗" }
+    );
 }

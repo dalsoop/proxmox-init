@@ -15,7 +15,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     // ---- Mount management ----
-
     /// NAS 공유 마운트
     Mount {
         /// NAS 서버 주소 (예: 192.168.1.100)
@@ -41,12 +40,13 @@ enum Cmd {
         persist: bool,
     },
     /// 마운트 해제
-    Unmount { target: String },
+    Unmount {
+        target: String,
+    },
     /// 현재 마운트 목록 (NFS + CIFS만 필터)
     List,
 
     // ---- Combined NAS status ----
-
     /// Synology + TrueNAS 통합 상태
     Status,
     /// 전체 공유 목록 (SMB + NFS)
@@ -55,7 +55,6 @@ enum Cmd {
     Pools,
 
     // ---- Share CRUD ----
-
     /// Synology 공유 폴더 생성
     ShareCreate {
         #[arg(long)]
@@ -72,7 +71,6 @@ enum Cmd {
     },
 
     // ---- Synology-specific ----
-
     /// Synology에서 공유 폴더 목록 (FileStation API)
     SynologyList,
     /// Synology Active Backup 등 동기화 상태
@@ -91,11 +89,28 @@ enum Protocol {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Mount { host, share, target, protocol, user, password, persist } => {
-            mount(&host, &share, &target, protocol, user.as_deref(), password.as_deref(), persist)
-        }
+        Cmd::Mount {
+            host,
+            share,
+            target,
+            protocol,
+            user,
+            password,
+            persist,
+        } => mount(
+            &host,
+            &share,
+            &target,
+            protocol,
+            user.as_deref(),
+            password.as_deref(),
+            persist,
+        ),
         Cmd::Unmount { target } => unmount(&target),
-        Cmd::List => { list(); Ok(()) }
+        Cmd::List => {
+            list();
+            Ok(())
+        }
         Cmd::Status => nas_status(),
         Cmd::Shares => nas_shares(),
         Cmd::Pools => nas_pools(),
@@ -103,8 +118,14 @@ fn main() -> anyhow::Result<()> {
         Cmd::ShareDelete { name } => synology_delete_share(&name),
         Cmd::SynologyList => synology_list(),
         Cmd::SynologySync => synology_sync(),
-        Cmd::SynologyLink => { synology_link(); Ok(()) }
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::SynologyLink => {
+            synology_link();
+            Ok(())
+        }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -113,9 +134,12 @@ fn main() -> anyhow::Result<()> {
 // ============================================================
 
 fn mount(
-    host: &str, share: &str, target: &str,
+    host: &str,
+    share: &str,
+    target: &str,
     protocol: Protocol,
-    user: Option<&str>, password: Option<&str>,
+    user: Option<&str>,
+    password: Option<&str>,
     persist: bool,
 ) -> anyhow::Result<()> {
     println!("=== NAS 마운트 ({protocol:?}) ===");
@@ -131,18 +155,32 @@ fn mount(
 }
 
 fn mount_smb(
-    host: &str, share: &str, target: &str,
-    user: Option<&str>, password: Option<&str>,
+    host: &str,
+    share: &str,
+    target: &str,
+    user: Option<&str>,
+    password: Option<&str>,
     persist: bool,
 ) -> anyhow::Result<()> {
-    let user = user.map(String::from).unwrap_or_else(|| read_env("NAS_USER"));
-    let password = password.map(String::from).unwrap_or_else(|| read_env("NAS_PASSWORD"));
+    let user = user
+        .map(String::from)
+        .unwrap_or_else(|| read_env("NAS_USER"));
+    let password = password
+        .map(String::from)
+        .unwrap_or_else(|| read_env("NAS_PASSWORD"));
     if user.is_empty() {
         anyhow::bail!("SMB 마운트에는 --user 또는 NAS_USER 환경변수 필요");
     }
 
     let safe_name = format!("{host}_{share}")
-        .chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let cred_path = format!("/etc/cifs-credentials/{safe_name}");
 
@@ -156,16 +194,19 @@ fn mount_smb(
         format!("username={user}\npassword={password}\n")
     };
     std::fs::write(&tmp, content)?;
-    common::run("sudo", &[
-        "install", "-m", "600", "-o", "root", "-g", "root",
-        &tmp, &cred_path,
-    ])?;
+    common::run(
+        "sudo",
+        &[
+            "install", "-m", "600", "-o", "root", "-g", "root", &tmp, &cred_path,
+        ],
+    )?;
 
     let source = format!("//{host}/{share}");
     let options = format!("credentials={cred_path},vers=3.0,iocharset=utf8,_netdev,nofail");
-    common::run("sudo", &[
-        "mount", "-t", "cifs", "-o", &options, &source, target,
-    ])?;
+    common::run(
+        "sudo",
+        &["mount", "-t", "cifs", "-o", &options, &source, target],
+    )?;
     println!("✓ 마운트 완료 (credentials: {cred_path}, 0600)");
 
     if persist {
@@ -197,7 +238,11 @@ fn fstab_add(target: &str, fstab_line: &str) -> anyhow::Result<()> {
     }
 
     let last_byte = std::process::Command::new("sudo")
-        .args(["sh", "-c", "tail -c1 /etc/fstab 2>/dev/null | od -An -tx1 | tr -d ' \n'"])
+        .args([
+            "sh",
+            "-c",
+            "tail -c1 /etc/fstab 2>/dev/null | od -An -tx1 | tr -d ' \n'",
+        ])
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -289,11 +334,22 @@ impl SynologyConfig {
         if url.is_empty() || user.is_empty() {
             return None;
         }
-        Some(Self { url, user, password })
+        Some(Self {
+            url,
+            user,
+            password,
+        })
     }
 }
 
-fn synology_api_call(cfg: &SynologyConfig, sid: &str, api: &str, method: &str, version: u32, extra: &str) -> anyhow::Result<serde_json::Value> {
+fn synology_api_call(
+    cfg: &SynologyConfig,
+    sid: &str,
+    api: &str,
+    method: &str,
+    version: u32,
+    extra: &str,
+) -> anyhow::Result<serde_json::Value> {
     let url = format!(
         "{}/webapi/entry.cgi?api={api}&version={version}&method={method}&_sid={sid}{extra}",
         cfg.url
@@ -321,14 +377,23 @@ fn synology_login(cfg: &SynologyConfig) -> anyhow::Result<String> {
     );
 
     let output = std::process::Command::new("curl")
-        .args(["-sSLk", "-X", "POST",
-            "-H", "Content-Type: application/x-www-form-urlencoded",
-            "-d", &params, &url])
+        .args([
+            "-sSLk",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded",
+            "-d",
+            &params,
+            &url,
+        ])
         .output()?;
 
     let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
     if body["success"].as_bool() == Some(true) {
-        body["data"]["sid"].as_str().map(String::from)
+        body["data"]["sid"]
+            .as_str()
+            .map(String::from)
             .ok_or_else(|| anyhow::anyhow!("[synology] sid 없음"))
     } else {
         let code = body["error"]["code"].as_i64().unwrap_or(0);
@@ -354,15 +419,24 @@ fn synology_login_with_otp(cfg: &SynologyConfig, otp: &str) -> anyhow::Result<St
     );
 
     let output = std::process::Command::new("curl")
-        .args(["-sSLk", "-X", "POST",
-            "-H", "Content-Type: application/x-www-form-urlencoded",
-            "-d", &params, &url])
+        .args([
+            "-sSLk",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded",
+            "-d",
+            &params,
+            &url,
+        ])
         .output()?;
 
     let body: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout))?;
     if body["success"].as_bool() == Some(true) {
         println!("[synology] OTP 인증 성공, device_id 등록 완료");
-        body["data"]["sid"].as_str().map(String::from)
+        body["data"]["sid"]
+            .as_str()
+            .map(String::from)
             .ok_or_else(|| anyhow::anyhow!("[synology] sid 없음"))
     } else {
         anyhow::bail!("[synology] OTP 로그인 실패: {}", body);
@@ -413,9 +487,12 @@ impl TrueNasConfig {
 fn truenas_api_get(cfg: &TrueNasConfig, path: &str) -> anyhow::Result<serde_json::Value> {
     let url = format!("{}/api/v2.0{path}", cfg.url);
     let output = std::process::Command::new("curl")
-        .args(["-sSLk",
-            "-H", &format!("Authorization: Bearer {}", cfg.api_key),
-            &url])
+        .args([
+            "-sSLk",
+            "-H",
+            &format!("Authorization: Bearer {}", cfg.api_key),
+            &url,
+        ])
         .output()?;
     if !output.status.success() {
         anyhow::bail!("[truenas] 요청 실패 ({path})");
@@ -443,18 +520,25 @@ fn nas_status() -> anyhow::Result<()> {
                     println!("[synology] 모델: {model}");
                     println!("[synology] DSM: {version}");
                 }
-                if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "") {
+                if let Ok(data) =
+                    synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "")
+                {
                     if let Some(volumes) = data["volumes"].as_array() {
                         println!("[synology] 볼륨:");
                         for vol in volumes {
-                            let name = vol["display_name"].as_str()
+                            let name = vol["display_name"]
+                                .as_str()
                                 .or(vol["vol_path"].as_str())
                                 .unwrap_or("?");
                             let total = vol["size"]["total"].as_str().unwrap_or("0");
                             let used = vol["size"]["used"].as_str().unwrap_or("0");
                             let total_gb = total.parse::<u64>().unwrap_or(0) / 1_073_741_824;
                             let used_gb = used.parse::<u64>().unwrap_or(0) / 1_073_741_824;
-                            let pct = if total_gb > 0 { used_gb * 100 / total_gb } else { 0 };
+                            let pct = if total_gb > 0 {
+                                used_gb * 100 / total_gb
+                            } else {
+                                0
+                            };
                             println!("  {name}: {used_gb}GB / {total_gb}GB ({pct}%)");
                         }
                     }
@@ -509,11 +593,14 @@ fn nas_shares() -> anyhow::Result<()> {
     if let Some(cfg) = SynologyConfig::load() {
         if let Ok(sid) = synology_login(&cfg) {
             println!("[synology] 공유 폴더:");
-            if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.FileStation.List", "list_share", 2, "") {
+            if let Ok(data) =
+                synology_api_call(&cfg, &sid, "SYNO.FileStation.List", "list_share", 2, "")
+            {
                 if let Some(shares) = data["shares"].as_array() {
                     for share in shares {
                         let name = share["name"].as_str().unwrap_or("?");
-                        let path = share["additional"]["real_path"].as_str()
+                        let path = share["additional"]["real_path"]
+                            .as_str()
                             .or(share["path"].as_str())
                             .unwrap_or("?");
                         println!("  {name:<30} {path}");
@@ -568,10 +655,13 @@ fn nas_pools() -> anyhow::Result<()> {
     if let Some(cfg) = SynologyConfig::load() {
         if let Ok(sid) = synology_login(&cfg) {
             println!("[synology] 볼륨/스토리지 풀:");
-            if let Ok(data) = synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "") {
+            if let Ok(data) =
+                synology_api_call(&cfg, &sid, "SYNO.Storage.CGI.Storage", "load_info", 1, "")
+            {
                 if let Some(volumes) = data["volumes"].as_array() {
                     for vol in volumes {
-                        let name = vol["display_name"].as_str()
+                        let name = vol["display_name"]
+                            .as_str()
                             .or(vol["vol_path"].as_str())
                             .unwrap_or("?");
                         let status = vol["status"].as_str().unwrap_or("?");
@@ -592,7 +682,10 @@ fn nas_pools() -> anyhow::Result<()> {
                 for pool in pools {
                     let name = pool["name"].as_str().unwrap_or("?");
                     let status = pool["status"].as_str().unwrap_or("?");
-                    let vdevs = pool["topology"]["data"].as_array().map(|a| a.len()).unwrap_or(0);
+                    let vdevs = pool["topology"]["data"]
+                        .as_array()
+                        .map(|a| a.len())
+                        .unwrap_or(0);
                     println!("  {name:<20} status:{status}  vdevs:{vdevs}");
                 }
             }
@@ -629,7 +722,8 @@ fn synology_list() -> anyhow::Result<()> {
         if let Some(shares) = data["shares"].as_array() {
             for share in shares {
                 let name = share["name"].as_str().unwrap_or("?");
-                let path = share["additional"]["real_path"].as_str()
+                let path = share["additional"]["real_path"]
+                    .as_str()
                     .or(share["path"].as_str())
                     .unwrap_or("?");
                 println!("  {name:<30} {path}");
@@ -710,8 +804,7 @@ fn synology_link() {
 }
 
 fn synology_create_share(name: &str, volume: &str, desc: &str) -> anyhow::Result<()> {
-    let cfg = SynologyConfig::load()
-        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
+    let cfg = SynologyConfig::load().ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
     let sid = synology_login(&cfg)?;
 
     println!("[synology] 공유 폴더 생성: {name} (볼륨: {volume})");
@@ -726,13 +819,13 @@ fn synology_create_share(name: &str, volume: &str, desc: &str) -> anyhow::Result
 }
 
 fn synology_delete_share(name: &str) -> anyhow::Result<()> {
-    let cfg = SynologyConfig::load()
-        .ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
+    let cfg = SynologyConfig::load().ok_or_else(|| anyhow::anyhow!("[synology] 미설정"))?;
     let sid = synology_login(&cfg)?;
 
     // Check existence first
     let data = synology_api_call(&cfg, &sid, "SYNO.Core.Share", "list", 1, "")?;
-    let exists = data["shares"].as_array()
+    let exists = data["shares"]
+        .as_array()
         .map(|shares| shares.iter().any(|s| s["name"].as_str() == Some(name)))
         .unwrap_or(false);
 
@@ -785,9 +878,23 @@ fn doctor() {
 
     println!();
     let syn = SynologyConfig::load();
-    println!("  Synology: {}", if syn.is_some() { "✓ 설정됨" } else { "✗ 미설정" });
+    println!(
+        "  Synology: {}",
+        if syn.is_some() {
+            "✓ 설정됨"
+        } else {
+            "✗ 미설정"
+        }
+    );
     let tnas = TrueNasConfig::load();
-    println!("  TrueNAS:  {}", if tnas.is_some() { "✓ 설정됨" } else { "✗ 미설정" });
+    println!(
+        "  TrueNAS:  {}",
+        if tnas.is_some() {
+            "✓ 설정됨"
+        } else {
+            "✗ 미설정"
+        }
+    );
 
     println!("\n필요시 설치: sudo apt install -y cifs-utils nfs-common");
 }

@@ -114,12 +114,18 @@ fn lxc_exec_on(node: Option<&str>, vmid: &str, args: &[&str]) -> (bool, String) 
     }
     let node = node.unwrap();
     let node_ip = node_ip_from_name(node);
-    let inner = args.iter().map(|a| shell_escape(a)).collect::<Vec<_>>().join(" ");
+    let inner = args
+        .iter()
+        .map(|a| shell_escape(a))
+        .collect::<Vec<_>>()
+        .join(" ");
     let ssh_cmd = format!("pct exec {vmid} -- {inner}");
     match Command::new("ssh")
         .args([
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=no",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
             &format!("root@{node_ip}"),
             &ssh_cmd,
         ])
@@ -181,7 +187,12 @@ fn node_ip_from_name(node: &str) -> String {
     // Try pvesh first, then /etc/hosts
     let json = cmd_output(
         "pvesh",
-        &["get", &format!("/nodes/{node}/network"), "--output-format", "json"],
+        &[
+            "get",
+            &format!("/nodes/{node}/network"),
+            "--output-format",
+            "json",
+        ],
     );
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json) {
         if let Some(arr) = parsed.as_array() {
@@ -239,8 +250,16 @@ fn base64_encode(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = bytes[i] as u32;
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] as u32 } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] as u32 } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            bytes[i + 1] as u32
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            bytes[i + 2] as u32
+        } else {
+            0
+        };
         let triple = (b0 << 16) | (b1 << 8) | b2;
         out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
         out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
@@ -302,7 +321,6 @@ enum Cmd {
     Doctor,
 
     // ── ported commands ──
-
     /// 크리덴셜 + settings 동기화 (호스트 계정 간)
     Sync {
         #[arg(long, value_enum, default_value = "all")]
@@ -374,7 +392,6 @@ enum Cmd {
     },
 
     // ── ComfyUI ──
-
     /// ComfyUI VFX 환경 전체 세팅
     ComfyuiSetup {
         #[arg(long)]
@@ -423,7 +440,6 @@ enum Cmd {
     },
 
     // ── Claude Code 토큰 효율 튜닝 ──
-
     /// Claude Code settings.json 을 토큰 효율 프로파일로 전환. 백업 자동 생성.
     ClaudeTune {
         /// 변경 요약만 출력, 실제 쓰기 없음
@@ -443,7 +459,6 @@ enum Cmd {
     Menu,
 
     // ── OpenClaw ──
-
     /// OpenClaw LXC 전체 세팅
     OpenclawSetup {
         #[arg(long)]
@@ -518,7 +533,6 @@ enum Cmd {
     },
 
     // ── Cluster files ──
-
     /// 클러스터 통합 파일 브라우저 설치
     ClusterFilesSetup,
     /// cluster-files 마운트 동기화
@@ -536,7 +550,6 @@ enum Cmd {
     },
 
     // ── VM ──
-
     /// VM에 AI 에이전트 SSH 배포
     VmMount {
         #[arg(long)]
@@ -824,7 +837,10 @@ fn install_cli(vmid: Option<&str>) -> anyhow::Result<()> {
 
     if !has_on(vmid, "claude") {
         println!("  claude 설치...");
-        run_on(vmid, &format!("{sudo}npm install -g @anthropic-ai/claude-code"))?;
+        run_on(
+            vmid,
+            &format!("{sudo}npm install -g @anthropic-ai/claude-code"),
+        )?;
     } else {
         println!("  ✓ claude 이미 설치됨");
     }
@@ -1007,15 +1023,27 @@ fn doctor() {
     );
     println!(
         "  claude: {}",
-        if common::has_cmd("claude") { "✓" } else { "✗" }
+        if common::has_cmd("claude") {
+            "✓"
+        } else {
+            "✗"
+        }
     );
     println!(
         "  codex:  {}",
-        if common::has_cmd("codex") { "✓" } else { "✗" }
+        if common::has_cmd("codex") {
+            "✓"
+        } else {
+            "✗"
+        }
     );
     println!(
         "  gemini: {}",
-        if common::has_cmd("gemini") { "✓" } else { "✗" }
+        if common::has_cmd("gemini") {
+            "✓"
+        } else {
+            "✗"
+        }
     );
 }
 
@@ -1067,9 +1095,7 @@ fn sync(filter: &AgentFilter) {
                     continue;
                 }
 
-                let output = Command::new("rsync")
-                    .args(["-a", &src, &dst])
-                    .output();
+                let output = Command::new("rsync").args(["-a", &src, &dst]).output();
                 if let Ok(o) = output {
                     if o.status.success() {
                         set_permissions(&dst, 0o600);
@@ -1255,10 +1281,7 @@ fn mount_remote(node: &str, vmid: &str, agents: &[&AgentInfo]) {
 
         let remote_archive = format!(
             "/tmp/{}",
-            Path::new(&archive)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
+            Path::new(&archive).file_name().unwrap().to_string_lossy()
         );
         let _ = Command::new("scp")
             .args([
@@ -1440,9 +1463,7 @@ fn unmount(vmid: &str, filter: &AgentFilter) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn enter(vmid: &str) {
-    let _ = Command::new("pct")
-        .args(["enter", vmid])
-        .status();
+    let _ = Command::new("pct").args(["enter", vmid]).status();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1479,7 +1500,11 @@ fn list() {
 
 fn check_agent_in_lxc(vmid: &str, agent: &str) -> String {
     let (ok, _) = lxc_exec(vmid, &["bash", "-c", &format!("test -d /root/{agent}")]);
-    if ok { "Y".to_string() } else { "N".to_string() }
+    if ok {
+        "Y".to_string()
+    } else {
+        "N".to_string()
+    }
 }
 
 fn get_cli_version_in_lxc(vmid: &str, cli: &str) -> String {
@@ -2185,8 +2210,7 @@ fn find_comfyui_vmid(node: &str) -> String {
             for lxc in lxcs {
                 let tags = lxc["tags"].as_str().unwrap_or("");
                 let name = lxc["name"].as_str().unwrap_or("");
-                if tags.contains("comfyui") || name.contains("comfyui") || name.contains("ai-img")
-                {
+                if tags.contains("comfyui") || name.contains("comfyui") || name.contains("ai-img") {
                     return lxc["vmid"].as_u64().unwrap_or(0).to_string();
                 }
             }
@@ -2267,11 +2291,7 @@ fn comfyui_setup(node: &str, vmid: Option<&str>, gpu_ids: &str) {
     let service_script = format!(
         "printf '[Unit]\\nDescription=ComfyUI\\nAfter=network.target\\n\\n[Service]\\nType=simple\\nUser=root\\nWorkingDirectory=/opt/comfyui\\nExecStart=/opt/comfyui-venv/bin/python3 main.py --listen 0.0.0.0 --port 8188\\nRestart=on-failure\\nRestartSec=10\\nEnvironment=CUDA_VISIBLE_DEVICES={cuda_devices}\\n\\n[Install]\\nWantedBy=multi-user.target\\n' > /etc/systemd/system/comfyui.service && systemctl daemon-reload && systemctl enable comfyui && systemctl restart comfyui"
     );
-    let (ok, _) = lxc_exec_on(
-        Some(node),
-        &target_vmid,
-        &["bash", "-lc", &service_script],
-    );
+    let (ok, _) = lxc_exec_on(Some(node), &target_vmid, &["bash", "-lc", &service_script]);
     if ok {
         println!("  comfyui.service 설정 완료");
     }
@@ -2289,16 +2309,8 @@ fn comfyui_sync_watch(node: &str, action: &str) {
             let timer = "[Unit]\nDescription=pxi ComfyUI sync timer\n\n\
 [Timer]\nOnBootSec=5min\nOnUnitActiveSec=1h\nUnit=phs-comfyui-sync.service\n\n\
 [Install]\nWantedBy=timers.target\n";
-            fs::write(
-                "/etc/systemd/system/phs-comfyui-sync.service",
-                svc,
-            )
-            .ok();
-            fs::write(
-                "/etc/systemd/system/phs-comfyui-sync.timer",
-                timer,
-            )
-            .ok();
+            fs::write("/etc/systemd/system/phs-comfyui-sync.service", svc).ok();
+            fs::write("/etc/systemd/system/phs-comfyui-sync.timer", timer).ok();
             for cmd in [
                 vec!["daemon-reload"],
                 vec!["enable", "phs-comfyui-sync.timer"],
@@ -2459,12 +2471,8 @@ fn comfyui_status_cmd(node: &str, vmid: Option<&str>) {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stats) {
-        let version = parsed["system"]["comfyui_version"]
-            .as_str()
-            .unwrap_or("?");
-        let pytorch = parsed["system"]["pytorch_version"]
-            .as_str()
-            .unwrap_or("?");
+        let version = parsed["system"]["comfyui_version"].as_str().unwrap_or("?");
+        let pytorch = parsed["system"]["pytorch_version"].as_str().unwrap_or("?");
         println!("[API] ComfyUI: {version}, PyTorch: {pytorch}");
     } else {
         println!("[API] 응답 없음");
@@ -2552,18 +2560,12 @@ fn cluster_files_setup() {
     // Sync timer
     let sync_svc = "[Unit]\nDescription=pxi cluster-files sync\n\n\
 [Service]\nType=oneshot\nExecStart=/usr/local/bin/proxmox-host-setup ai cluster-files-sync\n";
-    let _ = fs::write(
-        "/etc/systemd/system/cluster-files-sync.service",
-        sync_svc,
-    );
+    let _ = fs::write("/etc/systemd/system/cluster-files-sync.service", sync_svc);
 
     let sync_timer = "[Unit]\nDescription=cluster-files sync timer\n\n\
 [Timer]\nOnBootSec=30s\nOnUnitActiveSec=2min\nUnit=cluster-files-sync.service\n\n\
 [Install]\nWantedBy=timers.target\n";
-    let _ = fs::write(
-        "/etc/systemd/system/cluster-files-sync.timer",
-        sync_timer,
-    );
+    let _ = fs::write("/etc/systemd/system/cluster-files-sync.timer", sync_timer);
 
     for cmd in [
         vec!["daemon-reload"],
@@ -2593,8 +2595,7 @@ fn cluster_files_sync() {
     }
 
     let nodes_json = cmd_output("pvesh", &["get", "/nodes", "--output-format", "json"]);
-    let nodes: Vec<serde_json::Value> =
-        serde_json::from_str(&nodes_json).unwrap_or_default();
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&nodes_json).unwrap_or_default();
     let local_node = local_node_name();
 
     let mut succeeded: u32 = 0;
@@ -2616,8 +2617,7 @@ fn cluster_files_sync() {
                 "json",
             ],
         );
-        let lxcs: Vec<serde_json::Value> =
-            serde_json::from_str(&lxc_json).unwrap_or_default();
+        let lxcs: Vec<serde_json::Value> = serde_json::from_str(&lxc_json).unwrap_or_default();
 
         for lxc in &lxcs {
             let vmid = lxc["vmid"].as_u64().unwrap_or(0);
@@ -2627,8 +2627,7 @@ fn cluster_files_sync() {
                 continue;
             }
 
-            let mount_dir =
-                format!("{CLUSTER_FILES_ROOT}/{node_name}/{vmid}-{name}");
+            let mount_dir = format!("{CLUSTER_FILES_ROOT}/{node_name}/{vmid}-{name}");
             let _ = fs::create_dir_all(&mount_dir);
 
             let mounted = cmd_output("findmnt", &["-n", "--target", &mount_dir]);
@@ -2641,8 +2640,7 @@ fn cluster_files_sync() {
             }
 
             // Get LXC IP for sshfs
-            let conf_path =
-                format!("/etc/pve/nodes/{node_name}/lxc/{vmid}.conf");
+            let conf_path = format!("/etc/pve/nodes/{node_name}/lxc/{vmid}.conf");
             let lxc_ip = fs::read_to_string(&conf_path)
                 .ok()
                 .and_then(|c| {
@@ -2680,9 +2678,7 @@ fn cluster_files_sync() {
         }
     }
 
-    println!(
-        "[cluster-files] mounted={succeeded} already={already} failed={failed}"
-    );
+    println!("[cluster-files] mounted={succeeded} already={already} failed={failed}");
 }
 
 fn cluster_files_reset() {
@@ -2767,8 +2763,7 @@ fn cluster_ssh_deploy() {
     println!("[1/3] 공개키: {key_path}");
 
     let nodes_json = cmd_output("pvesh", &["get", "/nodes", "--output-format", "json"]);
-    let nodes: Vec<serde_json::Value> =
-        serde_json::from_str(&nodes_json).unwrap_or_default();
+    let nodes: Vec<serde_json::Value> = serde_json::from_str(&nodes_json).unwrap_or_default();
     let local_node = local_node_name();
 
     let key_b64 = base64_encode(&pubkey);
@@ -2794,8 +2789,7 @@ fn cluster_ssh_deploy() {
                 "json",
             ],
         );
-        let lxcs: Vec<serde_json::Value> =
-            serde_json::from_str(&lxc_json).unwrap_or_default();
+        let lxcs: Vec<serde_json::Value> = serde_json::from_str(&lxc_json).unwrap_or_default();
 
         for lxc in &lxcs {
             let vmid = lxc["vmid"].as_u64().unwrap_or(0);
@@ -2817,14 +2811,7 @@ fn cluster_ssh_deploy() {
 
             let result = if is_local {
                 Command::new("pct")
-                    .args([
-                        "exec",
-                        &vmid.to_string(),
-                        "--",
-                        "bash",
-                        "-c",
-                        &inner_cmd,
-                    ])
+                    .args(["exec", &vmid.to_string(), "--", "bash", "-c", &inner_cmd])
                     .output()
             } else {
                 let node_ip_str = node_ip_from_name(node_name);
@@ -2837,10 +2824,7 @@ fn cluster_ssh_deploy() {
                         "-o",
                         "BatchMode=yes",
                         &format!("root@{node_ip_str}"),
-                        &format!(
-                            "pct exec {vmid} -- bash -c {}",
-                            shell_escape(&inner_cmd)
-                        ),
+                        &format!("pct exec {vmid} -- bash -c {}", shell_escape(&inner_cmd)),
                     ])
                     .output()
             };
@@ -3141,11 +3125,7 @@ fn vm_unmount(vmid: &str, ip: &str, user: &str, filter: &AgentFilter) {
 
 fn vm_enter(ip: &str, user: &str) {
     let _ = Command::new("ssh")
-        .args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            &format!("{user}@{ip}"),
-        ])
+        .args(["-o", "StrictHostKeyChecking=no", &format!("{user}@{ip}")])
         .status();
 }
 
@@ -3202,10 +3182,7 @@ fn vm_update(vmid: &str, ip: &str, user: &str, filter: &AgentFilter) {
                     agent.cli_binary
                 )],
             );
-            println!(
-                "[ai-vm-update] {} 완료: {before} -> {after}",
-                agent.name
-            );
+            println!("[ai-vm-update] {} 완료: {before} -> {after}", agent.name);
         } else {
             eprintln!("[ai-vm-update] {} 실패: {out}", agent.name);
         }
@@ -3277,8 +3254,12 @@ fn octopus_install_all(force: bool) {
             continue;
         }
         let mut clis = Vec::new();
-        if has_claude { clis.push("claude"); }
-        if has_codex { clis.push("codex"); }
+        if has_claude {
+            clis.push("claude");
+        }
+        if has_codex {
+            clis.push("codex");
+        }
         println!("\n--- LXC {vmid} ({hostname}) [{}] ---", clis.join(","));
 
         if has_claude {
@@ -3287,13 +3268,20 @@ fn octopus_install_all(force: bool) {
                  claude plugin install octo@nyldn-plugins 2>&1 | tail -1"
             );
             match run_on(Some(vmid), &script) {
-                Ok(_) => { println!("  ✓ claude"); succeeded += 1; }
+                Ok(_) => {
+                    println!("  ✓ claude");
+                    succeeded += 1;
+                }
                 Err(e) => println!("  ✗ claude: {e}"),
             }
         }
 
         if has_codex {
-            let rm = if force { "rm -rf ~/.codex/claude-octopus;" } else { "" };
+            let rm = if force {
+                "rm -rf ~/.codex/claude-octopus;"
+            } else {
+                ""
+            };
             let script = format!(
                 "{rm} if [ -d ~/.codex/claude-octopus ]; then \
                    cd ~/.codex/claude-octopus && git pull --ff-only 2>&1 | tail -1; \
@@ -3304,7 +3292,10 @@ fn octopus_install_all(force: bool) {
                  ln -sf ~/.codex/claude-octopus/skills ~/.agents/skills/claude-octopus"
             );
             match run_on(Some(vmid), &script) {
-                Ok(_) => { println!("  ✓ codex"); succeeded += 1; }
+                Ok(_) => {
+                    println!("  ✓ codex");
+                    succeeded += 1;
+                }
                 Err(e) => println!("  ✗ codex: {e}"),
             }
         }
@@ -3335,8 +3326,12 @@ fn superpowers_install_all(force: bool) {
             continue;
         }
         let mut clis = Vec::new();
-        if has_claude { clis.push("claude"); }
-        if has_gemini { clis.push("gemini"); }
+        if has_claude {
+            clis.push("claude");
+        }
+        if has_gemini {
+            clis.push("gemini");
+        }
         println!("\n--- LXC {vmid} ({hostname}) [{}] ---", clis.join(","));
 
         if has_claude {
@@ -3346,15 +3341,22 @@ fn superpowers_install_all(force: bool) {
                             claude plugin install superpowers@superpowers-marketplace 2>&1 | tail -1 \
                           )";
             match run_on(Some(vmid), script) {
-                Ok(_) => { println!("  ✓ claude"); succeeded += 1; }
+                Ok(_) => {
+                    println!("  ✓ claude");
+                    succeeded += 1;
+                }
                 Err(e) => println!("  ✗ claude: {e}"),
             }
         }
 
         if has_gemini {
-            let script = "gemini extensions install https://github.com/obra/superpowers 2>&1 | tail -1";
+            let script =
+                "gemini extensions install https://github.com/obra/superpowers 2>&1 | tail -1";
             match run_on(Some(vmid), script) {
-                Ok(_) => { println!("  ✓ gemini"); succeeded += 1; }
+                Ok(_) => {
+                    println!("  ✓ gemini");
+                    succeeded += 1;
+                }
                 Err(e) => println!("  ✗ gemini: {e}"),
             }
         }
@@ -3427,7 +3429,9 @@ exec pct exec "$VMID" -- bash -c "export PATH=/usr/local/bin:\$PATH && openclaw 
     fs::write(path, &wrapper).ok();
     set_permissions(path, 0o755);
     println!("[openclaw-wrap] wrapper 설치 완료: {path} -> LXC {vmid}");
-    println!("[openclaw-wrap] 이제 호스트에서 openclaw 명령이 자동으로 LXC {vmid} 안에서 실행됩니다.");
+    println!(
+        "[openclaw-wrap] 이제 호스트에서 openclaw 명령이 자동으로 LXC {vmid} 안에서 실행됩니다."
+    );
 }
 
 // ── LLM 프리셋 ──
@@ -3482,7 +3486,14 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
     }
 
     if preset_name.is_empty() {
-        eprintln!("[openclaw] --preset 필요. 사용 가능: {}", LLM_PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
+        eprintln!(
+            "[openclaw] --preset 필요. 사용 가능: {}",
+            LLM_PRESETS
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         eprintln!("  목록 보기: pxi run ai openclaw-llm-switch --list");
         std::process::exit(1);
     }
@@ -3491,7 +3502,14 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
         Some(p) => p,
         None => {
             eprintln!("[openclaw] 알 수 없는 프리셋: {preset_name}");
-            eprintln!("사용 가능: {}", LLM_PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
+            eprintln!(
+                "사용 가능: {}",
+                LLM_PRESETS
+                    .iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             std::process::exit(1);
         }
     };
@@ -3499,7 +3517,10 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
     println!("[openclaw] LLM 프리셋 전환: {}", preset.name);
     println!("  설명: {}", preset.description);
     println!("  model: {}", preset.model_id);
-    println!("  thinking: {}, reasoning: {}, fast: {}", preset.thinking, preset.reasoning, preset.fast_mode);
+    println!(
+        "  thinking: {}, reasoning: {}, fast: {}",
+        preset.thinking, preset.reasoning, preset.fast_mode
+    );
     if let Some(fb) = preset.fallback {
         println!("  fallback: {fb}");
     }
@@ -3508,7 +3529,12 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
     // Apply model defaults to host openclaw.json
     let config_path = format!("{SOURCE_HOME}/.openclaw/openclaw.json");
     match apply_model_defaults_to_file(
-        &config_path, preset.model_id, preset.fallback, preset.thinking, preset.reasoning, preset.fast_mode,
+        &config_path,
+        preset.model_id,
+        preset.fallback,
+        preset.thinking,
+        preset.reasoning,
+        preset.fast_mode,
     ) {
         Ok(()) => println!("[openclaw] 호스트 프리셋 적용 완료"),
         Err(e) => {
@@ -3521,7 +3547,12 @@ fn openclaw_llm_switch(vmid: Option<&str>, preset_name: &str, list: bool) {
         // Apply in LXC via pct exec
         println!("\n[openclaw] LXC {vmid} 프리셋 적용 중...");
         apply_model_defaults_in_lxc(
-            vmid, preset.model_id, preset.fallback, preset.thinking, preset.reasoning, preset.fast_mode,
+            vmid,
+            preset.model_id,
+            preset.fallback,
+            preset.thinking,
+            preset.reasoning,
+            preset.fast_mode,
         );
         // Restart gateway
         println!("[openclaw] gateway 재시작...");
@@ -3546,7 +3577,12 @@ fn openclaw_model_defaults(
     } else {
         let config_path = format!("{SOURCE_HOME}/.openclaw/openclaw.json");
         match apply_model_defaults_to_file(
-            &config_path, model, fallback, thinking, reasoning, fast_mode,
+            &config_path,
+            model,
+            fallback,
+            thinking,
+            reasoning,
+            fast_mode,
         ) {
             Ok(()) => {
                 println!("[openclaw] 기본 정책 적용 완료");
@@ -3581,7 +3617,9 @@ fn apply_model_defaults_to_file(
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_else(|| serde_json::json!({}));
 
-    let obj = cfg.as_object_mut().ok_or_else(|| anyhow::anyhow!("config 루트가 object가 아님"))?;
+    let obj = cfg
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("config 루트가 object가 아님"))?;
     obj.insert("defaultModel".into(), serde_json::json!(model));
     obj.insert("defaultThinking".into(), serde_json::json!(thinking));
     obj.insert("defaultReasoning".into(), serde_json::json!(reasoning));
@@ -3661,7 +3699,9 @@ fn tune_profile() -> serde_json::Value {
 
 fn settings_path() -> anyhow::Result<std::path::PathBuf> {
     let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME 미설정"))?;
-    Ok(std::path::PathBuf::from(home).join(".claude").join("settings.json"))
+    Ok(std::path::PathBuf::from(home)
+        .join(".claude")
+        .join("settings.json"))
 }
 
 fn claude_tune(dry_run: bool, revert: bool) -> anyhow::Result<()> {
@@ -3709,8 +3749,13 @@ fn claude_tune(dry_run: bool, revert: bool) -> anyhow::Result<()> {
 
 fn claude_tune_revert(path: &std::path::Path) -> anyhow::Result<()> {
     // 가장 최신 백업 찾기
-    let dir = path.parent().ok_or_else(|| anyhow::anyhow!("parent dir 없음"))?;
-    let stem = path.file_name().and_then(|s| s.to_str()).unwrap_or("settings.json");
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("parent dir 없음"))?;
+    let stem = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("settings.json");
     let mut backups: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
         .flatten()
         .map(|e| e.path())
@@ -3769,7 +3814,9 @@ fn tune_diff_inner(
             if v.is_object() && existing.map(|e| e.is_object()).unwrap_or(false) {
                 tune_diff_inner(&key, existing.unwrap(), v, out);
             } else {
-                let before = existing.map(|e| e.to_string()).unwrap_or_else(|| "<unset>".into());
+                let before = existing
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "<unset>".into());
                 let after = v.to_string();
                 if before != after {
                     out.push((key, (before, after)));
@@ -3818,12 +3865,18 @@ fn claude_status() -> anyhow::Result<()> {
     // MCP count (claude mcp list 출력 파싱)
     println!();
     println!("[MCP 서버 — `claude mcp list`]");
-    match std::process::Command::new("claude").args(["mcp", "list"]).output() {
+    match std::process::Command::new("claude")
+        .args(["mcp", "list"])
+        .output()
+    {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
             let connected = out.lines().filter(|l| l.contains("✓ Connected")).count();
             let failed = out.lines().filter(|l| l.contains("✗ Failed")).count();
-            let auth = out.lines().filter(|l| l.contains("Needs authentication")).count();
+            let auth = out
+                .lines()
+                .filter(|l| l.contains("Needs authentication"))
+                .count();
             println!("  connected: {connected}");
             println!("  failed:    {failed}");
             println!("  needs auth: {auth}");
@@ -3879,15 +3932,17 @@ fn claude_doctor() -> anyhow::Result<()> {
         println!("  ✗ {} 없음", settings.display());
     } else {
         let raw = std::fs::read_to_string(&settings).unwrap_or_default();
-        let cfg: serde_json::Value = serde_json::from_str(&raw)
-            .unwrap_or(serde_json::Value::Null);
+        let cfg: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
         // 토큰 프로파일 적용 여부
         let profile = tune_profile();
         let diff = tune_diff(&cfg, &profile);
         if diff.is_empty() {
             println!("  ✓ settings.json: claude-tune 권장 프로파일 100% 적용");
         } else {
-            println!("  ⚠ settings.json: claude-tune 권장 {} 항목 미적용", diff.len());
+            println!(
+                "  ⚠ settings.json: claude-tune 권장 {} 항목 미적용",
+                diff.len()
+            );
             for (k, _) in &diff {
                 println!("      - {k}");
             }
@@ -3896,14 +3951,32 @@ fn claude_doctor() -> anyhow::Result<()> {
         if let Some(plugins) = cfg.get("enabledPlugins").and_then(|v| v.as_object()) {
             let enabled: Vec<&String> = plugins
                 .iter()
-                .filter_map(|(k, v)| if v == &serde_json::Value::Bool(true) { Some(k) } else { None })
+                .filter_map(|(k, v)| {
+                    if v == &serde_json::Value::Bool(true) {
+                        Some(k)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             let disabled: Vec<&String> = plugins
                 .iter()
-                .filter_map(|(k, v)| if v == &serde_json::Value::Bool(false) { Some(k) } else { None })
+                .filter_map(|(k, v)| {
+                    if v == &serde_json::Value::Bool(false) {
+                        Some(k)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            println!("  · 플러그인: {} enabled / {} disabled", enabled.len(), disabled.len());
-            for p in &enabled { println!("      ✓ {p}"); }
+            println!(
+                "  · 플러그인: {} enabled / {} disabled",
+                enabled.len(),
+                disabled.len()
+            );
+            for p in &enabled {
+                println!("      ✓ {p}");
+            }
         }
     }
 
@@ -3933,7 +4006,9 @@ fn claude_doctor() -> anyhow::Result<()> {
         if let Ok(entries) = std::fs::read_dir(&projects) {
             for e in entries.flatten() {
                 let p = e.path();
-                if !p.is_dir() { continue; }
+                if !p.is_dir() {
+                    continue;
+                }
                 let memdir = p.join("memory");
                 if memdir.exists() {
                     walk_size(&memdir, &mut mem_total, &mut mem_files);
@@ -3941,7 +4016,9 @@ fn claude_doctor() -> anyhow::Result<()> {
                 if let Ok(inner) = std::fs::read_dir(&p) {
                     for ie in inner.flatten() {
                         let ip = ie.path();
-                        if ip.file_name().and_then(|n| n.to_str()) == Some("memory") { continue; }
+                        if ip.file_name().and_then(|n| n.to_str()) == Some("memory") {
+                            continue;
+                        }
                         if ip.is_dir() {
                             walk_size(&ip, &mut sess_total, &mut sess_files);
                         } else if let Ok(m) = ie.metadata() {
@@ -3952,10 +4029,14 @@ fn claude_doctor() -> anyhow::Result<()> {
                 }
             }
         }
-        println!("  · auto memory: {mem_files} 파일, {:.1}KB (매 세션 MEMORY.md 인덱스 주입)",
-            mem_total as f64 / 1024.0);
-        println!("  · session 로그: {sess_files} 파일, {:.1}MB (cleanupPeriodDays 로 보존 조절)",
-            sess_total as f64 / (1024.0 * 1024.0));
+        println!(
+            "  · auto memory: {mem_files} 파일, {:.1}KB (매 세션 MEMORY.md 인덱스 주입)",
+            mem_total as f64 / 1024.0
+        );
+        println!(
+            "  · session 로그: {sess_files} 파일, {:.1}MB (cleanupPeriodDays 로 보존 조절)",
+            sess_total as f64 / (1024.0 * 1024.0)
+        );
     }
 
     // 5) 스킬 개수
@@ -4004,7 +4085,8 @@ fn codex_doctor() -> anyhow::Result<()> {
         println!("  ✓ config: {}", config.display());
         if let Ok(raw) = std::fs::read_to_string(&config) {
             // 토큰 효율 주요 설정 확인
-            let has_features_off = raw.contains("features.apps = false") || raw.contains("[features]\napps = false");
+            let has_features_off =
+                raw.contains("features.apps = false") || raw.contains("[features]\napps = false");
             let has_web_search_off = raw.contains("web_search = \"disabled\"");
             let has_tool_limit = raw.contains("tool_output_token_limit");
             print_flag("features.apps = false", has_features_off);
@@ -4016,7 +4098,10 @@ fn codex_doctor() -> anyhow::Result<()> {
     // 3) auth
     let auth_file = std::path::PathBuf::from(&home).join(".codex/auth.json");
     if auth_file.exists() {
-        println!("  ✓ auth: {} 존재 (ChatGPT OAuth 또는 API Key)", auth_file.display());
+        println!(
+            "  ✓ auth: {} 존재 (ChatGPT OAuth 또는 API Key)",
+            auth_file.display()
+        );
     } else {
         println!("  ⚠ auth 파일 없음 — `codex` 첫 실행 후 로그인");
     }
@@ -4070,10 +4155,12 @@ fn ai_menu() -> anyhow::Result<()> {
     use std::io::IsTerminal;
 
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        anyhow::bail!("pxi run ai menu 는 TTY 전용. 직접 호출:\n  \
+        anyhow::bail!(
+            "pxi run ai menu 는 TTY 전용. 직접 호출:\n  \
             pxi run ai claude-status\n  \
             pxi run ai claude-doctor\n  \
-            pxi run ai codex-doctor");
+            pxi run ai codex-doctor"
+        );
     }
 
     loop {
@@ -4094,7 +4181,10 @@ fn ai_menu() -> anyhow::Result<()> {
             0 => claude_submenu()?,
             1 => codex_submenu()?,
             2 => mcp_view()?,
-            3 => { let _ = claude_status(); pause(); },
+            3 => {
+                let _ = claude_status();
+                pause();
+            }
             4 => break,
             _ => {}
         }
@@ -4118,21 +4208,30 @@ fn claude_submenu() -> anyhow::Result<()> {
         .default(0)
         .interact()?;
     match sel {
-        0 => { let _ = claude_doctor(); pause(); },
-        1 => { let _ = claude_status(); pause(); },
-        2 => { let _ = claude_tune(true, false); pause(); },
+        0 => {
+            let _ = claude_doctor();
+            pause();
+        }
+        1 => {
+            let _ = claude_status();
+            pause();
+        }
+        2 => {
+            let _ = claude_tune(true, false);
+            pause();
+        }
         3 => {
             if confirm("권장 프로파일을 적용합니다. 진행?") {
                 let _ = claude_tune(false, false);
             }
             pause();
-        },
+        }
         4 => {
             if confirm("최신 백업으로 복원합니다. 현재 변경사항 유실. 진행?") {
                 let _ = claude_tune(false, true);
             }
             pause();
-        },
+        }
         _ => {}
     }
     Ok(())
@@ -4151,9 +4250,14 @@ fn codex_submenu() -> anyhow::Result<()> {
         .default(0)
         .interact()?;
     match sel {
-        0 => { let _ = codex_doctor(); pause(); },
+        0 => {
+            let _ = codex_doctor();
+            pause();
+        }
         1 => {
-            let _ = std::process::Command::new("codex").arg("--version").status();
+            let _ = std::process::Command::new("codex")
+                .arg("--version")
+                .status();
             pause();
         }
         _ => {}
@@ -4163,7 +4267,9 @@ fn codex_submenu() -> anyhow::Result<()> {
 
 fn mcp_view() -> anyhow::Result<()> {
     println!("\n=== claude mcp list ===");
-    let _ = std::process::Command::new("claude").args(["mcp", "list"]).status();
+    let _ = std::process::Command::new("claude")
+        .args(["mcp", "list"])
+        .status();
     println!();
     pause();
     Ok(())

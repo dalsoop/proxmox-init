@@ -15,9 +15,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// 키/값 추가
-    Set { key: String, value: String },
+    Set {
+        key: String,
+        value: String,
+    },
     /// 키 제거
-    Remove { key: String },
+    Remove {
+        key: String,
+    },
     /// 전체 목록 (값은 마스킹)
     List,
     /// dotenvx로 .env.vault 암호화
@@ -31,7 +36,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::Remove { key } => remove(&key),
         Cmd::List => list(),
         Cmd::Encrypt => encrypt(),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -50,11 +58,16 @@ fn set(key: &str, value: &str) -> anyhow::Result<()> {
     let path = env_path()?;
     let raw = fs::read_to_string(&path).unwrap_or_default();
     let prefix = format!("{key}=");
-    let lines: Vec<String> = raw.lines()
+    let lines: Vec<String> = raw
+        .lines()
         .filter(|l| !l.starts_with(&prefix))
         .map(String::from)
         .collect();
-    let mut file = fs::OpenOptions::new().write(true).truncate(true).create(true).open(&path)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&path)?;
     for l in &lines {
         writeln!(file, "{l}")?;
     }
@@ -78,10 +91,12 @@ fn list() -> anyhow::Result<()> {
     let raw = fs::read_to_string(&path)?;
     println!("=== {} ===", path.display());
     for line in raw.lines() {
-        if line.trim().is_empty() || line.trim_start().starts_with('#') { continue; }
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
         if let Some((k, v)) = line.split_once('=') {
             let masked = if v.len() > 6 {
-                format!("{}...{}", &v[..3], &v[v.len()-3..])
+                format!("{}...{}", &v[..3], &v[v.len() - 3..])
             } else {
                 "***".into()
             };
@@ -103,10 +118,28 @@ fn encrypt() -> anyhow::Result<()> {
 
 fn doctor() {
     println!("=== pxi-connect doctor ===");
-    println!("  dotenvx:  {}", if dotenvx::is_installed() { "✓" } else { "✗ (pxi install bootstrap)" });
+    println!(
+        "  dotenvx:  {}",
+        if dotenvx::is_installed() {
+            "✓"
+        } else {
+            "✗ (pxi install bootstrap)"
+        }
+    );
     match paths::env_file() {
-        Ok(p) => println!("  env:      {} ({})", p.display(), if p.exists() { "✓" } else { "없음" }),
+        Ok(p) => println!(
+            "  env:      {} ({})",
+            p.display(),
+            if p.exists() { "✓" } else { "없음" }
+        ),
         Err(e) => println!("  env:      ✗ {e}"),
     }
-    println!("  curl:     {}", if common::has_cmd("curl") { "✓" } else { "✗" });
+    println!(
+        "  curl:     {}",
+        if common::has_cmd("curl") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 }

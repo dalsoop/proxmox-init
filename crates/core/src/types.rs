@@ -33,7 +33,9 @@ impl Vmid {
     pub fn new_unchecked(s: impl Into<String>) -> Self {
         Self(s.into())
     }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
     /// convention::canonical_ip(self) 바로가기.
     pub fn canonical_ip(&self) -> anyhow::Result<String> {
         crate::convention::canonical_ip(&self.0)
@@ -41,7 +43,9 @@ impl Vmid {
 }
 
 impl fmt::Display for Vmid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 impl FromStr for Vmid {
@@ -55,15 +59,21 @@ impl FromStr for Vmid {
 
 impl TryFrom<String> for Vmid {
     type Error = anyhow::Error;
-    fn try_from(s: String) -> anyhow::Result<Self> { s.parse() }
+    fn try_from(s: String) -> anyhow::Result<Self> {
+        s.parse()
+    }
 }
 
 impl From<Vmid> for String {
-    fn from(v: Vmid) -> String { v.0 }
+    fn from(v: Vmid) -> String {
+        v.0
+    }
 }
 
 impl AsRef<str> for Vmid {
-    fn as_ref(&self) -> &str { &self.0 }
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 // ============================================================================
@@ -105,9 +115,11 @@ impl FromStr for IpCidr {
                  직접 처리 (pxi-lxc 가 config.network.subnet 적용). 받은 값: {s}"
             )
         })?;
-        let ip: Ipv4Addr = ip_s.parse()
+        let ip: Ipv4Addr = ip_s
+            .parse()
             .map_err(|e| anyhow::anyhow!("IPv4 파싱 실패 '{ip_s}': {e}"))?;
-        let prefix: u8 = prefix_s.parse()
+        let prefix: u8 = prefix_s
+            .parse()
             .map_err(|e| anyhow::anyhow!("prefix 파싱 실패 '{prefix_s}': {e}"))?;
         Self::new(ip, prefix)
     }
@@ -115,11 +127,15 @@ impl FromStr for IpCidr {
 
 impl TryFrom<String> for IpCidr {
     type Error = anyhow::Error;
-    fn try_from(s: String) -> anyhow::Result<Self> { s.parse() }
+    fn try_from(s: String) -> anyhow::Result<Self> {
+        s.parse()
+    }
 }
 
 impl From<IpCidr> for String {
-    fn from(c: IpCidr) -> String { c.to_string() }
+    fn from(c: IpCidr) -> String {
+        c.to_string()
+    }
 }
 
 // ============================================================================
@@ -136,9 +152,15 @@ pub enum LxcStatus {
 }
 
 impl LxcStatus {
-    pub fn is_running(self) -> bool { matches!(self, Self::Running) }
-    pub fn is_stopped(self) -> bool { matches!(self, Self::Stopped) }
-    pub fn exists(self) -> bool { !matches!(self, Self::NotFound) }
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Running)
+    }
+    pub fn is_stopped(self) -> bool {
+        matches!(self, Self::Stopped)
+    }
+    pub fn exists(self) -> bool {
+        !matches!(self, Self::NotFound)
+    }
 }
 
 impl FromStr for LxcStatus {
@@ -210,16 +232,24 @@ mod tests {
 
     #[test]
     fn ipcidr_rejects_malformed() {
-        assert!("abc/16".parse::<IpCidr>().is_err());           // bad IP
-        assert!("10.0.50.210/99".parse::<IpCidr>().is_err());   // prefix > 32
+        assert!("abc/16".parse::<IpCidr>().is_err()); // bad IP
+        assert!("10.0.50.210/99".parse::<IpCidr>().is_err()); // prefix > 32
     }
 
     #[test]
     fn lxc_status_parsing() {
-        assert_eq!("status: running".parse::<LxcStatus>().unwrap(), LxcStatus::Running);
-        assert_eq!("status: stopped".parse::<LxcStatus>().unwrap(), LxcStatus::Stopped);
         assert_eq!(
-            "Configuration file '/etc/pve/lxc/99999.conf' does not exist".parse::<LxcStatus>().unwrap(),
+            "status: running".parse::<LxcStatus>().unwrap(),
+            LxcStatus::Running
+        );
+        assert_eq!(
+            "status: stopped".parse::<LxcStatus>().unwrap(),
+            LxcStatus::Stopped
+        );
+        assert_eq!(
+            "Configuration file '/etc/pve/lxc/99999.conf' does not exist"
+                .parse::<LxcStatus>()
+                .unwrap(),
             LxcStatus::NotFound
         );
         assert_eq!("weirdo".parse::<LxcStatus>().unwrap(), LxcStatus::Unknown);

@@ -71,16 +71,37 @@ struct HostSnap {
 }
 
 #[derive(Serialize)]
-struct DiskRow { mount: String, size: String, used: String, use_pct: String, source: String }
+struct DiskRow {
+    mount: String,
+    size: String,
+    used: String,
+    use_pct: String,
+    source: String,
+}
 
 #[derive(Serialize)]
-struct ThermalRow { zone: String, celsius: u64 }
+struct ThermalRow {
+    zone: String,
+    celsius: u64,
+}
 
 #[derive(Serialize)]
-struct LxcRow { vmid: String, status: String, name: String, mem_pct: String, disk_pct: String }
+struct LxcRow {
+    vmid: String,
+    status: String,
+    name: String,
+    mem_pct: String,
+    disk_pct: String,
+}
 
 #[derive(Serialize)]
-struct VmRow { vmid: String, name: String, status: String, mem_mb: String, disk_gb: String }
+struct VmRow {
+    vmid: String,
+    name: String,
+    status: String,
+    mem_mb: String,
+    disk_gb: String,
+}
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -108,13 +129,20 @@ fn doctor(json: bool) -> anyhow::Result<()> {
         ("qm", common::has_cmd("qm")),
     ];
     if json {
-        let map: serde_json::Value = checks.iter().map(|(k, v)| (k.to_string(), serde_json::Value::Bool(*v))).collect();
+        let map: serde_json::Value = checks
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::Bool(*v)))
+            .collect();
         println!("{}", serde_json::to_string_pretty(&map)?);
     } else {
         println!("=== pxi-monitor doctor ===");
         for (k, v) in &checks {
             let mark = if *v { "✓" } else { "✗" };
-            let note = match *k { "pct" => " (선택, LXC)", "qm" => " (선택, VM)", _ => "" };
+            let note = match *k {
+                "pct" => " (선택, LXC)",
+                "qm" => " (선택, VM)",
+                _ => "",
+            };
             println!("  {:<14}: {}{}", k, mark, note);
         }
     }
@@ -122,7 +150,11 @@ fn doctor(json: bool) -> anyhow::Result<()> {
 }
 
 fn path_ok(p: &str) -> &'static str {
-    if std::path::Path::new(p).exists() { "✓" } else { "✗" }
+    if std::path::Path::new(p).exists() {
+        "✓"
+    } else {
+        "✗"
+    }
 }
 
 fn collect_host() -> HostSnap {
@@ -134,32 +166,55 @@ fn collect_host() -> HostSnap {
         parts.get(2).unwrap_or(&"0").to_string(),
     ];
     let cpus = Command::new("nproc")
-        .output().ok()
+        .output()
+        .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|| "?".into());
 
     let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
-    let mut mt = 0u64; let mut ma = 0u64; let mut st = 0u64; let mut sf = 0u64;
+    let mut mt = 0u64;
+    let mut ma = 0u64;
+    let mut st = 0u64;
+    let mut sf = 0u64;
     for line in meminfo.lines() {
-        if line.starts_with("MemTotal:") { mt = parse_kb(line); }
-        else if line.starts_with("MemAvailable:") { ma = parse_kb(line); }
-        else if line.starts_with("SwapTotal:") { st = parse_kb(line); }
-        else if line.starts_with("SwapFree:") { sf = parse_kb(line); }
+        if line.starts_with("MemTotal:") {
+            mt = parse_kb(line);
+        } else if line.starts_with("MemAvailable:") {
+            ma = parse_kb(line);
+        } else if line.starts_with("SwapTotal:") {
+            st = parse_kb(line);
+        } else if line.starts_with("SwapFree:") {
+            sf = parse_kb(line);
+        }
     }
-    let mem_pct = if mt > 0 { mt.saturating_sub(ma) * 100 / mt } else { 0 };
+    let mem_pct = if mt > 0 {
+        mt.saturating_sub(ma) * 100 / mt
+    } else {
+        0
+    };
 
     let mut disks = Vec::new();
     let df = Command::new("df")
-        .args(["-h", "--type=ext4", "--type=btrfs", "--type=xfs", "--type=zfs"])
-        .output().ok()
+        .args([
+            "-h",
+            "--type=ext4",
+            "--type=btrfs",
+            "--type=xfs",
+            "--type=zfs",
+        ])
+        .output()
+        .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
     for line in df.lines().skip(1) {
         let p: Vec<&str> = line.split_whitespace().collect();
         if p.len() >= 6 {
             disks.push(DiskRow {
-                source: p[0].into(), size: p[1].into(), used: p[2].into(),
-                use_pct: p[4].into(), mount: p[5].into(),
+                source: p[0].into(),
+                size: p[1].into(),
+                used: p[2].into(),
+                use_pct: p[4].into(),
+                mount: p[5].into(),
             });
         }
     }
@@ -169,11 +224,17 @@ fn collect_host() -> HostSnap {
         for ent in entries.flatten() {
             let p = ent.path();
             let temp_path = p.join("temp");
-            if !temp_path.exists() { continue; }
+            if !temp_path.exists() {
+                continue;
+            }
             if let Ok(raw) = fs::read_to_string(&temp_path) {
                 if let Ok(t) = raw.trim().parse::<u64>() {
                     zones.push(ThermalRow {
-                        zone: p.file_name().and_then(|n| n.to_str()).unwrap_or("zone").into(),
+                        zone: p
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("zone")
+                            .into(),
                         celsius: t / 1000,
                     });
                 }
@@ -181,41 +242,67 @@ fn collect_host() -> HostSnap {
         }
     }
 
-    let uptime = Command::new("uptime").arg("-p").output().ok()
+    let uptime = Command::new("uptime")
+        .arg("-p")
+        .output()
+        .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
 
     HostSnap {
-        cpu_cores: cpus, load_avg: load,
-        mem_total_kb: mt, mem_available_kb: ma, mem_used_pct: mem_pct,
-        swap_total_kb: st, swap_free_kb: sf,
-        disks, thermal_zones_c: zones,
+        cpu_cores: cpus,
+        load_avg: load,
+        mem_total_kb: mt,
+        mem_available_kb: ma,
+        mem_used_pct: mem_pct,
+        swap_total_kb: st,
+        swap_free_kb: sf,
+        disks,
+        thermal_zones_c: zones,
         uptime_pretty: uptime,
     }
 }
 
 fn host(json: bool) -> anyhow::Result<()> {
     let s = collect_host();
-    if json { println!("{}", serde_json::to_string_pretty(&s)?); return Ok(()); }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&s)?);
+        return Ok(());
+    }
     println!("=== 호스트 리소스 ===\n");
     println!("[CPU] ({} cores)", s.cpu_cores);
-    println!("  load avg: {} {} {} (1/5/15min)", s.load_avg[0], s.load_avg[1], s.load_avg[2]);
+    println!(
+        "  load avg: {} {} {} (1/5/15min)",
+        s.load_avg[0], s.load_avg[1], s.load_avg[2]
+    );
     println!("\n[메모리]");
-    println!("  RAM:  {}GB / {}GB ({}%)",
+    println!(
+        "  RAM:  {}GB / {}GB ({}%)",
         s.mem_total_kb.saturating_sub(s.mem_available_kb) / 1_048_576,
-        s.mem_total_kb / 1_048_576, s.mem_used_pct);
+        s.mem_total_kb / 1_048_576,
+        s.mem_used_pct
+    );
     if s.swap_total_kb > 0 {
         let su = s.swap_total_kb.saturating_sub(s.swap_free_kb);
-        println!("  Swap: {}GB / {}GB ({}%)",
-            su / 1_048_576, s.swap_total_kb / 1_048_576, su * 100 / s.swap_total_kb);
+        println!(
+            "  Swap: {}GB / {}GB ({}%)",
+            su / 1_048_576,
+            s.swap_total_kb / 1_048_576,
+            su * 100 / s.swap_total_kb
+        );
     }
     println!("\n[디스크]");
     for d in &s.disks {
-        println!("  {:<24} {:>8} / {:>8} ({:>5}) {}", d.mount, d.used, d.size, d.use_pct, d.source);
+        println!(
+            "  {:<24} {:>8} / {:>8} ({:>5}) {}",
+            d.mount, d.used, d.size, d.use_pct, d.source
+        );
     }
     if !s.thermal_zones_c.is_empty() {
         println!("\n[온도]");
-        for z in &s.thermal_zones_c { println!("  {}: {}°C", z.zone, z.celsius); }
+        for z in &s.thermal_zones_c {
+            println!("  {}: {}°C", z.zone, z.celsius);
+        }
     }
     if !s.uptime_pretty.is_empty() {
         println!("\n[uptime] {}", s.uptime_pretty);
@@ -224,23 +311,40 @@ fn host(json: bool) -> anyhow::Result<()> {
 }
 
 fn parse_kb(line: &str) -> u64 {
-    line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 fn collect_lxc(running_only: bool) -> anyhow::Result<Vec<LxcRow>> {
     let out = Command::new("pct").arg("list").output()?;
-    if !out.status.success() { anyhow::bail!("pct list 실패"); }
+    if !out.status.success() {
+        anyhow::bail!("pct list 실패");
+    }
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let mut rows = Vec::new();
     for line in text.lines().skip(1) {
         let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() < 3 { continue; }
+        if p.len() < 3 {
+            continue;
+        }
         let (vmid, status, name) = (p[0], p[1], p[2]);
-        if running_only && status != "running" { continue; }
+        if running_only && status != "running" {
+            continue;
+        }
         let (m, d) = if status == "running" {
             (lxc_mem_pct(vmid), lxc_disk_pct(vmid))
-        } else { ("-".into(), "-".into()) };
-        rows.push(LxcRow { vmid: vmid.into(), status: status.into(), name: name.into(), mem_pct: m, disk_pct: d });
+        } else {
+            ("-".into(), "-".into())
+        };
+        rows.push(LxcRow {
+            vmid: vmid.into(),
+            status: status.into(),
+            name: name.into(),
+            mem_pct: m,
+            disk_pct: d,
+        });
     }
     Ok(rows)
 }
@@ -249,28 +353,45 @@ fn lxc(running_only: bool, json: bool) -> anyhow::Result<()> {
     if !common::has_cmd("pct") {
         // 텍스트는 기존 soft-fail 계약 유지 (안내 후 Ok),
         // JSON만 fail-fast (자동화 false negative 차단).
-        if json { anyhow::bail!("pct unavailable"); }
+        if json {
+            anyhow::bail!("pct unavailable");
+        }
         println!("(pct 미설치 — Proxmox 호스트 아님)");
         return Ok(());
     }
     let rows = collect_lxc(running_only)?;
-    if json { println!("{}", serde_json::to_string_pretty(&rows)?); return Ok(()); }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
     println!("=== LXC 리소스 ===\n");
-    println!("{:<6} {:<10} {:<25} {:>8} {:>10}", "VMID", "STATUS", "NAME", "MEM%", "DISK%");
+    println!(
+        "{:<6} {:<10} {:<25} {:>8} {:>10}",
+        "VMID", "STATUS", "NAME", "MEM%", "DISK%"
+    );
     for r in &rows {
-        println!("{:<6} {:<10} {:<25} {:>8} {:>10}", r.vmid, r.status, r.name, r.mem_pct, r.disk_pct);
+        println!(
+            "{:<6} {:<10} {:<25} {:>8} {:>10}",
+            r.vmid, r.status, r.name, r.mem_pct, r.disk_pct
+        );
     }
     Ok(())
 }
 
 // 순수 파서 — /proc/meminfo 텍스트에서 used% 계산. 0 또는 데이터 결손 시 None.
 fn parse_meminfo_used_pct(text: &str) -> Option<u64> {
-    let mut t = 0u64; let mut a = 0u64;
+    let mut t = 0u64;
+    let mut a = 0u64;
     for line in text.lines() {
-        if line.starts_with("MemTotal:") { t = parse_kb(line); }
-        else if line.starts_with("MemAvailable:") { a = parse_kb(line); }
+        if line.starts_with("MemTotal:") {
+            t = parse_kb(line);
+        } else if line.starts_with("MemAvailable:") {
+            a = parse_kb(line);
+        }
     }
-    if t == 0 { return None; }
+    if t == 0 {
+        return None;
+    }
     Some((t.saturating_sub(a)) * 100 / t)
 }
 
@@ -278,7 +399,9 @@ fn parse_meminfo_used_pct(text: &str) -> Option<u64> {
 fn parse_df_root_pct(text: &str) -> Option<String> {
     for line in text.lines().skip(1) {
         let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() >= 5 { return Some(p[4].to_string()); }
+        if p.len() >= 5 {
+            return Some(p[4].to_string());
+        }
     }
     None
 }
@@ -288,51 +411,81 @@ fn parse_qm_list(text: &str, running_only: bool) -> Vec<VmRow> {
     let mut rows = Vec::new();
     for line in text.lines().skip(1) {
         let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() < 5 { continue; }
-        if running_only && p[2] != "running" { continue; }
+        if p.len() < 5 {
+            continue;
+        }
+        if running_only && p[2] != "running" {
+            continue;
+        }
         rows.push(VmRow {
-            vmid: p[0].into(), name: p[1].into(), status: p[2].into(),
-            mem_mb: p[3].into(), disk_gb: p[4].into(),
+            vmid: p[0].into(),
+            name: p[1].into(),
+            status: p[2].into(),
+            mem_mb: p[3].into(),
+            disk_gb: p[4].into(),
         });
     }
     rows
 }
 
 fn lxc_mem_pct(vmid: &str) -> String {
-    let out = Command::new("pct").args(["exec", vmid, "--", "cat", "/proc/meminfo"]).output();
+    let out = Command::new("pct")
+        .args(["exec", vmid, "--", "cat", "/proc/meminfo"])
+        .output();
     let Ok(out) = out else { return "?".into() };
-    if !out.status.success() { return "?".into(); }
+    if !out.status.success() {
+        return "?".into();
+    }
     let text = String::from_utf8_lossy(&out.stdout);
-    parse_meminfo_used_pct(&text).map(|p| format!("{p}%")).unwrap_or_else(|| "?".into())
+    parse_meminfo_used_pct(&text)
+        .map(|p| format!("{p}%"))
+        .unwrap_or_else(|| "?".into())
 }
 
 fn lxc_disk_pct(vmid: &str) -> String {
-    let out = Command::new("pct").args(["exec", vmid, "--", "df", "-P", "/"]).output();
+    let out = Command::new("pct")
+        .args(["exec", vmid, "--", "df", "-P", "/"])
+        .output();
     let Ok(out) = out else { return "?".into() };
-    if !out.status.success() { return "?".into(); }
+    if !out.status.success() {
+        return "?".into();
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     parse_df_root_pct(&text).unwrap_or_else(|| "?".into())
 }
 
 fn collect_vm(running_only: bool) -> anyhow::Result<Vec<VmRow>> {
     let out = Command::new("qm").arg("list").output()?;
-    if !out.status.success() { anyhow::bail!("qm list 실패"); }
+    if !out.status.success() {
+        anyhow::bail!("qm list 실패");
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     Ok(parse_qm_list(&text, running_only))
 }
 
 fn vm(running_only: bool, json: bool) -> anyhow::Result<()> {
     if !common::has_cmd("qm") {
-        if json { anyhow::bail!("qm unavailable"); }
+        if json {
+            anyhow::bail!("qm unavailable");
+        }
         println!("(qm 미설치 — Proxmox 호스트 아님)");
         return Ok(());
     }
     let rows = collect_vm(running_only)?;
-    if json { println!("{}", serde_json::to_string_pretty(&rows)?); return Ok(()); }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
     println!("=== VM 리소스 ===\n");
-    println!("{:<6} {:<25} {:<10} {:>10} {:>12}", "VMID", "NAME", "STATUS", "MEM(MB)", "DISK(GB)");
+    println!(
+        "{:<6} {:<25} {:<10} {:>10} {:>12}",
+        "VMID", "NAME", "STATUS", "MEM(MB)", "DISK(GB)"
+    );
     for r in &rows {
-        println!("{:<6} {:<25} {:<10} {:>10} {:>12}", r.vmid, r.name, r.status, r.mem_mb, r.disk_gb);
+        println!(
+            "{:<6} {:<25} {:<10} {:>10} {:>12}",
+            r.vmid, r.name, r.status, r.mem_mb, r.disk_gb
+        );
     }
     Ok(())
 }
@@ -353,16 +506,30 @@ fn all(json: bool) -> anyhow::Result<()> {
         let snap = AllSnap {
             host: collect_host(),
             lxc_supported: common::has_cmd("pct"),
-            lxc: if common::has_cmd("pct") { collect_lxc(true)? } else { vec![] },
+            lxc: if common::has_cmd("pct") {
+                collect_lxc(true)?
+            } else {
+                vec![]
+            },
             vm_supported: common::has_cmd("qm"),
-            vm:  if common::has_cmd("qm")  { collect_vm(true)?  } else { vec![] },
+            vm: if common::has_cmd("qm") {
+                collect_vm(true)?
+            } else {
+                vec![]
+            },
         };
         println!("{}", serde_json::to_string_pretty(&snap)?);
         return Ok(());
     }
     host(false)?;
-    if common::has_cmd("pct") { println!(); lxc(true, false)?; }
-    if common::has_cmd("qm")  { println!(); vm(true, false)?; }
+    if common::has_cmd("pct") {
+        println!();
+        lxc(true, false)?;
+    }
+    if common::has_cmd("qm") {
+        println!();
+        vm(true, false)?;
+    }
     Ok(())
 }
 
@@ -376,7 +543,17 @@ fn global_verify() -> anyhow::Result<()> {
 
     // 1. inventory 일치
     println!("[1/4] inventory 일치");
-    let cluster = cmd_output_silent("pvesh", &["get", "/cluster/resources", "--type", "vm", "--output-format", "json"]);
+    let cluster = cmd_output_silent(
+        "pvesh",
+        &[
+            "get",
+            "/cluster/resources",
+            "--type",
+            "vm",
+            "--output-format",
+            "json",
+        ],
+    );
     let cluster_lxc: usize = serde_json::from_str::<Vec<serde_json::Value>>(&cluster)
         .unwrap_or_default()
         .iter()
@@ -386,10 +563,19 @@ fn global_verify() -> anyhow::Result<()> {
 
     // 2. 핵심 도메인 응답
     println!("\n[2/4] 핵심 도메인 응답");
-    let domains = ["infra.internal.kr", "home.internal.kr", "traefik.internal.kr"];
+    let domains = [
+        "infra.internal.kr",
+        "home.internal.kr",
+        "traefik.internal.kr",
+    ];
     for domain in &domains {
         let code = curl_status_code(domain);
-        let mark = if code >= 200 && code < 500 { "✓" } else { failures += 1; "✗" };
+        let mark = if code >= 200 && code < 500 {
+            "✓"
+        } else {
+            failures += 1;
+            "✗"
+        };
         println!("  {mark} {domain} -> {code}");
     }
 
@@ -438,7 +624,12 @@ fn health_check() -> anyhow::Result<()> {
         ("pveproxy", "Proxmox web proxy"),
     ] {
         let active = cmd_output_silent("systemctl", &["is-active", svc]);
-        let mark = if active.trim() == "active" { "✓" } else { issues += 1; "❌" };
+        let mark = if active.trim() == "active" {
+            "✓"
+        } else {
+            issues += 1;
+            "❌"
+        };
         println!("  {mark} {svc} ({label}): {}", active.trim());
     }
 
@@ -488,7 +679,11 @@ fn health_check() -> anyhow::Result<()> {
 // =============================================================================
 
 fn healthcheck(fix: bool) -> anyhow::Result<()> {
-    let mode = if fix { "체크 + 자동 복구" } else { "체크만" };
+    let mode = if fix {
+        "체크 + 자동 복구"
+    } else {
+        "체크만"
+    };
     println!("=== 인프라 헬스체크 ({mode}) ===\n");
 
     let mut issues = 0u32;
@@ -546,7 +741,7 @@ fn healthcheck(fix: bool) -> anyhow::Result<()> {
 // Audit Log
 // =============================================================================
 
-const AUDIT_LOG_PATH: &str = "/var/lib/phs/audit.log";
+const AUDIT_LOG_PATH: &str = "/var/lib/phs/audit.log"; // LINT_ALLOW: PHS 서비스 약속 경로, config 외부화 불필요
 
 fn audit_log(tail: usize) -> anyhow::Result<()> {
     println!("=== Audit Log (최근 {tail}건) ===\n");
@@ -581,7 +776,8 @@ fn kuma_sync_run(vmid: &str) -> anyhow::Result<()> {
         "/etc/pxi/domains/kuma-monitors.json",
         "/etc/proxmox-host-setup/kuma-monitors.json",
     ];
-    let monitors_json = monitor_paths.iter()
+    let monitors_json = monitor_paths
+        .iter()
         .find_map(|p| fs::read_to_string(p).ok())
         .unwrap_or_else(|| {
             eprintln!("[kuma] kuma-monitors.json 을 찾을 수 없습니다.");
@@ -658,12 +854,26 @@ fn cmd_output_silent(cmd: &str, args: &[&str]) -> String {
 
 fn curl_status_code(domain: &str) -> u16 {
     let out = Command::new("curl")
-        .args(["-k", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-            "--max-time", "8", &format!("https://{domain}/")])
+        .args([
+            "-k",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "8",
+            &format!("https://{domain}/"),
+        ])
         .output()
         .ok();
-    out.map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().unwrap_or(0))
-        .unwrap_or(0)
+    out.map(|o| {
+        String::from_utf8_lossy(&o.stdout)
+            .trim()
+            .parse::<u16>()
+            .unwrap_or(0)
+    })
+    .unwrap_or(0)
 }
 
 #[cfg(test)]

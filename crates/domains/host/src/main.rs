@@ -51,7 +51,7 @@ enum Cmd {
     /// 호스트 Postfix를 Maddy(LXC)로 릴레이 설정 (SPF/DKIM 적용)
     PostfixRelay {
         /// Maddy LXC IP (기본: 10.0.50.122)
-        #[arg(long, default_value = "10.0.50.122")]
+        #[arg(long, default_value = "10.0.50.122")] // LINT_ALLOW: CF mail proxy 기본 IP
         maddy_ip: String,
         /// Maddy SMTP 포트
         #[arg(long, default_value = "587")]
@@ -75,8 +75,19 @@ enum Cmd {
 // ---------------------------------------------------------------------------
 
 const SYSTEM_PACKAGES: &[&str] = &[
-    "git", "curl", "wget", "build-essential", "rsync", "tmux", "jq",
-    "htop", "tree", "unzip", "fail2ban", "unattended-upgrades", "apt-listchanges",
+    "git",
+    "curl",
+    "wget",
+    "build-essential",
+    "rsync",
+    "tmux",
+    "jq",
+    "htop",
+    "tree",
+    "unzip",
+    "fail2ban",
+    "unattended-upgrades",
+    "apt-listchanges",
 ];
 
 const PVE_ENTERPRISE_LIST: &str = "/etc/apt/sources.list.d/pve-enterprise.list";
@@ -94,17 +105,36 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Bootstrap => bootstrap(),
-        Cmd::Status => { status(); Ok(()) }
-        Cmd::Monitor => { monitor(); Ok(()) }
+        Cmd::Status => {
+            status();
+            Ok(())
+        }
+        Cmd::Monitor => {
+            monitor();
+            Ok(())
+        }
         Cmd::SshKeygen { label, email } => ssh_keygen(&label, email.as_deref()),
         Cmd::SmbOpen => smb_set(true),
         Cmd::SmbClose => smb_set(false),
         Cmd::GhAuth => gh_auth(),
         Cmd::SelfUpdate { version, force } => self_update(version.as_deref(), force),
-        Cmd::PostfixRelay { maddy_ip, port, user, password, rewrite_from } => {
-            postfix_relay(&maddy_ip, &port, user.as_deref(), password.as_deref(), rewrite_from.as_deref())
+        Cmd::PostfixRelay {
+            maddy_ip,
+            port,
+            user,
+            password,
+            rewrite_from,
+        } => postfix_relay(
+            &maddy_ip,
+            &port,
+            user.as_deref(),
+            password.as_deref(),
+            rewrite_from.as_deref(),
+        ),
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
         }
-        Cmd::Doctor => { doctor(); Ok(()) }
     }
 }
 
@@ -140,11 +170,21 @@ fn bootstrap() -> anyhow::Result<()> {
 fn setup_apt_sources() -> anyhow::Result<()> {
     if Path::new(PVE_ENTERPRISE_LIST).exists() {
         let content = fs::read_to_string(PVE_ENTERPRISE_LIST).unwrap_or_default();
-        if !content.lines().all(|l| l.trim().starts_with('#') || l.trim().is_empty()) {
-            let commented: String = content.lines().map(|l| {
-                if l.trim().is_empty() || l.trim().starts_with('#') { l.to_string() }
-                else { format!("# {l}") }
-            }).collect::<Vec<_>>().join("\n");
+        if !content
+            .lines()
+            .all(|l| l.trim().starts_with('#') || l.trim().is_empty())
+        {
+            let commented: String = content
+                .lines()
+                .map(|l| {
+                    if l.trim().is_empty() || l.trim().starts_with('#') {
+                        l.to_string()
+                    } else {
+                        format!("# {l}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             fs::write(PVE_ENTERPRISE_LIST, &commented)?;
             println!("[apt] enterprise repo 비활성화 완료");
         } else {
@@ -156,7 +196,8 @@ fn setup_apt_sources() -> anyhow::Result<()> {
         let codename = common::run_bash("grep VERSION_CODENAME /etc/os-release | cut -d= -f2")
             .unwrap_or_else(|_| "bookworm".to_string());
         let codename = codename.trim();
-        let content = format!("deb http://download.proxmox.com/debian/pve {codename} pve-no-subscription\n");
+        let content =
+            format!("deb http://download.proxmox.com/debian/pve {codename} pve-no-subscription\n");
         fs::write(PVE_NO_SUB_LIST, &content)?;
         println!("[apt] no-subscription repo 추가 완료");
     } else {
@@ -171,14 +212,24 @@ fn disable_ceph_enterprise() -> anyhow::Result<()> {
         return Ok(());
     }
     let content = fs::read_to_string(CEPH_ENTERPRISE_LIST).unwrap_or_default();
-    if content.lines().all(|l| l.trim().starts_with('#') || l.trim().is_empty()) {
+    if content
+        .lines()
+        .all(|l| l.trim().starts_with('#') || l.trim().is_empty())
+    {
         println!("[apt] ceph enterprise repo 이미 비활성화됨");
         return Ok(());
     }
-    let commented: String = content.lines().map(|l| {
-        if l.trim().is_empty() || l.trim().starts_with('#') { l.to_string() }
-        else { format!("# {l}") }
-    }).collect::<Vec<_>>().join("\n");
+    let commented: String = content
+        .lines()
+        .map(|l| {
+            if l.trim().is_empty() || l.trim().starts_with('#') {
+                l.to_string()
+            } else {
+                format!("# {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     fs::write(CEPH_ENTERPRISE_LIST, &commented)?;
     println!("[apt] ceph enterprise repo 비활성화 완료");
     Ok(())
@@ -233,17 +284,23 @@ fn ensure_packages(packages: &[&str]) -> anyhow::Result<()> {
     }
     let pkgs = missing.iter().map(|p| **p).collect::<Vec<_>>().join(" ");
     println!("[apt] 설치 중: {pkgs}");
-    common::run_bash(&format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"))?;
+    common::run_bash(&format!(
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkgs}"
+    ))?;
     println!("[apt] 설치 완료");
     Ok(())
 }
 
 fn pkg_installed(pkg: &str) -> bool {
-    common::run_bash(&format!("dpkg -s {pkg} 2>/dev/null | grep -q 'Status.*installed'")).is_ok()
+    common::run_bash(&format!(
+        "dpkg -s {pkg} 2>/dev/null | grep -q 'Status.*installed'"
+    ))
+    .is_ok()
 }
 
 fn setup_timezone() -> anyhow::Result<()> {
-    let current = common::run("timedatectl", &["show", "--property=Timezone", "--value"]).unwrap_or_default();
+    let current =
+        common::run("timedatectl", &["show", "--property=Timezone", "--value"]).unwrap_or_default();
     if current.trim() == "Asia/Seoul" {
         println!("[tz] timezone 이미 Asia/Seoul");
         return Ok(());
@@ -254,7 +311,8 @@ fn setup_timezone() -> anyhow::Result<()> {
 }
 
 fn setup_ntp() -> anyhow::Result<()> {
-    let ntp = common::run("timedatectl", &["show", "--property=NTP", "--value"]).unwrap_or_default();
+    let ntp =
+        common::run("timedatectl", &["show", "--property=NTP", "--value"]).unwrap_or_default();
     if ntp.trim() == "yes" {
         println!("[ntp] NTP 동기화 이미 활성화됨");
         return Ok(());
@@ -376,12 +434,16 @@ fn harden_ssh() -> anyhow::Result<()> {
             let mut new_lines = lines.clone();
             new_lines[idx] = target.clone();
             config = new_lines.join("\n");
-            if !config.ends_with('\n') { config.push('\n'); }
+            if !config.ends_with('\n') {
+                config.push('\n');
+            }
         } else if let Some(idx) = commented {
             let mut new_lines = lines.clone();
             new_lines.insert(idx + 1, target.clone());
             config = new_lines.join("\n");
-            if !config.ends_with('\n') { config.push('\n'); }
+            if !config.ends_with('\n') {
+                config.push('\n');
+            }
         } else {
             config.push_str(&format!("{target}\n"));
         }
@@ -413,18 +475,29 @@ fn status() {
 
     println!("[Proxmox 무료 설정]");
     let enterprise_disabled = if Path::new(PVE_ENTERPRISE_LIST).exists() {
-        fs::read_to_string(PVE_ENTERPRISE_LIST).unwrap_or_default()
-            .lines().all(|l| l.trim().starts_with('#') || l.trim().is_empty())
-    } else { true };
+        fs::read_to_string(PVE_ENTERPRISE_LIST)
+            .unwrap_or_default()
+            .lines()
+            .all(|l| l.trim().starts_with('#') || l.trim().is_empty())
+    } else {
+        true
+    };
     let ceph_disabled = if Path::new(CEPH_ENTERPRISE_LIST).exists() {
-        fs::read_to_string(CEPH_ENTERPRISE_LIST).unwrap_or_default()
-            .lines().all(|l| l.trim().starts_with('#') || l.trim().is_empty())
-    } else { true };
+        fs::read_to_string(CEPH_ENTERPRISE_LIST)
+            .unwrap_or_default()
+            .lines()
+            .all(|l| l.trim().starts_with('#') || l.trim().is_empty())
+    } else {
+        true
+    };
     let no_sub_ok = Path::new(PVE_NO_SUB_LIST).exists();
     let nag_removed = if Path::new(PVE_SUB_NAG_JS).exists() {
-        fs::read_to_string(PVE_SUB_NAG_JS).unwrap_or_default()
+        fs::read_to_string(PVE_SUB_NAG_JS)
+            .unwrap_or_default()
             .contains("// PATCHED: subscription nag removed")
-    } else { false };
+    } else {
+        false
+    };
     println!("  enterprise repo 비활성화: {}", check(enterprise_disabled));
     println!("  ceph enterprise 비활성화: {}", check(ceph_disabled));
     println!("  no-subscription repo: {}", check(no_sub_ok));
@@ -460,13 +533,21 @@ fn status() {
 
     println!("\n[보안]");
     let f2b = common::run("systemctl", &["is-active", "fail2ban"])
-        .map(|o| o.trim() == "active").unwrap_or(false);
-    println!("  fail2ban: {}", if f2b { "+ active" } else { "- inactive" });
+        .map(|o| o.trim() == "active")
+        .unwrap_or(false);
+    println!(
+        "  fail2ban: {}",
+        if f2b { "+ active" } else { "- inactive" }
+    );
     let sshd = fs::read_to_string("/etc/ssh/sshd_config").unwrap_or_default();
     for (label, key, expected) in [
         ("PermitEmptyPasswords no", "PermitEmptyPasswords", "no"),
         ("PasswordAuthentication no", "PasswordAuthentication", "no"),
-        ("PermitRootLogin prohibit-password", "PermitRootLogin", "prohibit-password"),
+        (
+            "PermitRootLogin prohibit-password",
+            "PermitRootLogin",
+            "prohibit-password",
+        ),
     ] {
         let ok = sshd.lines().any(|l| {
             let t = l.trim();
@@ -488,7 +569,10 @@ fn monitor() {
     let cpus = common::run("nproc", &[]).unwrap_or_else(|_| "?".to_string());
     println!("[CPU] ({cpus} cores)");
     if parts.len() >= 3 {
-        println!("  load avg: {} {} {} (1/5/15min)", parts[0], parts[1], parts[2]);
+        println!(
+            "  load avg: {} {} {} (1/5/15min)",
+            parts[0], parts[1], parts[2]
+        );
     }
 
     println!("\n[메모리]");
@@ -498,25 +582,56 @@ fn monitor() {
     let mut swap_total: u64 = 0;
     let mut swap_free: u64 = 0;
     for line in meminfo.lines() {
-        if line.starts_with("MemTotal:") { mem_total = parse_kb(line); }
-        else if line.starts_with("MemAvailable:") { mem_avail = parse_kb(line); }
-        else if line.starts_with("SwapTotal:") { swap_total = parse_kb(line); }
-        else if line.starts_with("SwapFree:") { swap_free = parse_kb(line); }
+        if line.starts_with("MemTotal:") {
+            mem_total = parse_kb(line);
+        } else if line.starts_with("MemAvailable:") {
+            mem_avail = parse_kb(line);
+        } else if line.starts_with("SwapTotal:") {
+            swap_total = parse_kb(line);
+        } else if line.starts_with("SwapFree:") {
+            swap_free = parse_kb(line);
+        }
     }
     let mem_used = mem_total.saturating_sub(mem_avail);
-    let mem_pct = if mem_total > 0 { mem_used * 100 / mem_total } else { 0 };
-    println!("  RAM:  {}GB / {}GB ({}%)", mem_used / 1_048_576, mem_total / 1_048_576, mem_pct);
+    let mem_pct = if mem_total > 0 {
+        mem_used * 100 / mem_total
+    } else {
+        0
+    };
+    println!(
+        "  RAM:  {}GB / {}GB ({}%)",
+        mem_used / 1_048_576,
+        mem_total / 1_048_576,
+        mem_pct
+    );
     if swap_total > 0 {
         let swap_used = swap_total.saturating_sub(swap_free);
-        println!("  Swap: {}GB / {}GB ({}%)", swap_used / 1_048_576, swap_total / 1_048_576, swap_used * 100 / swap_total);
+        println!(
+            "  Swap: {}GB / {}GB ({}%)",
+            swap_used / 1_048_576,
+            swap_total / 1_048_576,
+            swap_used * 100 / swap_total
+        );
     }
 
     println!("\n[디스크]");
-    if let Ok(df) = common::run("df", &["-h", "--type=ext4", "--type=btrfs", "--type=xfs", "--type=zfs"]) {
+    if let Ok(df) = common::run(
+        "df",
+        &[
+            "-h",
+            "--type=ext4",
+            "--type=btrfs",
+            "--type=xfs",
+            "--type=zfs",
+        ],
+    ) {
         for line in df.lines().skip(1) {
             let p: Vec<&str> = line.split_whitespace().collect();
             if p.len() >= 6 {
-                println!("  {:<20} {:<8} {:<8} {:<6} {}", p[5], p[2], p[1], p[4], p[0]);
+                println!(
+                    "  {:<20} {:<8} {:<8} {:<6} {}",
+                    p[5], p[2], p[1], p[4], p[0]
+                );
             }
         }
     }
@@ -534,16 +649,30 @@ fn monitor() {
 
     let uptime = common::run("uptime", &["-p"]).unwrap_or_default();
     let procs = fs::read_dir("/proc")
-        .map(|d| d.filter(|e| {
-            e.as_ref().ok().and_then(|e| e.file_name().to_str().map(|s| s.chars().all(|c| c.is_ascii_digit()))).unwrap_or(false)
-        }).count()).unwrap_or(0);
+        .map(|d| {
+            d.filter(|e| {
+                e.as_ref()
+                    .ok()
+                    .and_then(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                    })
+                    .unwrap_or(false)
+            })
+            .count()
+        })
+        .unwrap_or(0);
     println!("\n[시스템]");
     println!("  업타임: {uptime}");
     println!("  프로세스: {procs}개");
 }
 
 fn parse_kb(line: &str) -> u64 {
-    line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0)
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +683,10 @@ fn ssh_keygen(label: &str, email: Option<&str>) -> anyhow::Result<()> {
     if label.is_empty() || label.len() > 64 {
         anyhow::bail!("label 길이 1~64자 필요");
     }
-    if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
         anyhow::bail!("label은 [A-Za-z0-9._-]만 허용: {label:?}");
     }
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("HOME 미설정"))?;
@@ -564,19 +696,35 @@ fn ssh_keygen(label: &str, email: Option<&str>) -> anyhow::Result<()> {
 
     let key_path = ssh_dir.join(format!("id_ed25519_{label}"));
     if key_path.exists() {
-        anyhow::bail!("이미 존재: {}. --label 변경하거나 기존 삭제.", key_path.display());
+        anyhow::bail!(
+            "이미 존재: {}. --label 변경하거나 기존 삭제.",
+            key_path.display()
+        );
     }
 
     let comment = email.unwrap_or(label);
     println!("=== SSH 키 생성: {} ===", key_path.display());
-    common::run("ssh-keygen", &[
-        "-t", "ed25519", "-f", &key_path.display().to_string(), "-N", "", "-C", comment,
-    ])?;
+    common::run(
+        "ssh-keygen",
+        &[
+            "-t",
+            "ed25519",
+            "-f",
+            &key_path.display().to_string(),
+            "-N",
+            "",
+            "-C",
+            comment,
+        ],
+    )?;
 
     // authorized_keys에 등록
     let auth_keys_path = ssh_dir.join("authorized_keys");
     let pub_key = fs::read_to_string(format!("{}.pub", key_path.display()))?;
-    let mut auth = fs::OpenOptions::new().create(true).append(true).open(&auth_keys_path)?;
+    let mut auth = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&auth_keys_path)?;
     use std::io::Write;
     writeln!(auth, "{}", pub_key.trim())?;
     println!("  공개키 등록: {}", auth_keys_path.display());
@@ -614,7 +762,8 @@ fn smb_set(open: bool) -> anyhow::Result<()> {
     }
 
     for (port, desc) in SMB_PORTS {
-        let rule = format!("INPUT -p tcp --dport {port} -j ACCEPT -m comment --comment 'pxi-smb {desc}'");
+        let rule =
+            format!("INPUT -p tcp --dport {port} -j ACCEPT -m comment --comment 'pxi-smb {desc}'");
         if open {
             let check = format!("iptables -C {rule} 2>/dev/null");
             if common::run_bash(&check).is_err() {
@@ -628,7 +777,9 @@ fn smb_set(open: bool) -> anyhow::Result<()> {
             let mut removed = 0;
             while common::run_bash(&del).is_ok() {
                 removed += 1;
-                if removed > 10 { break; }
+                if removed > 10 {
+                    break;
+                }
             }
             if removed > 0 {
                 println!("  + 포트 {port} {removed}개 규칙 제거");
@@ -641,7 +792,8 @@ fn smb_set(open: bool) -> anyhow::Result<()> {
     // Proxmox 방화벽 처리
     if os::is_proxmox() {
         let pve_fw_active = common::run_bash("pve-firewall status 2>/dev/null")
-            .map(|o| o.contains("running")).unwrap_or(false);
+            .map(|o| o.contains("running"))
+            .unwrap_or(false);
         if pve_fw_active {
             open_pve_firewall(open)?;
         }
@@ -653,7 +805,11 @@ fn smb_set(open: bool) -> anyhow::Result<()> {
         println!("  iptables rules.v4 저장");
     } else if open {
         // 설치 시도
-        if common::run_bash("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent").is_ok() {
+        if common::run_bash(
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent",
+        )
+        .is_ok()
+        {
             let _ = common::run("netfilter-persistent", &["save"]);
             println!("  iptables-persistent 설치 + 규칙 저장 완료");
         } else {
@@ -704,10 +860,24 @@ fn open_pve_firewall(open: bool) -> anyhow::Result<()> {
 
 fn gh_auth() -> anyhow::Result<()> {
     const SCOPES: &[&str] = &[
-        "repo", "admin:org", "admin:public_key", "admin:repo_hook",
-        "admin:org_hook", "gist", "notifications", "user", "delete_repo",
-        "write:packages", "read:packages", "admin:gpg_key", "codespace",
-        "project", "admin:ssh_signing_key", "audit_log", "copilot", "workflow",
+        "repo",
+        "admin:org",
+        "admin:public_key",
+        "admin:repo_hook",
+        "admin:org_hook",
+        "gist",
+        "notifications",
+        "user",
+        "delete_repo",
+        "write:packages",
+        "read:packages",
+        "admin:gpg_key",
+        "codespace",
+        "project",
+        "admin:ssh_signing_key",
+        "audit_log",
+        "copilot",
+        "workflow",
     ];
     println!("=== gh CLI 풀스코프 인증 ===");
     if !common::has_cmd("gh") {
@@ -722,7 +892,10 @@ fn gh_auth() -> anyhow::Result<()> {
         .stderr(std::process::Stdio::inherit())
         .status()?;
     if !status.success() {
-        anyhow::bail!("gh auth refresh 실패 (exit {})", status.code().unwrap_or(-1));
+        anyhow::bail!(
+            "gh auth refresh 실패 (exit {})",
+            status.code().unwrap_or(-1)
+        );
     }
     println!("\n+ 인증 완료");
     Ok(())
@@ -734,10 +907,15 @@ fn gh_auth() -> anyhow::Result<()> {
 
 fn self_update(version: Option<&str>, force: bool) -> anyhow::Result<()> {
     println!("=== pxi self-update ===");
-    if !common::has_cmd("curl") { anyhow::bail!("curl 없음"); }
-    if !common::has_cmd("bash") { anyhow::bail!("bash 없음"); }
+    if !common::has_cmd("curl") {
+        anyhow::bail!("curl 없음");
+    }
+    if !common::has_cmd("bash") {
+        anyhow::bail!("bash 없음");
+    }
     let mut cmd = std::process::Command::new("bash");
-    cmd.arg("-c").arg("set -eo pipefail; curl -fsSL https://install.pxi.com | bash");
+    cmd.arg("-c")
+        .arg("set -eo pipefail; curl -fsSL https://install.pxi.com | bash");
     if let Some(v) = version {
         cmd.env("PRELIK_VERSION", v);
         println!("  PRELIK_VERSION={v}");
@@ -766,12 +944,18 @@ fn postfix_relay(
 ) -> anyhow::Result<()> {
     println!("=== 호스트 Postfix -> Maddy relay 설정 ===\n");
 
-    let smtp_user = user.map(String::from).unwrap_or_else(|| read_host_env("SMTP_USER"));
-    let smtp_pass = password.map(String::from).unwrap_or_else(|| read_host_env("SMTP_PASSWORD"));
+    let smtp_user = user
+        .map(String::from)
+        .unwrap_or_else(|| read_host_env("SMTP_USER"));
+    let smtp_pass = password
+        .map(String::from)
+        .unwrap_or_else(|| read_host_env("SMTP_PASSWORD"));
     if smtp_user.is_empty() || smtp_pass.is_empty() {
         anyhow::bail!("SMTP_USER/SMTP_PASSWORD 미설정. --user / --password 또는 .env 필요");
     }
-    let from_addr = rewrite_from.map(String::from).unwrap_or_else(|| smtp_user.clone());
+    let from_addr = rewrite_from
+        .map(String::from)
+        .unwrap_or_else(|| smtp_user.clone());
 
     println!("[postfix] Maddy: {maddy_ip}:{port}");
     println!("[postfix] 인증: {smtp_user}");
@@ -789,7 +973,12 @@ fn postfix_relay(
     }
 
     // 3. 기존 relayhost 라인 제거 (중복 방지)
-    for pattern in ["relayhost", "smtp_sasl_", "smtp_tls_security_level", "sender_canonical_maps"] {
+    for pattern in [
+        "relayhost",
+        "smtp_sasl_",
+        "smtp_tls_security_level",
+        "sender_canonical_maps",
+    ] {
         let _ = common::run_bash(&format!("sed -i '/^{pattern}/d' /etc/postfix/main.cf"));
     }
 
@@ -860,7 +1049,11 @@ fn doctor() {
 // ---------------------------------------------------------------------------
 
 fn check(ok: bool) -> &'static str {
-    if ok { "+" } else { "-" }
+    if ok {
+        "+"
+    } else {
+        "-"
+    }
 }
 
 fn print_kv(label: &str, cmd: &str) {

@@ -47,8 +47,12 @@ impl Default for NetworkConfig {
     }
 }
 
-fn default_subnet() -> u8 { 16 }
-fn default_internal_suffix() -> String { "internal.kr".into() }
+fn default_subnet() -> u8 {
+    16
+}
+fn default_internal_suffix() -> String {
+    "internal.kr".into() // LINT_ALLOW: canonical default internal zone suffix
+}
 
 impl NetworkConfig {
     /// `{subnet_num}.{internal_suffix}` — pve subnet 에서 "50.internal.kr",
@@ -96,12 +100,24 @@ impl Default for LxcConfig {
     }
 }
 
-fn default_cores() -> String { "2".into() }
-fn default_memory() -> String { "2048".into() }
-fn default_disk() -> String { "8".into() }
-fn default_template() -> String { "debian-13".into() }
-fn default_storage() -> String { "local-lvm".into() }
-fn default_bridge() -> String { "vmbr1".into() }
+fn default_cores() -> String {
+    "2".into()
+}
+fn default_memory() -> String {
+    "2048".into()
+}
+fn default_disk() -> String {
+    "8".into()
+}
+fn default_template() -> String {
+    "debian-13".into()
+}
+fn default_storage() -> String {
+    "local-lvm".into()
+}
+fn default_bridge() -> String {
+    "vmbr1".into()
+}
 
 /// TOML scalar 가 int 이든 string 이든 String 으로 흡수.
 /// `cores = 2` / `cores = "2"` 둘 다 허용.
@@ -113,10 +129,18 @@ fn de_str_or_int<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
         fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str("integer or string")
         }
-        fn visit_str<E: de::Error>(self, s: &str) -> Result<String, E> { Ok(s.to_string()) }
-        fn visit_string<E: de::Error>(self, s: String) -> Result<String, E> { Ok(s) }
-        fn visit_i64<E: de::Error>(self, n: i64) -> Result<String, E> { Ok(n.to_string()) }
-        fn visit_u64<E: de::Error>(self, n: u64) -> Result<String, E> { Ok(n.to_string()) }
+        fn visit_str<E: de::Error>(self, s: &str) -> Result<String, E> {
+            Ok(s.to_string())
+        }
+        fn visit_string<E: de::Error>(self, s: String) -> Result<String, E> {
+            Ok(s)
+        }
+        fn visit_i64<E: de::Error>(self, n: i64) -> Result<String, E> {
+            Ok(n.to_string())
+        }
+        fn visit_u64<E: de::Error>(self, n: u64) -> Result<String, E> {
+            Ok(n.to_string())
+        }
     }
     d.deserialize_any(V)
 }
@@ -151,7 +175,8 @@ mod tests {
         assert_eq!(c.lxc.disk, "32");
 
         // quoted string
-        let c: Config = toml::from_str("[lxc]\ncores = \"4\"\nmemory = \"8192\"\ndisk = \"32\"\n").unwrap();
+        let c: Config =
+            toml::from_str("[lxc]\ncores = \"4\"\nmemory = \"8192\"\ndisk = \"32\"\n").unwrap();
         assert_eq!(c.lxc.cores, "4");
     }
 

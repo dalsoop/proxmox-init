@@ -152,23 +152,55 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("pct 없음 -- Proxmox 호스트에서만 동작");
     }
     match cli.cmd {
-        Cmd::Setup { vmid, ip, domain, node } => {
+        Cmd::Setup {
+            vmid,
+            ip,
+            domain,
+            node,
+        } => {
             let ip = ip.unwrap_or_else(|| vmid_to_ip(vmid.as_str()));
             setup(vmid.as_str(), &ip, &domain, node.as_deref())
         }
         Cmd::Recreate { vmid } => recreate(&vmid),
-        Cmd::List { node } => { list_routes(node.as_deref()); Ok(()) }
-        Cmd::Add { name, domain, backend, node } => add_route(&name, &domain, &backend, node.as_deref()),
-        Cmd::Remove { name, node } => { remove_route(&name, node.as_deref()); Ok(()) }
-        Cmd::Resync { node } => { resync_routes(node.as_deref()); Ok(()) }
-        Cmd::Drift { node, fix } => { drift_check(node.as_deref(), fix); Ok(()) }
-        Cmd::CertVerify { domain, timeout_sec } => cert_verify(&domain, timeout_sec),
-        Cmd::CertRecheck { domain, retry_after_utc, timeout_sec } => {
+        Cmd::List { node } => {
+            list_routes(node.as_deref());
+            Ok(())
+        }
+        Cmd::Add {
+            name,
+            domain,
+            backend,
+            node,
+        } => add_route(&name, &domain, &backend, node.as_deref()),
+        Cmd::Remove { name, node } => {
+            remove_route(&name, node.as_deref());
+            Ok(())
+        }
+        Cmd::Resync { node } => {
+            resync_routes(node.as_deref());
+            Ok(())
+        }
+        Cmd::Drift { node, fix } => {
+            drift_check(node.as_deref(), fix);
+            Ok(())
+        }
+        Cmd::CertVerify {
+            domain,
+            timeout_sec,
+        } => cert_verify(&domain, timeout_sec),
+        Cmd::CertRecheck {
+            domain,
+            retry_after_utc,
+            timeout_sec,
+        } => {
             cert_recheck(&domain, &retry_after_utc, timeout_sec);
             Ok(())
         }
         Cmd::CloudflareSync { vmid } => cloudflare_sync(&vmid),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -194,7 +226,12 @@ fn local_node_name() -> String {
 fn node_ip_from_name(node: &str) -> String {
     let output = cmd_output(
         "pvesh",
-        &["get", &format!("/nodes/{node}/network"), "--output-format", "json"],
+        &[
+            "get",
+            &format!("/nodes/{node}/network"),
+            "--output-format",
+            "json",
+        ],
     );
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
         if let Some(ifaces) = parsed.as_array() {
@@ -218,19 +255,33 @@ fn lxc_exec_on(node: Option<&str>, vmid: &str, cmd: &[&str]) -> (bool, String) {
     let output = if is_local {
         let mut args = vec!["exec", vmid, "--"];
         args.extend_from_slice(cmd);
-        Command::new("pct").args(&args).output().expect("pct exec 실패")
+        Command::new("pct")
+            .args(&args)
+            .output()
+            .expect("pct exec 실패")
     } else {
         let node = node.unwrap();
         let node_ip = node_ip_from_name(node);
         let pct_cmd = format!("pct exec {} -- {}", vmid, cmd.join(" "));
         Command::new("ssh")
-            .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"), &pct_cmd])
+            .args([
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                &format!("root@{node_ip}"),
+                &pct_cmd,
+            ])
             .output()
             .expect("ssh pct exec 실패")
     };
     let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let combined = if err.is_empty() { out } else { format!("{out}\n{err}") };
+    let combined = if err.is_empty() {
+        out
+    } else {
+        format!("{out}\n{err}")
+    };
     (output.status.success(), combined)
 }
 
@@ -257,7 +308,12 @@ fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
     write_to_lxc_on(None, vmid, path, content)
 }
 
-fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
+fn write_to_lxc_on(
+    node: Option<&str>,
+    vmid: &str,
+    path: &str,
+    content: &str,
+) -> anyhow::Result<()> {
     let local = local_node_name();
     let is_local = node.is_none() || node == Some(&local);
 
@@ -265,7 +321,11 @@ fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) ->
     let tmp = out.trim();
     let tmp_path = std::path::PathBuf::from(tmp);
     struct Cleanup<'a>(&'a std::path::Path);
-    impl Drop for Cleanup<'_> { fn drop(&mut self) { let _ = fs::remove_file(self.0); } }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(self.0);
+        }
+    }
     let _g = Cleanup(&tmp_path);
 
     fs::write(&tmp_path, content)?;
@@ -278,10 +338,24 @@ fn write_to_lxc_on(node: Option<&str>, vmid: &str, path: &str, content: &str) ->
         let node_ip = node_ip_from_name(n);
         let remote_tmp = format!("/tmp/pxi-traefik-remote-{}", path.replace('/', "_"));
         let _ = Command::new("scp")
-            .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", tmp, &format!("root@{node_ip}:{remote_tmp}")])
+            .args([
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                tmp,
+                &format!("root@{node_ip}:{remote_tmp}"),
+            ])
             .status();
         let _ = Command::new("ssh")
-            .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"), &format!("pct push {vmid} {remote_tmp} {path} && rm -f {remote_tmp}")])
+            .args([
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                &format!("root@{node_ip}"),
+                &format!("pct push {vmid} {remote_tmp} {path} && rm -f {remote_tmp}"),
+            ])
             .status();
     }
     Ok(())
@@ -295,7 +369,8 @@ fn vmid_to_ip(vmid: &str) -> String {
 }
 
 fn resolve_node(node: Option<&str>) -> String {
-    node.map(|n| n.to_string()).unwrap_or_else(|| local_node_name())
+    node.map(|n| n.to_string())
+        .unwrap_or_else(|| local_node_name())
 }
 
 // =============================================================================
@@ -312,7 +387,9 @@ fn routes_file_path(node: &str) -> std::path::PathBuf {
     // Check /var/lib/pxi first, then /etc/pxi
     for dir in ["/var/lib/pxi", "/etc/pxi"] {
         let p = std::path::PathBuf::from(dir).join(&filename);
-        if p.exists() { return p; }
+        if p.exists() {
+            return p;
+        }
     }
     // Default to /var/lib/pxi
     let dir = std::path::PathBuf::from("/var/lib/pxi");
@@ -332,7 +409,9 @@ fn load_routes_for_node(node: &str) -> Vec<Route> {
 
 fn save_routes_for_node(node: &str, routes: &[Route]) {
     let path = routes_file_path(node);
-    if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let data = serde_json::to_string_pretty(routes).unwrap_or_default();
     let _ = fs::write(path, data);
 }
@@ -343,7 +422,10 @@ fn list_route_nodes() -> Vec<String> {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if let Some(node) = name.strip_prefix("traefik-routes-").and_then(|s| s.strip_suffix(".json")) {
+                if let Some(node) = name
+                    .strip_prefix("traefik-routes-")
+                    .and_then(|s| s.strip_suffix(".json"))
+                {
                     nodes.push(node.to_string());
                 }
             }
@@ -366,13 +448,19 @@ fn find_traefik_vmid_on(node: Option<&str>) -> String {
         let output = cmd_output("pct", &["list"]);
         for line in output.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 && parts[1] == "running" && parts.last().map_or(false, |n| *n == "traefik") {
+            if parts.len() >= 3
+                && parts[1] == "running"
+                && parts.last().map_or(false, |n| *n == "traefik")
+            {
                 return parts[0].to_string();
             }
         }
     } else {
         let n = node.unwrap();
-        let output = cmd_output("pvesh", &["get", &format!("/nodes/{n}/lxc"), "--output-format", "json"]);
+        let output = cmd_output(
+            "pvesh",
+            &["get", &format!("/nodes/{n}/lxc"), "--output-format", "json"],
+        );
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
             if let Some(lxcs) = parsed.as_array() {
                 for lxc in lxcs {
@@ -413,7 +501,15 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
     // 1. LXC 생성
     println!("[1/4] LXC 생성...");
     let status = if is_remote {
-        cmd_output("pvesh", &["get", &format!("/nodes/{}/lxc/{vmid}/status/current", node.unwrap()), "--output-format", "json"])
+        cmd_output(
+            "pvesh",
+            &[
+                "get",
+                &format!("/nodes/{}/lxc/{vmid}/status/current", node.unwrap()),
+                "--output-format",
+                "json",
+            ],
+        )
     } else {
         cmd_output("pct", &["status", vmid])
     };
@@ -424,14 +520,18 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
         println!("  LXC {vmid} 존재하지만 중지 상태 -- 시작");
         if is_remote {
             let _ = Command::new("pvesh")
-                .args(["create", &format!("/nodes/{}/lxc/{vmid}/status/start", node.unwrap())])
+                .args([
+                    "create",
+                    &format!("/nodes/{}/lxc/{vmid}/status/start", node.unwrap()),
+                ])
                 .status();
         } else {
             let _ = Command::new("pct").args(["start", vmid]).status();
         }
     } else {
         let template = find_template("debian-13");
-        let password = std::env::var("LXC_ROOT_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
+        let password =
+            std::env::var("LXC_ROOT_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
         let prefix = ip.rsplitn(2, '.').last().expect("IP 형식 오류");
         let gw = format!("{prefix}.1");
 
@@ -442,7 +542,14 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
                 "pct create {vmid} local:vztmpl/{template} --hostname traefik --memory 1024 --cores 2 --rootfs local-lvm:8 --net0 'name=eth0,bridge=vmbr1,ip={ip}/16,gw={gw}' --password '{password}' --unprivileged 1 --features nesting=1 --start 1"
             );
             let result = Command::new("ssh")
-                .args(["-o", "ConnectTimeout=30", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"), &pct_cmd])
+                .args([
+                    "-o",
+                    "ConnectTimeout=30",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    &format!("root@{node_ip}"),
+                    &pct_cmd,
+                ])
                 .status();
             if result.is_err() || !result.unwrap().success() {
                 anyhow::bail!("원격 LXC 생성 실패 (node: {n})");
@@ -450,12 +557,27 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
         } else {
             let result = Command::new("pct")
                 .args([
-                    "create", vmid, &format!("local:vztmpl/{template}"),
-                    "--hostname", "traefik", "--memory", "1024", "--cores", "2",
-                    "--rootfs", "local-lvm:8",
-                    "--net0", &format!("name=eth0,bridge=vmbr1,ip={ip}/16,gw={gw}"),
-                    "--password", &password,
-                    "--unprivileged", "1", "--features", "nesting=1", "--start", "1",
+                    "create",
+                    vmid,
+                    &format!("local:vztmpl/{template}"),
+                    "--hostname",
+                    "traefik",
+                    "--memory",
+                    "1024",
+                    "--cores",
+                    "2",
+                    "--rootfs",
+                    "local-lvm:8",
+                    "--net0",
+                    &format!("name=eth0,bridge=vmbr1,ip={ip}/16,gw={gw}"),
+                    "--password",
+                    &password,
+                    "--unprivileged",
+                    "1",
+                    "--features",
+                    "nesting=1",
+                    "--start",
+                    "1",
                 ])
                 .status();
             if result.is_err() || !result.unwrap().success() {
@@ -482,19 +604,34 @@ fn setup(vmid: &str, ip: &str, domain: &str, node: Option<&str>) -> anyhow::Resu
     }
 
     // Traefik config directories
-    lxc_exec_sh_on(node, vmid, "mkdir -p /etc/traefik/conf.d /opt/traefik/dynamic");
+    lxc_exec_sh_on(
+        node,
+        vmid,
+        "mkdir -p /etc/traefik/conf.d /opt/traefik/dynamic",
+    );
 
     let static_config = "entryPoints:\n  web:\n    address: \":80\"\n  websecure:\n    address: \":443\"\n\nproviders:\n  file:\n    directory: /opt/traefik/dynamic\n    watch: true\n\napi:\n  dashboard: true\n  insecure: true\n";
     write_to_lxc_on(node, vmid, "/etc/traefik/traefik.yml", static_config)?;
 
     let service_unit = "[Unit]\nDescription=Traefik Reverse Proxy\nAfter=network.target\n\n[Service]\nExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yml\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n";
-    write_to_lxc_on(node, vmid, "/etc/systemd/system/traefik.service", service_unit)?;
-    lxc_exec_sh_on(node, vmid, "systemctl daemon-reload && systemctl enable traefik && systemctl start traefik");
+    write_to_lxc_on(
+        node,
+        vmid,
+        "/etc/systemd/system/traefik.service",
+        service_unit,
+    )?;
+    lxc_exec_sh_on(
+        node,
+        vmid,
+        "systemctl daemon-reload && systemctl enable traefik && systemctl start traefik",
+    );
     println!("  Traefik 서비스 시작 완료");
 
     // 3. DNS
     println!("[3/4] DNS 레코드...");
-    println!("  수동 등록: pxi-dns add --domain {domain} --type A --name <subdomain> --content {ip}");
+    println!(
+        "  수동 등록: pxi-dns add --domain {domain} --type A --name <subdomain> --content {ip}"
+    );
 
     // 4. SSL
     println!("[4/4] SSL 인증서...");
@@ -534,45 +671,94 @@ fn install_traefik_binary_remote(node: &str, vmid: &str) {
 
     let remote_tmp = "/tmp/traefik-binary";
     let _ = Command::new("scp")
-        .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", host_binary, &format!("root@{node_ip}:{remote_tmp}")])
+        .args([
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
+            host_binary,
+            &format!("root@{node_ip}:{remote_tmp}"),
+        ])
         .status();
     let push_ok = Command::new("ssh")
-        .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"),
-            &format!("pct push {vmid} {remote_tmp} /usr/local/bin/traefik --perms 755")])
-        .status().map_or(false, |s| s.success());
+        .args([
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
+            &format!("root@{node_ip}"),
+            &format!("pct push {vmid} {remote_tmp} /usr/local/bin/traefik --perms 755"),
+        ])
+        .status()
+        .map_or(false, |s| s.success());
     if !push_ok {
         let _ = Command::new("ssh")
-            .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"),
-                &format!("pct push {vmid} {remote_tmp} /usr/local/bin/traefik")])
+            .args([
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                &format!("root@{node_ip}"),
+                &format!("pct push {vmid} {remote_tmp} /usr/local/bin/traefik"),
+            ])
             .status();
         lxc_exec_sh_on(Some(node), vmid, "chmod 755 /usr/local/bin/traefik");
     }
     let _ = Command::new("ssh")
-        .args(["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", &format!("root@{node_ip}"), &format!("rm -f {remote_tmp}")])
+        .args([
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
+            &format!("root@{node_ip}"),
+            &format!("rm -f {remote_tmp}"),
+        ])
         .status();
-    let version = lxc_exec_sh_on(Some(node), vmid, "/usr/local/bin/traefik version 2>&1 | head -1");
+    let version = lxc_exec_sh_on(
+        Some(node),
+        vmid,
+        "/usr/local/bin/traefik version 2>&1 | head -1",
+    );
     println!("  {version}");
 }
 
 fn validate_node(node: &str) -> anyhow::Result<()> {
     let nodes_json = cmd_output("pvesh", &["get", "/nodes", "--output-format", "json"]);
     let node_exists = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&nodes_json) {
-        parsed.as_array().map_or(false, |arr| arr.iter().any(|n| n["node"].as_str() == Some(node)))
+        parsed.as_array().map_or(false, |arr| {
+            arr.iter().any(|n| n["node"].as_str() == Some(node))
+        })
     } else {
         anyhow::bail!("Proxmox API에서 노드 목록을 가져올 수 없습니다");
     };
-    if !node_exists { anyhow::bail!("노드 '{node}' 가 클러스터에 존재하지 않습니다"); }
+    if !node_exists {
+        anyhow::bail!("노드 '{node}' 가 클러스터에 존재하지 않습니다");
+    }
 
     let node_online = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&nodes_json) {
         parsed.as_array().map_or(false, |arr| {
-            arr.iter().any(|n| n["node"].as_str() == Some(node) && n["status"].as_str() == Some("online"))
+            arr.iter()
+                .any(|n| n["node"].as_str() == Some(node) && n["status"].as_str() == Some("online"))
         })
-    } else { false };
-    if !node_online { anyhow::bail!("노드 '{node}' 가 오프라인입니다"); }
+    } else {
+        false
+    };
+    if !node_online {
+        anyhow::bail!("노드 '{node}' 가 오프라인입니다");
+    }
 
     let node_ip = node_ip_from_name(node);
     let ssh_check = Command::new("ssh")
-        .args(["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", &format!("root@{node_ip}"), "echo ok"])
+        .args([
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "BatchMode=yes",
+            &format!("root@{node_ip}"),
+            "echo ok",
+        ])
         .output();
     match ssh_check {
         Ok(out) if out.status.success() => {}
@@ -598,7 +784,10 @@ fn recreate(vmid: &str) -> anyhow::Result<()> {
         "CLOUDFLARE_EMAIL={cf_email}\nCLOUDFLARE_API_KEY={cf_key}\nCF_API_EMAIL={cf_email}\nCF_API_KEY={cf_key}\n"
     );
     write_to_lxc(vmid, "/opt/traefik/.env", &env_content)?;
-    common::run("pct", &["exec", vmid, "--", "chmod", "600", "/opt/traefik/.env"])?;
+    common::run(
+        "pct",
+        &["exec", vmid, "--", "chmod", "600", "/opt/traefik/.env"],
+    )?;
     write_to_lxc(vmid, "/opt/traefik/docker-compose.yml", COMPOSE_YML)?;
 
     common::run("pct", &[
@@ -606,10 +795,17 @@ fn recreate(vmid: &str) -> anyhow::Result<()> {
         "mkdir -p /opt/traefik/acme /opt/traefik/dynamic && touch /opt/traefik/acme/acme.json && chmod 600 /opt/traefik/acme/acme.json"
     ])?;
 
-    let out = common::run_str("pct", &[
-        "exec", vmid, "--", "bash", "-c",
-        "docker rm -f traefik 2>/dev/null; cd /opt/traefik && docker compose up -d 2>&1"
-    ])?;
+    let out = common::run_str(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "docker rm -f traefik 2>/dev/null; cd /opt/traefik && docker compose up -d 2>&1",
+        ],
+    )?;
     println!("{out}");
     println!("  Traefik 재생성 완료");
     Ok(())
@@ -624,7 +820,11 @@ fn add_route(name: &str, domain: &str, backend: &str, node: Option<&str>) -> any
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         anyhow::bail!("라우트 이름은 [A-Za-z0-9-]만 허용: {name:?}");
     }
-    if domain.is_empty() || !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+    if domain.is_empty()
+        || !domain
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
         anyhow::bail!("도메인은 [A-Za-z0-9.-]만 허용: {domain:?}");
     }
     if backend.contains('\n') || backend.contains('\r') || backend.contains('"') {
@@ -684,7 +884,15 @@ fn remove_route(name: &str, node: Option<&str>) {
                     let traefik_vmid = find_traefik_vmid_on(Some(&n));
                     if !traefik_vmid.is_empty() {
                         // Remove yml file from Traefik
-                        let _ = lxc_exec_on(Some(&n), &traefik_vmid, &["bash", "-lc", &format!("rm -f /opt/traefik/dynamic/{name}.yml")]);
+                        let _ = lxc_exec_on(
+                            Some(&n),
+                            &traefik_vmid,
+                            &[
+                                "bash",
+                                "-lc",
+                                &format!("rm -f /opt/traefik/dynamic/{name}.yml"),
+                            ],
+                        );
                     }
                     return;
                 }
@@ -699,7 +907,15 @@ fn remove_route(name: &str, node: Option<&str>) {
 
     let traefik_vmid = find_traefik_vmid_on(node);
     if !traefik_vmid.is_empty() {
-        let _ = lxc_exec_on(node, &traefik_vmid, &["bash", "-lc", &format!("rm -f /opt/traefik/dynamic/{name}.yml")]);
+        let _ = lxc_exec_on(
+            node,
+            &traefik_vmid,
+            &[
+                "bash",
+                "-lc",
+                &format!("rm -f /opt/traefik/dynamic/{name}.yml"),
+            ],
+        );
     }
 }
 
@@ -776,33 +992,51 @@ fn drift_check(node: Option<&str>, fix: bool) {
     }
 
     // 1. Traefik dynamic yml 목록
-    let (_, ls_out) = lxc_exec_on(node, &traefik_vmid, &["bash", "-lc",
-        "ls /opt/traefik/dynamic/*.yml 2>/dev/null | xargs -n1 basename | sed 's/.yml$//'"]);
-    let traefik_routes: HashSet<String> = ls_out.lines()
+    let (_, ls_out) = lxc_exec_on(
+        node,
+        &traefik_vmid,
+        &[
+            "bash",
+            "-lc",
+            "ls /opt/traefik/dynamic/*.yml 2>/dev/null | xargs -n1 basename | sed 's/.yml$//'",
+        ],
+    );
+    let traefik_routes: HashSet<String> = ls_out
+        .lines()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
     // 2. 정본 라우트 목록
     let phs_routes: HashSet<String> = load_routes_for_node(&resolved_node)
-        .iter().map(|r| r.name.clone()).collect();
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
 
     // 3. drift 계산
     let unknown: Vec<String> = traefik_routes.difference(&phs_routes).cloned().collect();
     let missing: Vec<String> = phs_routes.difference(&traefik_routes).cloned().collect();
 
     if unknown.is_empty() && missing.is_empty() {
-        println!("  drift 없음 -- Traefik {}개 / 정본 {}개 일치", traefik_routes.len(), phs_routes.len());
+        println!(
+            "  drift 없음 -- Traefik {}개 / 정본 {}개 일치",
+            traefik_routes.len(),
+            phs_routes.len()
+        );
         return;
     }
 
     if !unknown.is_empty() {
         println!("  Traefik에만 있음 (정본 미등록 외부 yml):");
-        for name in &unknown { println!("       - {name}"); }
+        for name in &unknown {
+            println!("       - {name}");
+        }
     }
     if !missing.is_empty() {
         println!("  정본에만 있음 (Traefik에 미배포):");
-        for name in &missing { println!("       - {name}"); }
+        for name in &missing {
+            println!("       - {name}");
+        }
     }
 
     if !fix {
@@ -812,8 +1046,18 @@ fn drift_check(node: Option<&str>, fix: bool) {
 
     println!("\n[fix] 외부 yml {}개 제거 중...", unknown.len());
     for name in &unknown {
-        let (ok, _) = lxc_exec_on(node, &traefik_vmid, &["bash", "-lc", &format!("rm -f /opt/traefik/dynamic/{name}.yml && echo OK")]);
-        if ok { println!("       - {name}.yml 제거"); }
+        let (ok, _) = lxc_exec_on(
+            node,
+            &traefik_vmid,
+            &[
+                "bash",
+                "-lc",
+                &format!("rm -f /opt/traefik/dynamic/{name}.yml && echo OK"),
+            ],
+        );
+        if ok {
+            println!("       - {name}.yml 제거");
+        }
     }
 
     if !missing.is_empty() {
@@ -857,7 +1101,12 @@ fn sync_routes_direct_on(node: Option<&str>, vmid: &str, routes: &[Route]) {
         let _ = write_to_lxc_on(node, vmid, &path, &yml);
     }
     let node_label = node.unwrap_or("local");
-    println!("[traefik] {} 라우트 Traefik LXC({}, node:{}) 에 배포 (HTTP+HTTPS)", routes.len(), vmid, node_label);
+    println!(
+        "[traefik] {} 라우트 Traefik LXC({}, node:{}) 에 배포 (HTTP+HTTPS)",
+        routes.len(),
+        vmid,
+        node_label
+    );
 }
 
 // =============================================================================
@@ -878,7 +1127,9 @@ fn cert_verify(domain: &str, timeout_sec: u64) -> anyhow::Result<()> {
         if output.status.success() {
             println!("[traefik] 인증서 검증 성공");
             let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().take(10) { println!("{line}"); }
+            for line in stdout.lines().take(10) {
+                println!("{line}");
+            }
             return Ok(());
         }
 
@@ -895,7 +1146,11 @@ fn cert_recheck(domain: &str, retry_after_utc: &str, timeout_sec: u64) {
     println!("[traefik] retry-after-utc: {retry_after_utc}");
     println!("[traefik] 지정 시각 이후 재실행하세요:");
     let local_traefik = find_traefik_vmid_on(None);
-    let hint = if local_traefik.is_empty() { "100".to_string() } else { local_traefik };
+    let hint = if local_traefik.is_empty() {
+        "100".to_string()
+    } else {
+        local_traefik
+    };
     println!("  pxi-traefik cloudflare-sync --vmid {hint}");
     println!("  pxi-traefik cert-verify --domain {domain} --timeout-sec {timeout_sec}");
 }
@@ -915,10 +1170,12 @@ fn cloudflare_sync(vmid: &str) -> anyhow::Result<()> {
     }
 
     // Read CF credentials from env vars or host .env
-    let cf_key = std::env::var("CLOUDFLARE_API_KEY").ok()
+    let cf_key = std::env::var("CLOUDFLARE_API_KEY")
+        .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| read_host_env("CLOUDFLARE_API_KEY"));
-    let cf_email = std::env::var("CLOUDFLARE_EMAIL").ok()
+    let cf_email = std::env::var("CLOUDFLARE_EMAIL")
+        .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| read_host_env("CLOUDFLARE_EMAIL"));
 
@@ -936,8 +1193,15 @@ fn cloudflare_sync(vmid: &str) -> anyhow::Result<()> {
     ])?;
 
     // Compose recreate
-    let out = common::run_str("pct", &["exec", vmid, "--", "bash", "-c",
-        r#"set -e
+    let out = common::run_str(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            r#"set -e
 if docker compose version >/dev/null 2>&1; then
   docker rm -f traefik >/dev/null 2>&1 || true
   cd /opt/traefik && docker compose up -d --force-recreate traefik
@@ -956,9 +1220,12 @@ else
     -v /opt/traefik/dynamic:/dynamic:ro \
     -v /opt/traefik/acme:/acme \
     "$IMAGE" traefik
-fi"#
-    ])?;
-    if !out.trim().is_empty() { println!("{}", out.trim()); }
+fi"#,
+        ],
+    )?;
+    if !out.trim().is_empty() {
+        println!("{}", out.trim());
+    }
     println!("[traefik] Cloudflare env 반영 완료");
     Ok(())
 }
@@ -969,13 +1236,37 @@ fi"#
 
 fn doctor() {
     println!("=== pxi-traefik doctor ===");
-    println!("  pct:        {}", if common::has_cmd("pct") { "ok" } else { "missing" });
+    println!(
+        "  pct:        {}",
+        if common::has_cmd("pct") {
+            "ok"
+        } else {
+            "missing"
+        }
+    );
     let email = read_host_env("CLOUDFLARE_EMAIL");
     let key = read_host_env("CLOUDFLARE_API_KEY");
-    println!("  CF_EMAIL:   {}", if !email.is_empty() { "ok" } else { "missing (/etc/pxi/.env)" });
-    println!("  CF_API_KEY: {}", if !key.is_empty() { "ok" } else { "missing" });
+    println!(
+        "  CF_EMAIL:   {}",
+        if !email.is_empty() {
+            "ok"
+        } else {
+            "missing (/etc/pxi/.env)"
+        }
+    );
+    println!(
+        "  CF_API_KEY: {}",
+        if !key.is_empty() { "ok" } else { "missing" }
+    );
     let local_traefik = find_traefik_vmid_on(None);
-    println!("  traefik:    {}", if !local_traefik.is_empty() { format!("ok (VMID {})", local_traefik) } else { "not found".to_string() });
+    println!(
+        "  traefik:    {}",
+        if !local_traefik.is_empty() {
+            format!("ok (VMID {})", local_traefik)
+        } else {
+            "not found".to_string()
+        }
+    );
 }
 
 // =============================================================================
@@ -1021,19 +1312,30 @@ mod tests {
         servers:
           - url: "{backend}"
 "#,
-            name = route.name, domain = route.domain, backend = route.backend,
+            name = route.name,
+            domain = route.domain,
+            backend = route.backend,
         );
         assert!(yml.contains("- websecure"), "HTTPS entryPoint 필수");
-        assert!(yml.contains("certResolver: cloudflare"), "TLS resolver 필수");
+        assert!(
+            yml.contains("certResolver: cloudflare"),
+            "TLS resolver 필수"
+        );
         assert!(yml.contains("- web"), "HTTP entryPoint 필수");
         assert!(yml.contains("comfyui-http:"), "HTTP 라우터 이름 필수");
     }
 
     #[test]
     fn test_route_name_validation() {
-        assert!("my-route".chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
-        assert!(!"my route".chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
-        assert!(!"my;route".chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        assert!("my-route"
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        assert!(!"my route"
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        assert!(!"my;route"
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
 
     #[test]
@@ -1056,8 +1358,16 @@ mod tests {
     #[test]
     fn test_route_roundtrip() {
         let routes = vec![
-            Route { name: "gitlab".into(), domain: "gitlab.internal.kr".into(), backend: "http://10.0.50.101:443".into() },
-            Route { name: "comfyui".into(), domain: "comfyui.60.internal.kr".into(), backend: "http://10.0.60.105:8188".into() },
+            Route {
+                name: "gitlab".into(),
+                domain: "gitlab.internal.kr".into(),
+                backend: "http://10.0.50.101:443".into(),
+            },
+            Route {
+                name: "comfyui".into(),
+                domain: "comfyui.60.internal.kr".into(),
+                backend: "http://10.0.60.105:8188".into(),
+            },
         ];
         let json = serde_json::to_string(&routes).unwrap();
         let parsed: Vec<Route> = serde_json::from_str(&json).unwrap();

@@ -103,7 +103,7 @@ enum Cmd {
     // === Formbricks ===
     /// Medas Survey(Formbricks 포크) 한글 패치 빌드 + 배포
     FormbricksBuild {
-        #[arg(long, default_value = "50181")]
+        #[arg(long, default_value = "50181")] // LINT_ALLOW: deploy 기본 VMID
         vmid: String,
         #[arg(long, default_value = "ko")]
         tag: String,
@@ -118,7 +118,7 @@ enum Cmd {
         to: Option<String>,
         #[arg(long)]
         subject: Option<String>,
-        #[arg(long, default_value = "50181")]
+        #[arg(long, default_value = "50181")] // LINT_ALLOW: deploy 기본 VMID
         vmid: String,
     },
     // === Omarchy ===

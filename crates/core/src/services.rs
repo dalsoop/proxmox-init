@@ -52,16 +52,18 @@ impl ServicesRegistry {
             if !path.exists() {
                 continue;
             }
-            let raw = std::fs::read_to_string(path)
-                .map_err(|e| anyhow::anyhow!(
+            let raw = std::fs::read_to_string(path).map_err(|e| {
+                anyhow::anyhow!(
                     "{} 읽기 실패: {e}. 수정 후 재실행 (stale embed 로 대체 안 함).",
                     path.display()
-                ))?;
-            let reg: Self = toml::from_str(&raw)
-                .map_err(|e| anyhow::anyhow!(
+                )
+            })?;
+            let reg: Self = toml::from_str(&raw).map_err(|e| {
+                anyhow::anyhow!(
                     "{} TOML 파싱 실패: {e}. 수정 후 재실행 (stale embed 로 대체 안 함).",
                     path.display()
-                ))?;
+                )
+            })?;
             return Ok(reg);
         }
         Ok(toml::from_str(EMBEDDED_REGISTRY)?)
@@ -72,10 +74,12 @@ impl ServicesRegistry {
         self.services
             .get(alias)
             .map(|e| e.vmid.as_str())
-            .ok_or_else(|| anyhow::anyhow!(
-                "services_registry: alias {alias} 미등록. \
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "services_registry: alias {alias} 미등록. \
                  /root/control-plane/config/services_registry.toml 에 추가 필요."
-            ))
+                )
+            })
     }
 
     /// alias 로 canonical IP 유도 (vmid 조회 후 `convention::canonical_ip`).

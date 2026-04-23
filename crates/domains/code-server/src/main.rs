@@ -47,11 +47,26 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
     }
     match cli.cmd {
-        Cmd::Install { vmid, port, password, folder, domain, git_sync } => {
-            install(&vmid, &port, password.as_deref(), &folder, domain.as_deref(), git_sync)
-        }
+        Cmd::Install {
+            vmid,
+            port,
+            password,
+            folder,
+            domain,
+            git_sync,
+        } => install(
+            &vmid,
+            &port,
+            password.as_deref(),
+            &folder,
+            domain.as_deref(),
+            git_sync,
+        ),
         Cmd::Remove { vmid } => remove(&vmid),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -151,7 +166,17 @@ systemctl is-active code-server
         let backend = format!("http://{{{{ip}}}}:{port}");
         match common::run(
             "pxi-traefik",
-            &["route-add", "--name", &route_name, "--domain", dom, "--backend", &backend, "--vmid", vmid],
+            &[
+                "route-add",
+                "--name",
+                &route_name,
+                "--domain",
+                dom,
+                "--backend",
+                &backend,
+                "--vmid",
+                vmid,
+            ],
         ) {
             Ok(_) => println!("  Traefik 라우트 추가"),
             Err(e) => eprintln!("  Traefik 라우트 실패 (수동 설정 필요): {e}"),
@@ -210,15 +235,20 @@ fn remove(vmid: &str) -> anyhow::Result<()> {
 
     common::ensure_lxc_running(vmid)?;
 
-    common::pct_exec_passthrough(vmid, &["bash", "-c",
-        "systemctl disable --now code-server 2>/dev/null || true; \
+    common::pct_exec_passthrough(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "systemctl disable --now code-server 2>/dev/null || true; \
          rm -f /etc/systemd/system/code-server.service; \
          systemctl daemon-reload; \
          rm -rf ~/.local/lib/code-server-* ~/.config/code-server; \
          crontab -l 2>/dev/null | grep -v git-auto-sync | crontab - 2>/dev/null || true; \
          rm -f /usr/local/bin/git-auto-sync.sh; \
-         echo 'code-server 제거 완료'"
-    ])?;
+         echo 'code-server 제거 완료'",
+        ],
+    )?;
 
     // Traefik 라우트 제거
     let route_name = format!("code-{vmid}");
@@ -233,6 +263,20 @@ fn remove(vmid: &str) -> anyhow::Result<()> {
 
 fn doctor() {
     println!("=== pxi-code-server doctor ===");
-    println!("  pct:          {}", if common::command_exists("pct") { "OK" } else { "NOT FOUND" });
-    println!("  code-server:  {}", if common::command_exists("code-server") { "OK" } else { "- (LXC 내부 설치)" });
+    println!(
+        "  pct:          {}",
+        if common::command_exists("pct") {
+            "OK"
+        } else {
+            "NOT FOUND"
+        }
+    );
+    println!(
+        "  code-server:  {}",
+        if common::command_exists("code-server") {
+            "OK"
+        } else {
+            "- (LXC 내부 설치)"
+        }
+    );
 }

@@ -10,7 +10,10 @@ use serde_json::Value;
 use std::fs;
 
 #[derive(Parser)]
-#[command(name = "pxi-cloudflare", about = "Cloudflare DNS + Email Routing + SSL + Pages")]
+#[command(
+    name = "pxi-cloudflare",
+    about = "Cloudflare DNS + Email Routing + SSL + Pages"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -19,7 +22,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     // ---- DNS ----
-
     /// DNS 레코드 추가 (--audience 기반 proxied 자동)
     DnsAdd {
         #[arg(long)]
@@ -79,12 +81,10 @@ enum Cmd {
     },
 
     // ---- Zones ----
-
     /// Cloudflare 도메인(zone) 목록
     Zones,
 
     // ---- Email Routing ----
-
     /// 이메일 라우팅 상태 (전 도메인)
     EmailStatus,
     /// 단일 도메인 이메일 포워딩 (catch-all → destination)
@@ -116,7 +116,6 @@ enum Cmd {
     },
 
     // ---- SSL ----
-
     /// acme.sh 설치
     SslInstall,
     /// SSL 인증서 발급 (Let's Encrypt + CF DNS-01 챌린지)
@@ -138,7 +137,6 @@ enum Cmd {
     SslStatus,
 
     // ---- Pages ----
-
     /// Pages 프로젝트 목록
     PagesList,
     /// Pages 프로젝트 생성
@@ -169,7 +167,6 @@ enum Cmd {
     },
 
     // ---- Misc ----
-
     Doctor,
 }
 
@@ -209,7 +206,14 @@ fn main() -> anyhow::Result<()> {
 
     match cli.cmd {
         // DNS
-        Cmd::DnsAdd { domain, record_type, name, content, audience, proxied } => {
+        Cmd::DnsAdd {
+            domain,
+            record_type,
+            name,
+            content,
+            audience,
+            proxied,
+        } => {
             let p = match (proxied, audience) {
                 (Some(p), _) => p,
                 (None, Some(Audience::Global)) => true,
@@ -219,24 +223,53 @@ fn main() -> anyhow::Result<()> {
             dns_add(&email, &key, &domain, &record_type, &name, &content, p)
         }
         Cmd::DnsList { domain } => dns_list(&email, &key, &domain),
-        Cmd::DnsUpdate { domain, record_type, name, content, proxied } => {
-            dns_update(&email, &key, &domain, &record_type, &name, &content, proxied)
-        }
-        Cmd::DnsUpsert { domain, record_type, name, content, proxied, ttl } => {
-            dns_upsert(&email, &key, &domain, &record_type, &name, &content, proxied, ttl)
-        }
-        Cmd::DnsDelete { domain, record_type, name } => {
-            dns_delete(&email, &key, &domain, &record_type, &name)
-        }
+        Cmd::DnsUpdate {
+            domain,
+            record_type,
+            name,
+            content,
+            proxied,
+        } => dns_update(
+            &email,
+            &key,
+            &domain,
+            &record_type,
+            &name,
+            &content,
+            proxied,
+        ),
+        Cmd::DnsUpsert {
+            domain,
+            record_type,
+            name,
+            content,
+            proxied,
+            ttl,
+        } => dns_upsert(
+            &email,
+            &key,
+            &domain,
+            &record_type,
+            &name,
+            &content,
+            proxied,
+            ttl,
+        ),
+        Cmd::DnsDelete {
+            domain,
+            record_type,
+            name,
+        } => dns_delete(&email, &key, &domain, &record_type, &name),
 
         // Zones
         Cmd::Zones => zones(&email, &key),
 
         // Email
         Cmd::EmailStatus => email_status(&email, &key),
-        Cmd::EmailForward { domain, destination } => {
-            email_forward(&email, &key, &domain, &destination)
-        }
+        Cmd::EmailForward {
+            domain,
+            destination,
+        } => email_forward(&email, &key, &domain, &destination),
         Cmd::EmailForwardAll { destination } => email_forward_all(&email, &key, &destination),
         Cmd::EmailWorkerAttach { domain, worker } => {
             email_worker_attach(&email, &key, &domain, &worker)
@@ -255,8 +288,12 @@ fn main() -> anyhow::Result<()> {
         Cmd::PagesDelete { project } => pages_delete(&email, &key, &project),
 
         // early-returned above
-        Cmd::Doctor | Cmd::PagesDeploy { .. }
-        | Cmd::SslInstall | Cmd::SslList | Cmd::SslStatus | Cmd::SslRenew { .. } => {
+        Cmd::Doctor
+        | Cmd::PagesDeploy { .. }
+        | Cmd::SslInstall
+        | Cmd::SslList
+        | Cmd::SslStatus
+        | Cmd::SslRenew { .. } => {
             unreachable!("위에서 early return")
         }
     }
@@ -275,14 +312,25 @@ fn creds() -> anyhow::Result<(String, String)> {
     Ok((email, key))
 }
 
-fn cf_api(email: &str, key: &str, method: &str, path: &str, body: Option<&str>) -> anyhow::Result<Value> {
+fn cf_api(
+    email: &str,
+    key: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> anyhow::Result<Value> {
     let url = format!("https://api.cloudflare.com/client/v4{path}");
     let mut args: Vec<String> = vec![
-        "-sSL".into(), "--fail-with-body".into(),
-        "-X".into(), method.into(),
-        "-H".into(), format!("X-Auth-Email: {email}"),
-        "-H".into(), format!("X-Auth-Key: {key}"),
-        "-H".into(), "Content-Type: application/json".into(),
+        "-sSL".into(),
+        "--fail-with-body".into(),
+        "-X".into(),
+        method.into(),
+        "-H".into(),
+        format!("X-Auth-Email: {email}"),
+        "-H".into(),
+        format!("X-Auth-Key: {key}"),
+        "-H".into(),
+        "Content-Type: application/json".into(),
     ];
     if let Some(b) = body {
         args.push("-d".into());
@@ -290,14 +338,17 @@ fn cf_api(email: &str, key: &str, method: &str, path: &str, body: Option<&str>) 
     }
     args.push(url);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let output = std::process::Command::new("curl").args(&args_ref).output()
+    let output = std::process::Command::new("curl")
+        .args(&args_ref)
+        .output()
         .map_err(|e| anyhow::anyhow!("curl 실행 실패: {e}"))?;
     if !output.status.success() {
         // try to parse body even on failure for better error messages
         let body_str = String::from_utf8_lossy(&output.stdout);
         if let Ok(v) = serde_json::from_str::<Value>(&body_str) {
             if let Some(errors) = v["errors"].as_array() {
-                let msgs: Vec<String> = errors.iter()
+                let msgs: Vec<String> = errors
+                    .iter()
                     .filter_map(|e| e["message"].as_str().map(String::from))
                     .collect();
                 if !msgs.is_empty() {
@@ -320,23 +371,43 @@ fn cf_api(email: &str, key: &str, method: &str, path: &str, body: Option<&str>) 
 
 fn get_zone_id(email: &str, key: &str, domain: &str) -> anyhow::Result<String> {
     let r = cf_api(email, key, "GET", &format!("/zones?name={domain}"), None)?;
-    r[0]["id"].as_str().map(String::from)
+    r[0]["id"]
+        .as_str()
+        .map(String::from)
         .ok_or_else(|| anyhow::anyhow!("zone {domain} 없음"))
 }
 
 fn get_account_id(email: &str, key: &str) -> anyhow::Result<String> {
     let r = cf_api(email, key, "GET", "/accounts?per_page=1", None)?;
-    r[0]["id"].as_str().map(String::from)
+    r[0]["id"]
+        .as_str()
+        .map(String::from)
         .ok_or_else(|| anyhow::anyhow!("account id 조회 실패"))
 }
 
-fn find_record(email: &str, key: &str, zid: &str, rec_type: &str, name: &str) -> anyhow::Result<String> {
-    let records = cf_api(email, key, "GET", &format!("/zones/{zid}/dns_records?type={rec_type}&name={name}"), None)?;
-    let Some(arr) = records.as_array() else { anyhow::bail!("응답 파싱 실패") };
+fn find_record(
+    email: &str,
+    key: &str,
+    zid: &str,
+    rec_type: &str,
+    name: &str,
+) -> anyhow::Result<String> {
+    let records = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/zones/{zid}/dns_records?type={rec_type}&name={name}"),
+        None,
+    )?;
+    let Some(arr) = records.as_array() else {
+        anyhow::bail!("응답 파싱 실패")
+    };
     let Some(first) = arr.first() else {
         anyhow::bail!("레코드 없음: {rec_type} {name}")
     };
-    first["id"].as_str().map(String::from)
+    first["id"]
+        .as_str()
+        .map(String::from)
         .ok_or_else(|| anyhow::anyhow!("record id 없음"))
 }
 
@@ -347,7 +418,9 @@ fn find_record(email: &str, key: &str, zid: &str, rec_type: &str, name: &str) ->
 fn zones(email: &str, key: &str) -> anyhow::Result<()> {
     println!("=== Cloudflare 도메인 목록 ===\n");
     let zones = cf_api(email, key, "GET", "/zones?per_page=50", None)?;
-    let Some(arr) = zones.as_array() else { anyhow::bail!("zones 응답 파싱 실패") };
+    let Some(arr) = zones.as_array() else {
+        anyhow::bail!("zones 응답 파싱 실패")
+    };
     for zone in arr {
         let name = zone["name"].as_str().unwrap_or("?");
         let status = zone["status"].as_str().unwrap_or("?");
@@ -363,20 +436,42 @@ fn zones(email: &str, key: &str) -> anyhow::Result<()> {
 // DNS
 // ============================================================
 
-fn dns_add(email: &str, key: &str, domain: &str, rec_type: &str, name: &str, content: &str, proxied: bool) -> anyhow::Result<()> {
+fn dns_add(
+    email: &str,
+    key: &str,
+    domain: &str,
+    rec_type: &str,
+    name: &str,
+    content: &str,
+    proxied: bool,
+) -> anyhow::Result<()> {
     let zid = get_zone_id(email, key, domain)?;
     let body = serde_json::json!({
         "type": rec_type, "name": name, "content": content, "proxied": proxied, "ttl": 1
     });
-    cf_api(email, key, "POST", &format!("/zones/{zid}/dns_records"), Some(&body.to_string()))?;
+    cf_api(
+        email,
+        key,
+        "POST",
+        &format!("/zones/{zid}/dns_records"),
+        Some(&body.to_string()),
+    )?;
     println!("✓ DNS 추가: {rec_type} {name} → {content} (proxied={proxied})");
     Ok(())
 }
 
 fn dns_list(email: &str, key: &str, domain: &str) -> anyhow::Result<()> {
     let zid = get_zone_id(email, key, domain)?;
-    let records = cf_api(email, key, "GET", &format!("/zones/{zid}/dns_records?per_page=100"), None)?;
-    let Some(arr) = records.as_array() else { anyhow::bail!("dns_records 응답 파싱 실패") };
+    let records = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/zones/{zid}/dns_records?per_page=100"),
+        None,
+    )?;
+    let Some(arr) = records.as_array() else {
+        anyhow::bail!("dns_records 응답 파싱 실패")
+    };
     println!("=== DNS 레코드: {domain} ({}) ===\n", arr.len());
     for r in arr {
         let t = r["type"].as_str().unwrap_or("?");
@@ -385,14 +480,26 @@ fn dns_list(email: &str, key: &str, domain: &str) -> anyhow::Result<()> {
         let p = r["proxied"].as_bool().unwrap_or(false);
         let ttl = r["ttl"].as_u64().unwrap_or(0);
         let icon = if p { "☁" } else { "→" };
-        let ttl_str = if ttl == 1 { "auto".to_string() } else { format!("{ttl}s") };
+        let ttl_str = if ttl == 1 {
+            "auto".to_string()
+        } else {
+            format!("{ttl}s")
+        };
         println!("  {t:<8} {n:<40} {icon} {c:<30} {ttl_str}");
     }
     println!("\n  총 {}개 레코드", arr.len());
     Ok(())
 }
 
-fn dns_update(email: &str, key: &str, domain: &str, rec_type: &str, name: &str, content: &str, proxied: Option<bool>) -> anyhow::Result<()> {
+fn dns_update(
+    email: &str,
+    key: &str,
+    domain: &str,
+    rec_type: &str,
+    name: &str,
+    content: &str,
+    proxied: Option<bool>,
+) -> anyhow::Result<()> {
     let zid = get_zone_id(email, key, domain)?;
     let rid = find_record(email, key, &zid, rec_type, name)?;
     let mut body = serde_json::json!({
@@ -401,15 +508,26 @@ fn dns_update(email: &str, key: &str, domain: &str, rec_type: &str, name: &str, 
     if let Some(p) = proxied {
         body["proxied"] = serde_json::json!(p);
     }
-    cf_api(email, key, "PUT", &format!("/zones/{zid}/dns_records/{rid}"), Some(&body.to_string()))?;
+    cf_api(
+        email,
+        key,
+        "PUT",
+        &format!("/zones/{zid}/dns_records/{rid}"),
+        Some(&body.to_string()),
+    )?;
     println!("✓ DNS 수정: {rec_type} {name} → {content}");
     Ok(())
 }
 
 fn dns_upsert(
-    email: &str, key: &str, domain: &str,
-    rec_type: &str, name: &str, content: &str,
-    proxied: Option<bool>, ttl: u64,
+    email: &str,
+    key: &str,
+    domain: &str,
+    rec_type: &str,
+    name: &str,
+    content: &str,
+    proxied: Option<bool>,
+    ttl: u64,
 ) -> anyhow::Result<()> {
     let zid = get_zone_id(email, key, domain)?;
 
@@ -448,7 +566,13 @@ fn dns_upsert(
                 "type": rec_type, "name": fqdn, "content": content,
                 "proxied": desired_proxied, "ttl": if desired_ttl == 0 { 1 } else { desired_ttl },
             });
-            cf_api(email, key, "PUT", &format!("/zones/{zid}/dns_records/{rid}"), Some(&body.to_string()))?;
+            cf_api(
+                email,
+                key,
+                "PUT",
+                &format!("/zones/{zid}/dns_records/{rid}"),
+                Some(&body.to_string()),
+            )?;
             println!("✓ DNS upsert (수정): {rec_type} {fqdn} → {content}");
         }
         None => {
@@ -457,17 +581,35 @@ fn dns_upsert(
                 "type": rec_type, "name": name, "content": content,
                 "proxied": p, "ttl": if ttl == 0 { 1 } else { ttl },
             });
-            cf_api(email, key, "POST", &format!("/zones/{zid}/dns_records"), Some(&body.to_string()))?;
+            cf_api(
+                email,
+                key,
+                "POST",
+                &format!("/zones/{zid}/dns_records"),
+                Some(&body.to_string()),
+            )?;
             println!("✓ DNS upsert (생성): {rec_type} {name} → {content} (proxied={p})");
         }
     }
     Ok(())
 }
 
-fn dns_delete(email: &str, key: &str, domain: &str, rec_type: &str, name: &str) -> anyhow::Result<()> {
+fn dns_delete(
+    email: &str,
+    key: &str,
+    domain: &str,
+    rec_type: &str,
+    name: &str,
+) -> anyhow::Result<()> {
     let zid = get_zone_id(email, key, domain)?;
     let rid = find_record(email, key, &zid, rec_type, name)?;
-    cf_api(email, key, "DELETE", &format!("/zones/{zid}/dns_records/{rid}"), None)?;
+    cf_api(
+        email,
+        key,
+        "DELETE",
+        &format!("/zones/{zid}/dns_records/{rid}"),
+        None,
+    )?;
     println!("✓ DNS 삭제: {rec_type} {name}");
     Ok(())
 }
@@ -479,12 +621,20 @@ fn dns_delete(email: &str, key: &str, domain: &str, rec_type: &str, name: &str) 
 fn email_status(email: &str, key: &str) -> anyhow::Result<()> {
     println!("=== Cloudflare Email Routing 상태 ===\n");
     let zones = cf_api(email, key, "GET", "/zones?per_page=50", None)?;
-    let Some(arr) = zones.as_array() else { anyhow::bail!("zones 응답 파싱 실패") };
+    let Some(arr) = zones.as_array() else {
+        anyhow::bail!("zones 응답 파싱 실패")
+    };
 
     for zone in arr {
         let name = zone["name"].as_str().unwrap_or("?");
         let zid = zone["id"].as_str().unwrap_or("");
-        match cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing"), None) {
+        match cf_api(
+            email,
+            key,
+            "GET",
+            &format!("/zones/{zid}/email/routing"),
+            None,
+        ) {
             Ok(routing) => {
                 let enabled = routing["enabled"].as_bool().unwrap_or(false);
                 let status = routing["status"].as_str().unwrap_or("?");
@@ -513,26 +663,41 @@ fn email_forward(email: &str, key: &str, domain: &str, destination: &str) -> any
     let account_id = get_account_id(email, key)?;
 
     // Register destination if needed
-    let dest_list = cf_api(email, key, "GET",
-        &format!("/accounts/{account_id}/email/routing/addresses"), None);
-    let exists = dest_list.as_ref().ok()
+    let dest_list = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/accounts/{account_id}/email/routing/addresses"),
+        None,
+    );
+    let exists = dest_list
+        .as_ref()
+        .ok()
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().any(|a| a["email"].as_str() == Some(destination)))
         .unwrap_or(false);
 
     if !exists {
         let body = serde_json::json!({"email": destination});
-        cf_api(email, key, "POST",
+        cf_api(
+            email,
+            key,
+            "POST",
             &format!("/accounts/{account_id}/email/routing/addresses"),
-            Some(&body.to_string()))?;
+            Some(&body.to_string()),
+        )?;
         println!("[email] 대상 주소 등록: {destination} (인증 메일 확인 필요)");
     }
 
     // Enable email routing
     let enable_body = serde_json::json!({"enabled": true});
-    let _ = cf_api(email, key, "PUT",
+    let _ = cf_api(
+        email,
+        key,
+        "PUT",
         &format!("/zones/{zid}/email/routing"),
-        Some(&enable_body.to_string()));
+        Some(&enable_body.to_string()),
+    );
 
     // Set catch-all
     let rule_body = serde_json::json!({
@@ -540,9 +705,13 @@ fn email_forward(email: &str, key: &str, domain: &str, destination: &str) -> any
         "matchers": [{"type": "all"}],
         "actions": [{"type": "forward", "value": [destination]}]
     });
-    cf_api(email, key, "PUT",
+    cf_api(
+        email,
+        key,
+        "PUT",
         &format!("/zones/{zid}/email/routing/rules/catch_all"),
-        Some(&rule_body.to_string()))?;
+        Some(&rule_body.to_string()),
+    )?;
     println!("[email] {domain} catch-all → {destination} 설정 완료");
     Ok(())
 }
@@ -553,18 +722,29 @@ fn email_forward_all(email: &str, key: &str, destination: &str) -> anyhow::Resul
     let account_id = get_account_id(email, key)?;
 
     // 1. Register destination address
-    let dest_list = cf_api(email, key, "GET",
-        &format!("/accounts/{account_id}/email/routing/addresses"), None);
-    let already_verified = dest_list.as_ref().ok()
+    let dest_list = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/accounts/{account_id}/email/routing/addresses"),
+        None,
+    );
+    let already_verified = dest_list
+        .as_ref()
+        .ok()
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().any(|a| {
-            a["email"].as_str() == Some(destination)
-                && (a["verified"].as_str().is_some()
-                    || a["status"].as_str() == Some("verified"))
-        }))
+        .map(|arr| {
+            arr.iter().any(|a| {
+                a["email"].as_str() == Some(destination)
+                    && (a["verified"].as_str().is_some()
+                        || a["status"].as_str() == Some("verified"))
+            })
+        })
         .unwrap_or(false);
 
-    let already_exists = dest_list.as_ref().ok()
+    let already_exists = dest_list
+        .as_ref()
+        .ok()
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().any(|a| a["email"].as_str() == Some(destination)))
         .unwrap_or(false);
@@ -576,16 +756,22 @@ fn email_forward_all(email: &str, key: &str, destination: &str) -> anyhow::Resul
         println!("  → {destination} 메일함에서 Cloudflare 인증 메일을 확인하세요");
     } else {
         let body = serde_json::json!({"email": destination});
-        cf_api(email, key, "POST",
+        cf_api(
+            email,
+            key,
+            "POST",
             &format!("/accounts/{account_id}/email/routing/addresses"),
-            Some(&body.to_string()))?;
+            Some(&body.to_string()),
+        )?;
         println!("[email] 대상 주소 등록 완료: {destination}");
         println!("  → {destination} 메일함에서 Cloudflare 인증 메일을 확인하세요");
     }
 
     // 2. Set catch-all on each zone
     let zones = cf_api(email, key, "GET", "/zones?per_page=50", None)?;
-    let Some(arr) = zones.as_array() else { anyhow::bail!("도메인 목록 조회 실패") };
+    let Some(arr) = zones.as_array() else {
+        anyhow::bail!("도메인 목록 조회 실패")
+    };
 
     let mut ok_count = 0u32;
     let mut skip_count = 0u32;
@@ -597,25 +783,38 @@ fn email_forward_all(email: &str, key: &str, destination: &str) -> anyhow::Resul
 
         // Enable email routing
         let enable_body = serde_json::json!({"enabled": true});
-        let _ = cf_api(email, key, "PUT",
+        let _ = cf_api(
+            email,
+            key,
+            "PUT",
             &format!("/zones/{zid}/email/routing"),
-            Some(&enable_body.to_string()));
+            Some(&enable_body.to_string()),
+        );
 
         // Check existing catch-all
-        let already_forwarding = cf_api(email, key, "GET",
-                &format!("/zones/{zid}/email/routing/rules/catch_all"), None)
-            .ok()
-            .map(|r| {
-                r["actions"].as_array()
-                    .map(|acts| acts.iter().any(|a| {
+        let already_forwarding = cf_api(
+            email,
+            key,
+            "GET",
+            &format!("/zones/{zid}/email/routing/rules/catch_all"),
+            None,
+        )
+        .ok()
+        .map(|r| {
+            r["actions"]
+                .as_array()
+                .map(|acts| {
+                    acts.iter().any(|a| {
                         a["type"].as_str() == Some("forward")
-                            && a["value"].as_array()
+                            && a["value"]
+                                .as_array()
                                 .map(|v| v.iter().any(|e| e.as_str() == Some(destination)))
                                 .unwrap_or(false)
-                    }))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
 
         if already_forwarding {
             println!("  ✓ {name:<30} 이미 설정됨");
@@ -629,10 +828,13 @@ fn email_forward_all(email: &str, key: &str, destination: &str) -> anyhow::Resul
             "actions": [{"type": "forward", "value": [destination]}]
         });
 
-        match cf_api(email, key, "PUT",
+        match cf_api(
+            email,
+            key,
+            "PUT",
             &format!("/zones/{zid}/email/routing/rules/catch_all"),
-            Some(&rule_body.to_string()))
-        {
+            Some(&rule_body.to_string()),
+        ) {
             Ok(_) => {
                 println!("  ✓ {name:<30} catch-all → {destination}");
                 ok_count += 1;
@@ -644,7 +846,10 @@ fn email_forward_all(email: &str, key: &str, destination: &str) -> anyhow::Resul
         }
     }
 
-    println!("\n  완료: {ok_count}개 설정, {skip_count}개 스킵, {err_count}개 실패 (총 {}개)", arr.len());
+    println!(
+        "\n  완료: {ok_count}개 설정, {skip_count}개 스킵, {err_count}개 실패 (총 {}개)",
+        arr.len()
+    );
 
     if !already_verified && !already_exists {
         println!("\n  ⚠ {destination} 인증이 필요합니다. 메일함을 확인하세요.");
@@ -659,9 +864,13 @@ fn email_worker_attach(email: &str, key: &str, domain: &str, worker: &str) -> an
 
     // Enable email routing
     let enable_body = serde_json::json!({"enabled": true});
-    let _ = cf_api(email, key, "PUT",
+    let _ = cf_api(
+        email,
+        key,
+        "PUT",
         &format!("/zones/{zid}/email/routing"),
-        Some(&enable_body.to_string()));
+        Some(&enable_body.to_string()),
+    );
 
     // Set catch-all to worker
     let body = serde_json::json!({
@@ -669,9 +878,13 @@ fn email_worker_attach(email: &str, key: &str, domain: &str, worker: &str) -> an
         "actions": [{"type": "worker", "value": [worker]}],
         "enabled": true
     });
-    cf_api(email, key, "PUT",
+    cf_api(
+        email,
+        key,
+        "PUT",
         &format!("/zones/{zid}/email/routing/rules/catch_all"),
-        Some(&body.to_string()))?;
+        Some(&body.to_string()),
+    )?;
     println!("[email] ✓ {domain} catch-all → worker:{worker}");
     Ok(())
 }
@@ -682,17 +895,29 @@ fn worker_attach_all(email: &str, key: &str, worker: &str, dry_run: bool) -> any
         if dry_run { "[DRY-RUN] " } else { "" }
     );
     let zones = cf_api(email, key, "GET", "/zones?per_page=50", None)?;
-    let Some(arr) = zones.as_array() else { anyhow::bail!("zones 응답 파싱 실패") };
+    let Some(arr) = zones.as_array() else {
+        anyhow::bail!("zones 응답 파싱 실패")
+    };
 
     let mut attached = 0;
     let mut skipped = 0;
     let mut failed: Vec<String> = vec![];
 
     for z in arr {
-        let Some(zid) = z["id"].as_str() else { continue };
-        let Some(zname) = z["name"].as_str() else { continue };
+        let Some(zid) = z["id"].as_str() else {
+            continue;
+        };
+        let Some(zname) = z["name"].as_str() else {
+            continue;
+        };
 
-        match cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing"), None) {
+        match cf_api(
+            email,
+            key,
+            "GET",
+            &format!("/zones/{zid}/email/routing"),
+            None,
+        ) {
             Ok(r) => {
                 if !r["enabled"].as_bool().unwrap_or(false) {
                     println!("  ⊘ {zname}: Email Routing 비활성화");
@@ -708,10 +933,22 @@ fn worker_attach_all(email: &str, key: &str, worker: &str, dry_run: bool) -> any
         }
 
         if dry_run {
-            match cf_api(email, key, "GET", &format!("/zones/{zid}/email/routing/rules/catch_all"), None) {
+            match cf_api(
+                email,
+                key,
+                "GET",
+                &format!("/zones/{zid}/email/routing/rules/catch_all"),
+                None,
+            ) {
                 Ok(v) => {
-                    let current_action = v["actions"].as_array()
-                        .map(|a| a.iter().map(|x| x["type"].as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join(","))
+                    let current_action = v["actions"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| x["type"].as_str().unwrap_or("?").to_string())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
                         .unwrap_or_else(|| "(없음)".into());
                     println!("  ⤳ {zname}: 현재 catch-all=[{current_action}] → worker:{worker}");
                     attached += 1;
@@ -729,15 +966,27 @@ fn worker_attach_all(email: &str, key: &str, worker: &str, dry_run: bool) -> any
             "actions": [{"type": "worker", "value": [worker]}],
             "enabled": true
         });
-        match cf_api(email, key, "PUT", &format!("/zones/{zid}/email/routing/rules/catch_all"), Some(&body.to_string())) {
-            Ok(_) => { println!("  ✓ {zname}"); attached += 1; }
+        match cf_api(
+            email,
+            key,
+            "PUT",
+            &format!("/zones/{zid}/email/routing/rules/catch_all"),
+            Some(&body.to_string()),
+        ) {
+            Ok(_) => {
+                println!("  ✓ {zname}");
+                attached += 1;
+            }
             Err(e) => {
                 println!("  ✗ {zname}: {e}");
                 failed.push(format!("{zname}: attach {e}"));
             }
         }
     }
-    println!("\n결과: 연결 {attached}, 건너뜀 {skipped}, 실패 {}", failed.len());
+    println!(
+        "\n결과: 연결 {attached}, 건너뜀 {skipped}, 실패 {}",
+        failed.len()
+    );
     if !failed.is_empty() {
         for f in &failed {
             eprintln!("  FAIL: {f}");
@@ -784,7 +1033,10 @@ fn ssl_install() -> anyhow::Result<()> {
 
     println!("[ssl] acme.sh 설치 중...");
     let output = std::process::Command::new("sh")
-        .args(["-c", &format!("curl https://get.acme.sh | sh -s email={cf_email}")])
+        .args([
+            "-c",
+            &format!("curl https://get.acme.sh | sh -s email={cf_email}"),
+        ])
         .output()?;
 
     if output.status.success() {
@@ -797,10 +1049,12 @@ fn ssl_install() -> anyhow::Result<()> {
 
 fn ssl_issue(cf_email: &str, cf_key: &str, domain: &str, wildcard: bool) -> anyhow::Result<()> {
     println!("=== SSL 발급: {domain} (wildcard: {wildcard}) ===");
-    let acme = find_acme_sh().ok_or_else(|| anyhow::anyhow!(
-        "acme.sh 미설치. 설치: pxi-cloudflare ssl-install\n\
+    let acme = find_acme_sh().ok_or_else(|| {
+        anyhow::anyhow!(
+            "acme.sh 미설치. 설치: pxi-cloudflare ssl-install\n\
          확인된 경로: PATH, ~/.acme.sh/, /root/.acme.sh/"
-    ))?;
+        )
+    })?;
     println!("  acme.sh: {acme}");
 
     let mut args: Vec<String> = vec!["--issue".into(), "--dns".into(), "dns_cf".into()];
@@ -890,7 +1144,14 @@ fn ssl_list() {
 fn ssl_status() {
     println!("=== SSL 상태 ===\n");
     let installed = std::path::Path::new(&format!("{ACME_HOME}/acme.sh")).exists();
-    println!("[acme.sh] {}", if installed { "✓ 설치됨" } else { "✗ 미설치" });
+    println!(
+        "[acme.sh] {}",
+        if installed {
+            "✓ 설치됨"
+        } else {
+            "✗ 미설치"
+        }
+    );
 
     if installed {
         let output = std::process::Command::new(format!("{ACME_HOME}/acme.sh"))
@@ -906,7 +1167,11 @@ fn ssl_status() {
     let cf_email = read_host_env("CLOUDFLARE_EMAIL");
     println!(
         "[Cloudflare DNS] {}",
-        if !cf_key.is_empty() && !cf_email.is_empty() { "✓ 설정됨" } else { "✗ 미설정" }
+        if !cf_key.is_empty() && !cf_email.is_empty() {
+            "✓ 설정됨"
+        } else {
+            "✗ 미설정"
+        }
     );
 }
 
@@ -916,8 +1181,13 @@ fn ssl_status() {
 
 fn pages_list(email: &str, key: &str) -> anyhow::Result<()> {
     let account_id = get_account_id(email, key)?;
-    let body = cf_api(email, key, "GET",
-        &format!("/accounts/{account_id}/pages/projects"), None)?;
+    let body = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/accounts/{account_id}/pages/projects"),
+        None,
+    )?;
     println!("\n=== Cloudflare Pages 프로젝트 ===\n");
     if let Some(projects) = body.as_array() {
         for p in projects {
@@ -945,9 +1215,13 @@ fn pages_create(email: &str, key: &str, name: &str) -> anyhow::Result<()> {
         "name": name,
         "production_branch": "main"
     });
-    let result = cf_api(email, key, "POST",
+    let result = cf_api(
+        email,
+        key,
+        "POST",
         &format!("/accounts/{account_id}/pages/projects"),
-        Some(&data.to_string()))?;
+        Some(&data.to_string()),
+    )?;
     let subdomain = result["subdomain"].as_str().unwrap_or("?");
     println!("[pages] 프로젝트 생성 완료: {name}");
     println!("[pages] URL: https://{subdomain}");
@@ -974,13 +1248,23 @@ fn pages_domain(email: &str, key: &str, project: &str, domain_name: &str) -> any
     let zid = get_zone_id(email, key, zone_domain)?;
 
     // Delete existing records for this FQDN
-    let records = cf_api(email, key, "GET",
-        &format!("/zones/{zid}/dns_records?name={domain_name}"), None)?;
+    let records = cf_api(
+        email,
+        key,
+        "GET",
+        &format!("/zones/{zid}/dns_records?name={domain_name}"),
+        None,
+    )?;
     if let Some(arr) = records.as_array() {
         for r in arr {
             if let Some(id) = r["id"].as_str() {
-                let _ = cf_api(email, key, "DELETE",
-                    &format!("/zones/{zid}/dns_records/{id}"), None);
+                let _ = cf_api(
+                    email,
+                    key,
+                    "DELETE",
+                    &format!("/zones/{zid}/dns_records/{id}"),
+                    None,
+                );
             }
         }
     }
@@ -993,9 +1277,13 @@ fn pages_domain(email: &str, key: &str, project: &str, domain_name: &str) -> any
         "proxied": true,
         "ttl": 1
     });
-    cf_api(email, key, "POST",
+    cf_api(
+        email,
+        key,
+        "POST",
         &format!("/zones/{zid}/dns_records"),
-        Some(&cname_data.to_string()))?;
+        Some(&cname_data.to_string()),
+    )?;
     println!("[pages] DNS 설정: {domain_name} => {project}.pages.dev");
     println!("[pages] 완료! https://{domain_name}");
     Ok(())
@@ -1003,8 +1291,13 @@ fn pages_domain(email: &str, key: &str, project: &str, domain_name: &str) -> any
 
 fn pages_delete(email: &str, key: &str, project: &str) -> anyhow::Result<()> {
     let account_id = get_account_id(email, key)?;
-    cf_api(email, key, "DELETE",
-        &format!("/accounts/{account_id}/pages/projects/{project}"), None)?;
+    cf_api(
+        email,
+        key,
+        "DELETE",
+        &format!("/accounts/{account_id}/pages/projects/{project}"),
+        None,
+    )?;
     println!("[pages] 프로젝트 삭제: {project}");
     Ok(())
 }
@@ -1038,11 +1331,35 @@ fn doctor() {
     println!("=== pxi-cloudflare doctor ===");
     let email = read_host_env("CLOUDFLARE_EMAIL");
     let key = read_host_env("CLOUDFLARE_API_KEY");
-    println!("  CF_EMAIL:   {}", if !email.is_empty() { "✓" } else { "✗" });
+    println!(
+        "  CF_EMAIL:   {}",
+        if !email.is_empty() { "✓" } else { "✗" }
+    );
     println!("  CF_API_KEY: {}", if !key.is_empty() { "✓" } else { "✗" });
-    println!("  curl:       {}", if common::has_cmd("curl") { "✓" } else { "✗" });
-    println!("  acme.sh:    {}", if find_acme_sh().is_some() { "✓" } else { "✗" });
-    println!("  wrangler:   {}", if common::has_cmd("wrangler") { "✓" } else { "✗" });
+    println!(
+        "  curl:       {}",
+        if common::has_cmd("curl") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    println!(
+        "  acme.sh:    {}",
+        if find_acme_sh().is_some() {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    println!(
+        "  wrangler:   {}",
+        if common::has_cmd("wrangler") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 }
 
 fn read_host_env(key: &str) -> String {

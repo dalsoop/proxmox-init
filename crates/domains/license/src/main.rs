@@ -80,7 +80,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::Status => cmd_status(),
         Cmd::Deactivate => cmd_deactivate(),
         Cmd::CheckIn => cmd_check_in(),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
         Cmd::SelfUpdate { channel } => cmd_self_update(&channel),
     }
 }
@@ -273,10 +276,7 @@ fn cmd_activate(key: &str) -> anyhow::Result<()> {
         }
     };
 
-    let machine_id = resp["data"]["id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
+    let machine_id = resp["data"]["id"].as_str().unwrap_or_default().to_string();
     let activated_at = resp["data"]["attributes"]["created"]
         .as_str()
         .unwrap_or("")
@@ -312,9 +312,7 @@ fn cmd_status() -> anyhow::Result<()> {
     let stored = match load_stored() {
         Some(s) => s,
         None => {
-            println!(
-                "저장된 라이선스 없음. `pxi-license activate <KEY>` 로 활성화하세요."
-            );
+            println!("저장된 라이선스 없음. `pxi-license activate <KEY>` 로 활성화하세요.");
             return Ok(());
         }
     };
@@ -332,7 +330,11 @@ fn cmd_status() -> anyhow::Result<()> {
 
     println!(
         "라이선스 상태: {}",
-        if valid { "✓ 유효" } else { "✗ 검증 실패" }
+        if valid {
+            "✓ 유효"
+        } else {
+            "✗ 검증 실패"
+        }
     );
     println!("  상태: {}", status);
     println!("  만료: {}", expiry);
@@ -361,9 +363,7 @@ fn cmd_status() -> anyhow::Result<()> {
                     let name = m["attributes"]["name"].as_str().unwrap_or("");
                     let hostname = m["attributes"]["hostname"].as_str().unwrap_or("");
                     let mfp = m["attributes"]["fingerprint"].as_str().unwrap_or("");
-                    let last = m["attributes"]["lastHeartbeat"]
-                        .as_str()
-                        .unwrap_or("-");
+                    let last = m["attributes"]["lastHeartbeat"].as_str().unwrap_or("-");
                     let platform = m["attributes"]["platform"].as_str().unwrap_or("");
                     let display_name = if name.is_empty() { hostname } else { name };
                     println!(
@@ -381,8 +381,7 @@ fn cmd_status() -> anyhow::Result<()> {
 }
 
 fn cmd_deactivate() -> anyhow::Result<()> {
-    let stored =
-        load_stored().ok_or_else(|| anyhow::anyhow!("저장된 라이선스 없음"))?;
+    let stored = load_stored().ok_or_else(|| anyhow::anyhow!("저장된 라이선스 없음"))?;
     let fp = machine_fingerprint();
     let license_id = stored
         .license_id
@@ -419,17 +418,12 @@ fn cmd_deactivate() -> anyhow::Result<()> {
 }
 
 fn cmd_check_in() -> anyhow::Result<()> {
-    let stored =
-        load_stored().ok_or_else(|| anyhow::anyhow!("활성화되지 않음"))?;
+    let stored = load_stored().ok_or_else(|| anyhow::anyhow!("활성화되지 않음"))?;
     let license_id = stored
         .license_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("license_id 없음"))?;
-    let url = format!(
-        "{}/licenses/{}/actions/check-in",
-        base(),
-        license_id
-    );
+    let url = format!("{}/licenses/{}/actions/check-in", base(), license_id);
     let auth = format!("License {}", stored.key);
     post_json(&url, Some(&auth), json!({}))?;
     println!("✓ check-in");
@@ -439,9 +433,8 @@ fn cmd_check_in() -> anyhow::Result<()> {
 // ---- Self-update -----------------------------------------------------------
 
 fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
-    let stored = load_stored().ok_or_else(|| {
-        anyhow::anyhow!("활성화되지 않음 — `pxi-license activate <KEY>` 먼저")
-    })?;
+    let stored = load_stored()
+        .ok_or_else(|| anyhow::anyhow!("활성화되지 않음 — `pxi-license activate <KEY>` 먼저"))?;
     let auth = format!("License {}", stored.key);
     let current = env!("CARGO_PKG_VERSION");
 
@@ -479,11 +472,7 @@ fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
         a => a,
     };
 
-    let art_url = format!(
-        "{}/releases/{}/artifacts?limit=100",
-        base(),
-        release_id
-    );
+    let art_url = format!("{}/releases/{}/artifacts?limit=100", base(), release_id);
     let art_resp = get_json(&art_url, Some(&auth))?;
     let arts = art_resp["data"].as_array().cloned().unwrap_or_default();
     let art = arts
@@ -492,9 +481,7 @@ fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
             a["attributes"]["platform"].as_str() == Some(want_os)
                 && a["attributes"]["arch"].as_str() == Some(want_arch)
         })
-        .ok_or_else(|| {
-            anyhow::anyhow!("{}-{} 용 아티팩트 없음", want_os, want_arch)
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("{}-{} 용 아티팩트 없음", want_os, want_arch))?;
 
     let art_id = art["id"].as_str().unwrap_or_default().to_string();
     let filename = art["attributes"]["filename"]
@@ -538,11 +525,7 @@ fn cmd_self_update(channel: &str) -> anyhow::Result<()> {
         }
     }
     fs::rename(&tmp, &current_exe)?;
-    println!(
-        "✓ v{} 설치 완료 ({})",
-        next_version,
-        current_exe.display()
-    );
+    println!("✓ v{} 설치 완료 ({})", next_version, current_exe.display());
     Ok(())
 }
 
@@ -564,14 +547,11 @@ fn sha512_b64(bytes: &[u8]) -> String {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const T: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
-        let b = (bytes[i] as u32) << 16
-            | (bytes[i + 1] as u32) << 8
-            | bytes[i + 2] as u32;
+        let b = (bytes[i] as u32) << 16 | (bytes[i + 1] as u32) << 8 | bytes[i + 2] as u32;
         out.push(T[((b >> 18) & 63) as usize] as char);
         out.push(T[((b >> 12) & 63) as usize] as char);
         out.push(T[((b >> 6) & 63) as usize] as char);
@@ -601,7 +581,11 @@ fn doctor() {
 
     // License file exists
     let lic_exists = Path::new(LICENSE_FILE).exists();
-    println!("  {} {} 존재", if lic_exists { "✓" } else { "✗" }, LICENSE_FILE);
+    println!(
+        "  {} {} 존재",
+        if lic_exists { "✓" } else { "✗" },
+        LICENSE_FILE
+    );
 
     // Keygen API reachable
     let api = api_url();

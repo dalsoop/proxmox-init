@@ -29,9 +29,11 @@ pub fn canonical_ip(vmid: &str) -> anyhow::Result<String> {
     if vmid.len() != 5 || !vmid.chars().all(|c| c.is_ascii_digit()) {
         anyhow::bail!("VMID 규약 위반: 5자리 숫자(AABCC) 필수. 받은 값: {vmid}");
     }
-    let subnet: u8 = vmid[..2].parse()
+    let subnet: u8 = vmid[..2]
+        .parse()
         .map_err(|_| anyhow::anyhow!("VMID {vmid}: 서브넷 파싱 실패"))?;
-    let tail: u32 = vmid[2..].parse()
+    let tail: u32 = vmid[2..]
+        .parse()
         .map_err(|_| anyhow::anyhow!("VMID {vmid}: tail 파싱 실패"))?;
     if !ALLOWED_SUBNETS.contains(&subnet) {
         anyhow::bail!(
@@ -40,9 +42,7 @@ pub fn canonical_ip(vmid: &str) -> anyhow::Result<String> {
         );
     }
     if tail > 255 {
-        anyhow::bail!(
-            "VMID {vmid}: tail({tail}) > 255. 규약상 {subnet}000-{subnet}255 만 유효."
-        );
+        anyhow::bail!("VMID {vmid}: tail({tail}) > 255. 규약상 {subnet}000-{subnet}255 만 유효.");
     }
     Ok(format!("10.0.{subnet}.{tail}"))
 }
@@ -89,9 +89,9 @@ mod tests {
 
     #[test]
     fn bad_vmid_format_rejected() {
-        assert!(canonical_ip("5021").is_err());   // 4자리
+        assert!(canonical_ip("5021").is_err()); // 4자리
         assert!(canonical_ip("502100").is_err()); // 6자리
-        assert!(canonical_ip("abcde").is_err());  // 비숫자
+        assert!(canonical_ip("abcde").is_err()); // 비숫자
     }
 
     #[test]

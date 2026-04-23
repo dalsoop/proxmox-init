@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LINUX_REPO="${HELIUM_LINUX_REPO:-$HOME/workspace/helium-linux}"
+
+if [[ ! -f "$LINUX_REPO/scripts/dev.sh" ]]; then
+  echo "Helium Linux repo not found at $LINUX_REPO" >&2
+  echo "Expected: $LINUX_REPO/scripts/dev.sh" >&2
+  exit 1
+fi
+
+usage() {
+  cat <<'HELP'
+Usage:
+  chromium-browser-dev setup
+  chromium-browser-dev build
+  chromium-browser-dev run
+  chromium-browser-dev patch-push
+  chromium-browser-dev patch-pop
+  chromium-browser-dev patch-merge
+  chromium-browser-dev patch-unmerge
+  chromium-browser-dev reset
+  chromium-browser-dev shell
+
+This wraps Helium's short internal `he` helper with explicit command names.
+HELP
+}
+
+command_name="${1:-help}"
+shift || true
+
+case "$command_name" in
+  setup) helium_command=setup ;;
+  build) helium_command=build ;;
+  run) helium_command=run ;;
+  patch-push) helium_command=push ;;
+  patch-pop) helium_command=pop ;;
+  patch-merge) helium_command=merge ;;
+  patch-unmerge) helium_command=unmerge ;;
+  reset) helium_command=reset ;;
+  shell)
+    cd "$LINUX_REPO"
+    exec bash --rcfile <(printf 'source ~/.bashrc 2>/dev/null || true\ncd %q\nsource scripts/dev.sh\n' "$LINUX_REPO") -i
+    ;;
+  help|-h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+cd "$LINUX_REPO"
+exec bash -lc "cd '$LINUX_REPO' && source scripts/dev.sh && he '$helium_command' \"\$@\"" bash "$@"

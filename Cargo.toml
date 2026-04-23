@@ -25,3 +25,20 @@ which = "6"
 clap_complete = "4"
 dialoguer = "0.12"
 pxi-core = { path = "crates/core" }
+
+[workspace.metadata.dylint]
+libraries = [
+    { path = "lints/pxi-domain-lints" },
+]
+
+[workspace.lints.clippy]
+# pedantic 그룹 — 구조적 품질 향상 (개별 lint가 override할 수 있도록 priority=-1)
+pedantic = { level = "warn", priority = -1 }
+# restriction 그룹에서 pxi 관련 선별 적용
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"

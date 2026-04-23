@@ -54,7 +54,9 @@ pub struct Tags {
     pub platform: Option<String>,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl Registry {
     pub fn load() -> anyhow::Result<Self> {
@@ -74,12 +76,13 @@ impl Registry {
         if let Some(path) = fs_path {
             let raw = std::fs::read_to_string(&path)
                 .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {e}", path.display()))?;
-            return Self::parse_with_version(&raw, &path.display().to_string())
-                .map_err(|e| anyhow::anyhow!(
+            return Self::parse_with_version(&raw, &path.display().to_string()).map_err(|e| {
+                anyhow::anyhow!(
                     "{e}\n\
                      복구: locale.json 재생성이 필요하면 'scripts/install-local.sh'. \
                      tier-1 invalid 는 embedded fallback 을 자동 우회하지 않음."
-                ));
+                )
+            });
         }
         // Tier 2: 바이너리 embed. 실패 원인을 tier-3 에러에 포함해 디버그 가능 (codex #53 P2).
         match Self::parse_with_version(embedded, "<embedded>") {
@@ -187,7 +190,10 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("format_version=99"), "unexpected: {msg}");
         // embedded 가 valid 였어도 tier 2 로 넘어가지 않았음을 확인
-        assert!(!msg.contains("<embedded>"), "should not mention embedded: {msg}");
+        assert!(
+            !msg.contains("<embedded>"),
+            "should not mention embedded: {msg}"
+        );
         std::fs::remove_file(path).ok();
     }
 

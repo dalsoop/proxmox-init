@@ -7,8 +7,8 @@
 //!   - 원격: Xpra start-desktop + HTML5 클라이언트 내장 (bind-tcp, 인증 없음)
 
 use clap::{Parser, Subcommand};
+use pxi_core::types::{LxcStatus, Vmid};
 use pxi_core::{common, convention};
-use pxi_core::types::{Vmid, LxcStatus};
 
 const INSTALL_SCRIPT: &str = include_str!("../scripts/install-desktop.sh");
 const DEV_SCRIPT: &str = include_str!("../scripts/dev-setup.sh");
@@ -26,11 +26,16 @@ fn write_to_lxc(vmid: &str, lxc_path: &str, content: &str) -> anyhow::Result<()>
 
 struct TempGuard(String);
 impl Drop for TempGuard {
-    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 #[derive(Parser)]
-#[command(name = "pxi-xdesktop", about = "X11 원격 데스크톱 LXC 설치 관리 (Xpra + 한글 + Helium)")]
+#[command(
+    name = "pxi-xdesktop",
+    about = "X11 원격 데스크톱 LXC 설치 관리 (Xpra + 한글 + Helium)"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -45,69 +50,98 @@ enum Cmd {
     /// (install/expose/status/destroy/verify/dev) 는 호환성 위해 String 유지.
     Setup {
         /// VMID — 5XXXX 형태 필수. 마지막 3자리가 IP 마지막 옥텟이 됨 (5YYY → 10.0.50.YYY)
-        #[arg(long)] vmid: Vmid,
+        #[arg(long)]
+        vmid: Vmid,
         /// traefik 공개 호스트 (예: xdesktop-02.50.internal.kr). 지정 시 라우트 등록
-        #[arg(long)] host: Option<String>,
+        #[arg(long)]
+        host: Option<String>,
         /// 호스트네임 (생략 시 --host 앞부분 또는 xdesktop-<tail> 에서 유도)
-        #[arg(long)] hostname: Option<String>,
+        #[arg(long)]
+        hostname: Option<String>,
         /// IP (CIDR optional — bare IP 도 허용. bare 는 pxi-lxc 가
         /// config.network.subnet 적용). 생략 시 VMID 규약으로 canonical_cidr 유도.
-        #[arg(long)] ip: Option<String>,
-        #[arg(long, default_value = "4")] cores: String,
-        #[arg(long, default_value = "4096")] memory: String,
-        #[arg(long, default_value = "20")] disk: String,
-        #[arg(long, default_value = "14500")] port: String,
-        #[arg(long, default_value = "xuser")] user: String,
-        #[arg(long, default_value = "0.11.2.1")] helium_tag: String,
+        #[arg(long)]
+        ip: Option<String>,
+        #[arg(long, default_value = "4")]
+        cores: String,
+        #[arg(long, default_value = "4096")]
+        memory: String,
+        #[arg(long, default_value = "20")]
+        disk: String,
+        #[arg(long, default_value = "14500")] // LINT_ALLOW: xdesktop 기본 VMID
+        port: String,
+        #[arg(long, default_value = "xuser")]
+        user: String,
+        #[arg(long, default_value = "0.11.2.1")]
+        helium_tag: String,
     },
     /// 이미 존재하는 LXC에 데스크톱만 설치 (LXC 재사용)
     Install {
-        #[arg(long)] vmid: String,
-        #[arg(long, default_value = "14500")] port: String,
-        #[arg(long, default_value = "xuser")] user: String,
-        #[arg(long, default_value = "0.11.2.1")] helium_tag: String,
+        #[arg(long)]
+        vmid: String,
+        #[arg(long, default_value = "14500")] // LINT_ALLOW: xdesktop 기본 VMID
+        port: String,
+        #[arg(long, default_value = "xuser")]
+        user: String,
+        #[arg(long, default_value = "0.11.2.1")]
+        helium_tag: String,
     },
     /// traefik 라우트만 등록 (이미 설치된 LXC 대상)
     Expose {
-        #[arg(long)] vmid: String,
-        #[arg(long)] host: String,
-        #[arg(long, default_value = "14500")] port: String,
+        #[arg(long)]
+        vmid: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long, default_value = "14500")] // LINT_ALLOW: xdesktop 기본 VMID
+        port: String,
     },
     /// 상태 조회 (LXC + Xpra systemd + 포트)
     Status {
-        #[arg(long)] vmid: String,
+        #[arg(long)]
+        vmid: String,
     },
     /// LXC 제거 + traefik 라우트 자동 정리
     Destroy {
-        #[arg(long)] vmid: String,
+        #[arg(long)]
+        vmid: String,
         /// 확인 없이 제거
-        #[arg(long)] yes: bool,
+        #[arg(long)]
+        yes: bool,
     },
     /// 공개 URL 스모크 테스트 — HTTP/WebSocket 경로 전수 확인
     Verify {
-        #[arg(long)] vmid: String,
+        #[arg(long)]
+        vmid: String,
         /// 공개 호스트 (생략 시 lxc-ip 직접)
-        #[arg(long)] host: Option<String>,
-        #[arg(long, default_value = "14500")] port: String,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long, default_value = "14500")] // LINT_ALLOW: xdesktop 기본 VMID
+        port: String,
     },
     /// 개발 도구 설치 — git/gh/node/rust/vscodium + GitHub SSH key + 레포 clone
     Dev {
-        #[arg(long)] vmid: String,
+        #[arg(long)]
+        vmid: String,
         /// 데스크톱 유저 (기본 xuser)
-        #[arg(long, default_value = "xuser")] user: String,
+        #[arg(long, default_value = "xuser")]
+        user: String,
         /// GitHub 유저명 (힌트용 — 실제 auth 는 gh login 수동)
-        #[arg(long)] github_user: Option<String>,
+        #[arg(long)]
+        github_user: Option<String>,
         /// clone 할 레포 쉼표 구분 (예: "dalsoop/proxmox-init,imputnet/helium-linux")
-        #[arg(long)] repos: Option<String>,
+        #[arg(long)]
+        repos: Option<String>,
         /// VSCodium 설치 스킵
-        #[arg(long)] no_vscodium: bool,
+        #[arg(long)]
+        no_vscodium: bool,
     },
     /// 전체 LXC 규약 감사 — VMID↔IP 일치성 스캔 (pxi_core::convention)
     AuditAll,
     /// 매일 자동 감사 systemd timer 설치
     AuditInstallTimer {
         /// 실행 시각 HH:MM (기본 09:00)
-        #[arg(long, default_value = "09:00")] time: String,
+        #[arg(long, default_value = "09:00")]
+        time: String,
     },
     /// 자동 감사 timer 제거
     AuditUninstallTimer,
@@ -121,7 +155,18 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
     }
     match cli.cmd {
-        Cmd::Setup { vmid, hostname, ip, host, cores, memory, disk, port, user, helium_tag } => {
+        Cmd::Setup {
+            vmid,
+            hostname,
+            ip,
+            host,
+            cores,
+            memory,
+            disk,
+            port,
+            user,
+            helium_tag,
+        } => {
             // Vmid 는 clap argparse 에서 이미 convention 검증됨. ip 는 bare/CIDR 둘 다
             // 허용 (convention::validate_ip 내부에서 strip). 생략 시 canonical_cidr.
             let ip_str = match ip {
@@ -131,21 +176,51 @@ fn main() -> anyhow::Result<()> {
                 }
                 None => convention::canonical_cidr(vmid.as_str(), 16)?,
             };
-            let hostname = hostname.unwrap_or_else(|| derive_hostname(vmid.as_str(), host.as_deref()));
-            setup(vmid.as_str(), &hostname, &ip_str, host.as_deref(), &cores, &memory, &disk, &port, &user, &helium_tag)
+            let hostname =
+                hostname.unwrap_or_else(|| derive_hostname(vmid.as_str(), host.as_deref()));
+            setup(
+                vmid.as_str(),
+                &hostname,
+                &ip_str,
+                host.as_deref(),
+                &cores,
+                &memory,
+                &disk,
+                &port,
+                &user,
+                &helium_tag,
+            )
         }
-        Cmd::Install { vmid, port, user, helium_tag } => install(&vmid, &port, &user, &helium_tag),
+        Cmd::Install {
+            vmid,
+            port,
+            user,
+            helium_tag,
+        } => install(&vmid, &port, &user, &helium_tag),
         Cmd::Expose { vmid, host, port } => expose(&vmid, &host, &port),
         Cmd::Status { vmid } => status(&vmid),
         Cmd::Destroy { vmid, yes } => destroy(&vmid, yes),
         Cmd::Verify { vmid, host, port } => verify(&vmid, host.as_deref(), &port),
-        Cmd::Dev { vmid, user, github_user, repos, no_vscodium } => {
-            dev(&vmid, &user, github_user.as_deref(), repos.as_deref(), !no_vscodium)
-        }
+        Cmd::Dev {
+            vmid,
+            user,
+            github_user,
+            repos,
+            no_vscodium,
+        } => dev(
+            &vmid,
+            &user,
+            github_user.as_deref(),
+            repos.as_deref(),
+            !no_vscodium,
+        ),
         Cmd::AuditAll => audit_all(),
         Cmd::AuditInstallTimer { time } => audit_install_timer(&time),
         Cmd::AuditUninstallTimer => audit_uninstall_timer(),
-        Cmd::Doctor => { doctor(); Ok(()) }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
     }
 }
 
@@ -174,7 +249,8 @@ StandardError=journal
 # 실패 시 hook: /etc/pxi/audit-alert.sh 가 있으면 실행 (telegram 등 사용자 재량)
 ExecStopPost=/bin/sh -c '[ "$EXIT_STATUS" = "0" ] || [ ! -x /etc/pxi/audit-alert.sh ] || /etc/pxi/audit-alert.sh "$SERVICE_RESULT"'
 "#;
-    let timer = format!(r#"[Unit]
+    let timer = format!(
+        r#"[Unit]
 Description=pxi VMID-IP 규약 감사 (매일 {time})
 
 [Timer]
@@ -184,12 +260,16 @@ Unit=pxi-convention-audit.service
 
 [Install]
 WantedBy=timers.target
-"#);
+"#
+    );
 
     std::fs::write("/etc/systemd/system/pxi-convention-audit.service", service)?;
     std::fs::write("/etc/systemd/system/pxi-convention-audit.timer", timer)?;
     common::run("systemctl", &["daemon-reload"])?;
-    common::run("systemctl", &["enable", "--now", "pxi-convention-audit.timer"])?;
+    common::run(
+        "systemctl",
+        &["enable", "--now", "pxi-convention-audit.timer"],
+    )?;
     println!("✓ pxi-convention-audit.timer 설치 (매일 {time})");
     println!("  즉시 실행:   systemctl start pxi-convention-audit.service");
     println!("  다음 실행:   systemctl list-timers pxi-convention-audit.timer");
@@ -198,7 +278,11 @@ WantedBy=timers.target
 }
 
 fn audit_uninstall_timer() -> anyhow::Result<()> {
-    common::run("systemctl", &["disable", "--now", "pxi-convention-audit.timer"]).ok();
+    common::run(
+        "systemctl",
+        &["disable", "--now", "pxi-convention-audit.timer"],
+    )
+    .ok();
     for f in ["pxi-convention-audit.service", "pxi-convention-audit.timer"] {
         let path = format!("/etc/systemd/system/{f}");
         if std::path::Path::new(&path).exists() {
@@ -217,23 +301,28 @@ fn audit_all() -> anyhow::Result<()> {
     let mut violations: Vec<(String, String, String)> = Vec::new();
     for line in list.lines().skip(1) {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 3 { continue; }
+        if cols.len() < 3 {
+            continue;
+        }
         let vmid = cols[0];
         let name = cols.get(2).copied().unwrap_or("-");
         let cfg = match common::run_capture("pct", &["config", vmid]) {
-            Ok(c) => c, Err(_) => continue,
+            Ok(c) => c,
+            Err(_) => continue,
         };
         let ip_opt = cfg.lines().find_map(|l| {
             l.strip_prefix("net0:").and_then(|rest| {
                 rest.split(',').find_map(|kv| {
-                    kv.trim().strip_prefix("ip=").map(|v| {
-                        v.split('/').next().unwrap_or(v).trim().to_string()
-                    })
+                    kv.trim()
+                        .strip_prefix("ip=")
+                        .map(|v| v.split('/').next().unwrap_or(v).trim().to_string())
                 })
             })
         });
         let Some(ip) = ip_opt else { continue };
-        if ip == "dhcp" { continue; }
+        if ip == "dhcp" {
+            continue;
+        }
         match convention::validate_ip(vmid, &ip) {
             Ok(_) => ok_count += 1,
             Err(e) => violations.push((vmid.to_string(), name.to_string(), format!("{e}"))),
@@ -253,7 +342,13 @@ fn audit_all() -> anyhow::Result<()> {
     }
 }
 
-fn dev(vmid: &str, user: &str, github_user: Option<&str>, repos: Option<&str>, vscodium: bool) -> anyhow::Result<()> {
+fn dev(
+    vmid: &str,
+    user: &str,
+    github_user: Option<&str>,
+    repos: Option<&str>,
+    vscodium: bool,
+) -> anyhow::Result<()> {
     println!("=== xdesktop dev 환경 설치: LXC {vmid} ({user}) ===\n");
     common::ensure_lxc_running(vmid)?;
 
@@ -273,9 +368,16 @@ fn dev(vmid: &str, user: &str, github_user: Option<&str>, repos: Option<&str>, v
 }
 
 fn setup(
-    vmid: &str, hostname: &str, ip: &str, host: Option<&str>,
-    cores: &str, memory: &str, disk: &str, port: &str,
-    user: &str, helium_tag: &str,
+    vmid: &str,
+    hostname: &str,
+    ip: &str,
+    host: Option<&str>,
+    cores: &str,
+    memory: &str,
+    disk: &str,
+    port: &str,
+    user: &str,
+    helium_tag: &str,
 ) -> anyhow::Result<()> {
     println!("=== xdesktop setup: LXC {vmid} ({hostname}, {ip}) ===\n");
 
@@ -285,20 +387,32 @@ fn setup(
         println!("  LXC {vmid} 이미 존재 — 생성 스킵");
     } else {
         println!("[1/3] LXC 생성");
-        common::run("pxi-lxc", &[
-            "create",
-            "--vmid", vmid,
-            "--hostname", hostname,
-            "--ip", ip,
-            "--cores", cores,
-            "--memory", memory,
-            "--disk", disk,
-        ])?;
+        common::run(
+            "pxi-lxc",
+            &[
+                "create",
+                "--vmid",
+                vmid,
+                "--hostname",
+                hostname,
+                "--ip",
+                ip,
+                "--cores",
+                cores,
+                "--memory",
+                memory,
+                "--disk",
+                disk,
+            ],
+        )?;
 
         // 기동 대기
         print!("  기동 대기");
         for _ in 0..30 {
-            if common::pct_exec(vmid, &["true"]).is_ok() { println!(" ✓"); break; }
+            if common::pct_exec(vmid, &["true"]).is_ok() {
+                println!(" ✓");
+                break;
+            }
             print!(".");
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
@@ -340,9 +454,7 @@ fn install(vmid: &str, port: &str, user: &str, helium_tag: &str) -> anyhow::Resu
     common::pct_exec(vmid, &["chmod", "+x", script_path])?;
 
     // 환경변수 전달 후 실행 (stdout/stderr 실시간 노출)
-    let env_prefix = format!(
-        "XDESKTOP_USER={user} XPRA_PORT={port} HELIUM_TAG={helium_tag}"
-    );
+    let env_prefix = format!("XDESKTOP_USER={user} XPRA_PORT={port} HELIUM_TAG={helium_tag}");
     let cmd = format!("{env_prefix} bash {script_path}");
     common::pct_exec_passthrough(vmid, &["bash", "-lc", &cmd])?;
 
@@ -358,15 +470,24 @@ fn expose(vmid: &str, host: &str, port: &str) -> anyhow::Result<()> {
         .map(|c| c.network.internal_zone_pve())
         .unwrap_or_else(|_| "50.internal.kr".to_string());
     let domain = host.splitn(2, '.').nth(1).unwrap_or(&fallback);
-    common::run("pxi-service", &[
-        "add",
-        "--domain", domain,
-        "--name", &format!("xdesktop-{vmid}"),
-        "--host", host,
-        "--ip", &lxc_ip(vmid)?,
-        "--port", port,
-        "--vmid", vmid,
-    ])?;
+    common::run(
+        "pxi-service",
+        &[
+            "add",
+            "--domain",
+            domain,
+            "--name",
+            &format!("xdesktop-{vmid}"),
+            "--host",
+            host,
+            "--ip",
+            &lxc_ip(vmid)?,
+            "--port",
+            port,
+            "--vmid",
+            vmid,
+        ],
+    )?;
     println!("  ✓ traefik route 등록 완료");
     Ok(())
 }
@@ -376,9 +497,8 @@ fn status(vmid: &str) -> anyhow::Result<()> {
 
     // LXC — LxcStatus enum 으로 파싱. run_capture 가 non-zero exit 에서 Err 반환하면
     // 에러 메시지 안에 stderr ("...does not exist") 가 포함돼 NotFound 감지 가능.
-    let raw = common::run_capture("pct", &["status", vmid])
-        .unwrap_or_else(|e| e.to_string());
-    let status: LxcStatus = raw.parse().unwrap();  // FromStr::Err == Infallible
+    let raw = common::run_capture("pct", &["status", vmid]).unwrap_or_else(|e| e.to_string());
+    let status: LxcStatus = raw.parse().unwrap(); // FromStr::Err == Infallible
     println!("  LXC:      {} ({:?})", raw.trim(), status);
 
     if !status.is_running() {
@@ -392,32 +512,70 @@ fn status(vmid: &str) -> anyhow::Result<()> {
     println!("  xpra:     {}", svc.trim());
 
     // 포트 (nginx 14500 + Xpra 14501)
-    let ports = common::pct_exec(vmid, &[
-        "bash", "-c",
-        "ss -tlnp 2>/dev/null | awk 'NR==1 || /:(14500|14501)\\>/' | head -5"
-    ]).unwrap_or_default();
+    let ports = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "ss -tlnp 2>/dev/null | awk 'NR==1 || /:(14500|14501)\\>/' | head -5",
+        ],
+    )
+    .unwrap_or_default();
     println!("  포트:");
     for line in ports.lines() {
         println!("    {line}");
     }
 
     // 패치 상태 (업그레이드 내성 체크)
-    let css_ok = common::pct_exec(vmid, &["grep", "-q", "xpra-pxi-overrides", "/usr/share/xpra/www/css/client.css"]).is_ok();
-    let js_ok = common::pct_exec(vmid, &["grep", "-q", "server_is_desktop||this.client.server_is_shadow?(this.decorated", "/usr/share/xpra/www/js/Window.js"]).is_ok();
-    let divert_ok = common::pct_exec(vmid, &["bash", "-c", "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js"]).is_ok();
-    println!("  패치:     css={}  js={}  divert={}",
+    let css_ok = common::pct_exec(
+        vmid,
+        &[
+            "grep",
+            "-q",
+            "xpra-pxi-overrides",
+            "/usr/share/xpra/www/css/client.css",
+        ],
+    )
+    .is_ok();
+    let js_ok = common::pct_exec(
+        vmid,
+        &[
+            "grep",
+            "-q",
+            "server_is_desktop||this.client.server_is_shadow?(this.decorated",
+            "/usr/share/xpra/www/js/Window.js",
+        ],
+    )
+    .is_ok();
+    let divert_ok = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js",
+        ],
+    )
+    .is_ok();
+    println!(
+        "  패치:     css={}  js={}  divert={}",
         if css_ok { "✓" } else { "✗" },
         if js_ok { "✓" } else { "✗" },
-        if divert_ok { "✓" } else { "✗" });
+        if divert_ok { "✓" } else { "✗" }
+    );
 
     // 버전
-    let versions = common::pct_exec(vmid, &[
-        "bash", "-c",
-        "dpkg-query -W -f='xpra=${Version}\\n' xpra 2>/dev/null; \
+    let versions = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "dpkg-query -W -f='xpra=${Version}\\n' xpra 2>/dev/null; \
          dpkg-query -W -f='xpra-html5=${Version}\\n' xpra-html5 2>/dev/null; \
          dpkg-query -W -f='helium-bin=${Version}\\n' helium-bin 2>/dev/null; \
-         dpkg-query -W -f='fcitx5=${Version}\\n' fcitx5 2>/dev/null"
-    ]).unwrap_or_default();
+         dpkg-query -W -f='fcitx5=${Version}\\n' fcitx5 2>/dev/null",
+        ],
+    )
+    .unwrap_or_default();
     println!("  설치:");
     for line in versions.lines() {
         println!("    {line}");
@@ -446,7 +604,12 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
     println!("=== xdesktop verify: LXC {vmid} ===\n");
     let mut fails = 0;
     let mut check = |name: &str, ok: bool, detail: &str| {
-        let mark = if ok { "✓" } else { fails += 1; "✗" };
+        let mark = if ok {
+            "✓"
+        } else {
+            fails += 1;
+            "✗"
+        };
         println!("  {mark} {name:<35} {detail}");
     };
 
@@ -455,47 +618,90 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
         .map(|s| s.parse::<LxcStatus>().unwrap().is_running())
         .unwrap_or(false);
     check("LXC running", running, "");
-    if !running { anyhow::bail!("LXC 정지 — 이후 체크 생략"); }
+    if !running {
+        anyhow::bail!("LXC 정지 — 이후 체크 생략");
+    }
 
     // 2. systemd 서비스
     for svc in ["xpra-xdesktop", "nginx"] {
         let active = common::pct_exec(vmid, &["systemctl", "is-active", svc])
-            .map(|s| s.trim() == "active").unwrap_or(false);
+            .map(|s| s.trim() == "active")
+            .unwrap_or(false);
         check(&format!("systemd {svc}"), active, "");
     }
 
     // 3. 포트 리스닝 (nginx + xpra)
     let p_inner: u32 = port.parse::<u32>().map(|p| p + 1).unwrap_or(14501);
-    for (name, p) in [("nginx", port.to_string()), ("xpra (127.0.0.1)", p_inner.to_string())] {
-        let listening = common::pct_exec(vmid, &[
-            "bash", "-c",
-            &format!("ss -tlnp 2>/dev/null | grep -q ':{p}\\>'")
-        ]).is_ok();
+    for (name, p) in [
+        ("nginx", port.to_string()),
+        ("xpra (127.0.0.1)", p_inner.to_string()),
+    ] {
+        let listening = common::pct_exec(
+            vmid,
+            &[
+                "bash",
+                "-c",
+                &format!("ss -tlnp 2>/dev/null | grep -q ':{p}\\>'"),
+            ],
+        )
+        .is_ok();
         check(&format!("port {p} ({name})"), listening, "");
     }
 
     // 4. CSS 패치 적용 상태 — .windowhead hide 실존 여부
-    let css_ok = common::pct_exec(vmid, &[
-        "grep", "-q", "xpra-pxi-overrides", "/usr/share/xpra/www/css/client.css",
-    ]).is_ok();
-    check("CSS override applied", css_ok, ".windowhead 숨김 (드래그 offset 해결)");
+    let css_ok = common::pct_exec(
+        vmid,
+        &[
+            "grep",
+            "-q",
+            "xpra-pxi-overrides",
+            "/usr/share/xpra/www/css/client.css",
+        ],
+    )
+    .is_ok();
+    check(
+        "CSS override applied",
+        css_ok,
+        ".windowhead 숨김 (드래그 offset 해결)",
+    );
 
     // 5. dpkg-divert 보호 — css + js 둘 다
-    let divert_css = common::pct_exec(vmid, &[
-        "bash", "-c",
-        "dpkg-divert --list | grep -q /usr/share/xpra/www/css/client.css",
-    ]).is_ok();
-    let divert_js = common::pct_exec(vmid, &[
-        "bash", "-c",
-        "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js",
-    ]).is_ok();
-    check("dpkg-divert 보호", divert_css && divert_js, "apt upgrade 에도 패치 유지");
+    let divert_css = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "dpkg-divert --list | grep -q /usr/share/xpra/www/css/client.css",
+        ],
+    )
+    .is_ok();
+    let divert_js = common::pct_exec(
+        vmid,
+        &[
+            "bash",
+            "-c",
+            "dpkg-divert --list | grep -q /usr/share/xpra/www/js/Window.js",
+        ],
+    )
+    .is_ok();
+    check(
+        "dpkg-divert 보호",
+        divert_css && divert_js,
+        "apt upgrade 에도 패치 유지",
+    );
 
     // 6. LXC 내부 HTTP 응답
     let ip = lxc_ip(vmid).unwrap_or_else(|_| "-".into());
     let inner_ok = std::process::Command::new("curl")
-        .args(["-sf", "-o", "/dev/null", &format!("http://{ip}:{port}/css/client.css")])
-        .status().map(|s| s.success()).unwrap_or(false);
+        .args([
+            "-sf",
+            "-o",
+            "/dev/null",
+            &format!("http://{ip}:{port}/css/client.css"),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
     check(&format!("HTTP {ip}:{port}/css/client.css"), inner_ok, "");
 
     // 7. 공개 URL (host 지정 시) — HTML + CSS + connect.html 모두 reachable
@@ -504,7 +710,8 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
             let url = format!("https://{h}{path}");
             let code = std::process::Command::new("curl")
                 .args(["-sk", "-o", "/dev/null", "-w", "%{http_code}", &url])
-                .output().ok()
+                .output()
+                .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
                 .unwrap_or_default();
             let ok = code.trim() == "200";
@@ -513,10 +720,15 @@ fn verify(vmid: &str, host: Option<&str>, port: &str) -> anyhow::Result<()> {
         // 공개 URL 에서 실제 CSS 안에 우리 override 포함되는지 (압축본·캐시 스테일 감지)
         let content_ok = std::process::Command::new("curl")
             .args(["-sk", &format!("https://{h}/css/client.css")])
-            .output().ok()
+            .output()
+            .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("xpra-pxi-overrides"))
             .unwrap_or(false);
-        check("HTTPS CSS contains override", content_ok, "Safari 가 최신 CSS 받음");
+        check(
+            "HTTPS CSS contains override",
+            content_ok,
+            "Safari 가 최신 CSS 받음",
+        );
     }
 
     println!();
@@ -538,7 +750,11 @@ fn derive_hostname(vmid: &str, host: Option<&str>) -> String {
             return first.to_string();
         }
     }
-    let tail: &str = if vmid.len() >= 3 { &vmid[vmid.len() - 3..] } else { vmid };
+    let tail: &str = if vmid.len() >= 3 {
+        &vmid[vmid.len() - 3..]
+    } else {
+        vmid
+    };
     format!("xdesktop-{tail}")
 }
 
@@ -562,8 +778,29 @@ fn lxc_ip(vmid: &str) -> anyhow::Result<String> {
 
 fn doctor() {
     println!("=== pxi-xdesktop doctor ===");
-    println!("  pct:         {}", if common::has_cmd("pct") { "✓" } else { "✗ (Proxmox 호스트 필요)" });
-    println!("  pxi-lxc:     {}", if common::has_cmd("pxi-lxc") { "✓" } else { "✗" });
-    println!("  pxi-service: {}", if common::has_cmd("pxi-service") { "✓" } else { "✗ (expose 사용 불가)" });
+    println!(
+        "  pct:         {}",
+        if common::has_cmd("pct") {
+            "✓"
+        } else {
+            "✗ (Proxmox 호스트 필요)"
+        }
+    );
+    println!(
+        "  pxi-lxc:     {}",
+        if common::has_cmd("pxi-lxc") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    println!(
+        "  pxi-service: {}",
+        if common::has_cmd("pxi-service") {
+            "✓"
+        } else {
+            "✗ (expose 사용 불가)"
+        }
+    );
     println!("  install script: {} bytes", INSTALL_SCRIPT.len());
 }

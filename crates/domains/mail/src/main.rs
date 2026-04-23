@@ -14,7 +14,10 @@ fn run_bash(script: &str) -> anyhow::Result<String> {
 }
 
 #[derive(Parser)]
-#[command(name = "pxi-mail", about = "Maddy + Mailpit + Postfix relay + CF Email Sending proxy")]
+#[command(
+    name = "pxi-mail",
+    about = "Maddy + Mailpit + Postfix relay + CF Email Sending proxy"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -31,7 +34,7 @@ enum Cmd {
     /// [DEPRECATED] 호스트 Postfix → Maddy 587 SASL relay. cf-proxy-sync로 대체 권장.
     PostfixRelay {
         /// Maddy LXC IP (기본 10.0.50.122)
-        #[arg(long, default_value = "10.0.50.122")] // LINT_ALLOW: 관례상 Maddy IP
+        #[arg(long, default_value = "10.0.50.122")] // LINT_ALLOW: CF mail proxy 기본 IP // LINT_ALLOW: 관례상 Maddy IP
         maddy_ip: String,
         #[arg(long, default_value = "587")]
         port: String,
@@ -56,10 +59,13 @@ enum Cmd {
     /// Cloudflare Email Sending SMTP 프록시 설치 (LXC에 Rust 바이너리 + systemd)
     CfProxyInstall {
         /// 대상 LXC VMID (기본 50122 — Maddy LXC)
-        #[arg(long, default_value = "50122")]
+        #[arg(long, default_value = "50122")] // LINT_ALLOW: mail 기본 VMID
         vmid: String,
         /// 호스트에 빌드된 cf-mail-proxy 바이너리
-        #[arg(long, default_value = "/opt/cf-mail-proxy/target/release/cf-mail-proxy")]
+        #[arg(
+            long,
+            default_value = "/opt/cf-mail-proxy/target/release/cf-mail-proxy"
+        )]
         binary: String,
     },
     /// CF Email Sending 이번달 발송 쿼터 조회 (무료 3,000/월)
@@ -67,7 +73,7 @@ enum Cmd {
     /// 모든 running LXC의 postfix relayhost를 cf-mail-proxy(2525)로 일괄 동기화
     CfProxySync {
         /// cf-mail-proxy 호스트 IP (기본 10.0.50.122)
-        #[arg(long, default_value = "10.0.50.122")]
+        #[arg(long, default_value = "10.0.50.122")] // LINT_ALLOW: CF mail proxy 기본 IP
         host: String,
         /// 포트 (기본 2525)
         #[arg(long, default_value = "2525")]
@@ -86,22 +92,31 @@ enum Cmd {
     /// 같은-zone 수신자(prelik.com / ranode.net) 대체 경로.
     /// REST API 기반이라 SMTP user/pass 이슈 없음.
     MailgunShimInstall {
-        #[arg(long, default_value = "50122")] vmid: String,
-        #[arg(long, default_value_t = 2526)] port: u16,
+        #[arg(long, default_value = "50122")] // LINT_ALLOW: mail 기본 VMID
+        vmid: String,
+        #[arg(long, default_value_t = 2526)]
+        port: u16,
         /// Mailgun API key (비어있으면 /root/control-plane/.env 의 MAILGUN_API_KEY 참조)
-        #[arg(long)] api_key: Option<String>,
-        #[arg(long, default_value = "ranode.net")] mailgun_domain: String,
-        #[arg(long, default_value = "devops@ranode.net")] default_from: String,
+        #[arg(long)]
+        api_key: Option<String>,
+        #[arg(long, default_value = "ranode.net")]
+        mailgun_domain: String,
+        #[arg(long, default_value = "devops@ranode.net")]
+        default_from: String,
     },
     /// Mailgun shim systemd 서비스 상태
     MailgunShimStatus {
-        #[arg(long, default_value = "50122")] vmid: String,
+        #[arg(long, default_value = "50122")] // LINT_ALLOW: mail 기본 VMID
+        vmid: String,
     },
     /// Mailgun shim 로그 조회
     MailgunShimLogs {
-        #[arg(long, default_value = "50122")] vmid: String,
-        #[arg(long)] follow: bool,
-        #[arg(long, default_value_t = 50)] tail: u32,
+        #[arg(long, default_value = "50122")] // LINT_ALLOW: mail 기본 VMID
+        vmid: String,
+        #[arg(long)]
+        follow: bool,
+        #[arg(long, default_value_t = 50)]
+        tail: u32,
     },
 }
 
@@ -109,14 +124,43 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::InstallMailpit { vmid } => install_mailpit(&vmid),
         Cmd::PostfixRelay { maddy_ip, port } => postfix_relay(&maddy_ip, &port),
-        Cmd::Status => { status(); Ok(()) }
-        Cmd::Doctor => { doctor(); Ok(()) }
-        Cmd::Setup { vmid, ip, domain, email, password } => mail_setup(&vmid, &ip, &domain, &email, &password),
+        Cmd::Status => {
+            status();
+            Ok(())
+        }
+        Cmd::Doctor => {
+            doctor();
+            Ok(())
+        }
+        Cmd::Setup {
+            vmid,
+            ip,
+            domain,
+            email,
+            password,
+        } => mail_setup(&vmid, &ip, &domain, &email, &password),
         Cmd::CfProxyInstall { vmid, binary } => cf_proxy_install(&vmid, &binary),
         Cmd::CfProxyQuota => cf_proxy_quota(),
-        Cmd::CfProxySync { host, port, dry_run, status, vmid } => cf_proxy_sync(&host, &port, dry_run, status, vmid.as_deref()),
-        Cmd::MailgunShimInstall { vmid, port, api_key, mailgun_domain, default_from } =>
-            mailgun_shim_install(&vmid, port, api_key.as_deref(), &mailgun_domain, &default_from),
+        Cmd::CfProxySync {
+            host,
+            port,
+            dry_run,
+            status,
+            vmid,
+        } => cf_proxy_sync(&host, &port, dry_run, status, vmid.as_deref()),
+        Cmd::MailgunShimInstall {
+            vmid,
+            port,
+            api_key,
+            mailgun_domain,
+            default_from,
+        } => mailgun_shim_install(
+            &vmid,
+            port,
+            api_key.as_deref(),
+            &mailgun_domain,
+            &default_from,
+        ),
         Cmd::MailgunShimStatus { vmid } => mailgun_shim_status(&vmid),
         Cmd::MailgunShimLogs { vmid, follow, tail } => mailgun_shim_logs(&vmid, follow, tail),
     }
@@ -128,9 +172,17 @@ fn install_mailpit(vmid: &str) -> anyhow::Result<()> {
     }
     println!("=== Mailpit 설치 (LXC {vmid}) ===");
 
-    common::run("pct", &["exec", vmid, "--", "bash", "-c",
-        "apt-get update && apt-get install -y curl ca-certificates socat python3-flask"
-    ])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "apt-get update && apt-get install -y curl ca-certificates socat python3-flask",
+        ],
+    )?;
 
     // 바이너리
     common::run("pct", &["exec", vmid, "--", "bash", "-c",
@@ -163,13 +215,25 @@ RestartSec=5
 WantedBy=multi-user.target
 ";
     write_to_lxc(vmid, "/etc/systemd/system/mailpit.service", unit)?;
-    common::run("pct", &["exec", vmid, "--", "bash", "-c",
-        "systemctl daemon-reload && systemctl enable --now mailpit"
-    ])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "systemctl daemon-reload && systemctl enable --now mailpit",
+        ],
+    )?;
 
     println!("✓ Mailpit 설치 완료");
-    common::run_capture("pct", &["exec", vmid, "--", "cat", "/var/lib/mailpit/ingest-token"])
-        .map(|t| println!("  INGEST_TOKEN: {t}")).ok();
+    common::run_capture(
+        "pct",
+        &["exec", vmid, "--", "cat", "/var/lib/mailpit/ingest-token"],
+    )
+    .map(|t| println!("  INGEST_TOKEN: {t}"))
+    .ok();
     Ok(())
 }
 
@@ -178,7 +242,10 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
 
     // maddy_ip/port 검증 — main.cf/sasl_passwd에 format! 삽입되므로 config injection 차단.
     // IP(v4/v6)/hostname만 허용. ']', 개행, 공백 등이 있으면 main.cf에 추가 설정 주입 가능.
-    if !maddy_ip.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-') {
+    if !maddy_ip
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-')
+    {
         anyhow::bail!("maddy_ip 형식 오류: {maddy_ip:?} (IPv4/IPv6/hostname만 허용)");
     }
     if maddy_ip.is_empty() || maddy_ip.len() > 253 {
@@ -187,7 +254,8 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     if !port.chars().all(|c| c.is_ascii_digit()) || port.is_empty() {
         anyhow::bail!("port는 숫자만: {port:?}");
     }
-    let port_num: u16 = port.parse()
+    let port_num: u16 = port
+        .parse()
         .map_err(|_| anyhow::anyhow!("port 범위 초과: {port}"))?;
     if port_num == 0 {
         anyhow::bail!("port 0 은 유효하지 않음");
@@ -196,7 +264,9 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     let smtp_user = read_host_env("SMTP_USER");
     let smtp_pass = read_host_env("SMTP_PASSWORD");
     if smtp_user.is_empty() || smtp_pass.is_empty() {
-        anyhow::bail!("/etc/pxi/.env 또는 /etc/proxmox-host-setup/.env 에 SMTP_USER/SMTP_PASSWORD 필요");
+        anyhow::bail!(
+            "/etc/pxi/.env 또는 /etc/proxmox-host-setup/.env 에 SMTP_USER/SMTP_PASSWORD 필요"
+        );
     }
     // SMTP user/pass에도 개행/제어문자 차단 (sasl_passwd 포맷 주입)
     if smtp_user.contains('\n') || smtp_user.contains('\r') || smtp_user.contains('\0') {
@@ -212,7 +282,8 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
 
     // 자동 백업 — main.cf + sasl_passwd + sender_canonical
     // (보조 맵 파일도 덮어쓰기 전에 저장해야 완전한 rollback이 가능)
-    let ts_out = common::run_capture("date", &["+%Y%m%d-%H%M%S.%N"]).unwrap_or_else(|_| "backup".into());
+    let ts_out =
+        common::run_capture("date", &["+%Y%m%d-%H%M%S.%N"]).unwrap_or_else(|_| "backup".into());
     let ts = ts_out.trim();
     let backup_dir = format!("/etc/postfix/pxi-backup-{ts}");
     run_bash(&format!("sudo mkdir -p {backup_dir}"))?;
@@ -223,7 +294,12 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     }
     let backup = BackupSet {
         dir: backup_dir.clone(),
-        files: vec!["main.cf", "sasl_passwd", "sasl_passwd.db", "sender_canonical"],
+        files: vec![
+            "main.cf",
+            "sasl_passwd",
+            "sasl_passwd.db",
+            "sender_canonical",
+        ],
     };
     for f in &backup.files {
         let src = format!("/etc/postfix/{f}");
@@ -233,12 +309,9 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
             continue;
         }
         // 존재하면 cp는 반드시 성공해야 함. 실패는 명시적 에러.
-        run_bash(&format!(
-            "sudo cp -a {src} {}/{f}",
-            backup.dir
-        )).map_err(|e| anyhow::anyhow!(
-            "백업 실패 ({f}): {e} — /etc/postfix 권한/공간 확인 필요"
-        ))?;
+        run_bash(&format!("sudo cp -a {src} {}/{f}", backup.dir)).map_err(|e| {
+            anyhow::anyhow!("백업 실패 ({f}): {e} — /etc/postfix 권한/공간 확인 필요")
+        })?;
     }
     println!("  백업: {}", backup.dir);
 
@@ -260,11 +333,12 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
             }
         }
         // 원본 설정으로 postfix reload — 실패하면 명시적으로 에러
-        run_bash("sudo systemctl reload postfix")
-            .map_err(|e| anyhow::anyhow!(
+        run_bash("sudo systemctl reload postfix").map_err(|e| {
+            anyhow::anyhow!(
                 "원본 복원 후 postfix reload 실패: {e} — 수동 확인 필요. 백업: {}",
                 backup.dir
-            ))?;
+            )
+        })?;
         Ok(())
     };
 
@@ -279,7 +353,8 @@ fn postfix_relay(maddy_ip: &str, port: &str) -> anyhow::Result<()> {
     run_bash("sudo sed -i '/^relayhost[[:space:]]*=/d;/^smtp_sasl_/d;/^smtp_tls_security_level/d;/^sender_canonical_maps/d' /etc/postfix/main.cf")?;
 
     // 추가
-    let append = format!("
+    let append = format!(
+        "
 # pxi postfix-relay
 relayhost = [{maddy_ip}]:{port}
 smtp_sasl_auth_enable = yes
@@ -288,15 +363,23 @@ smtp_sasl_security_options = noanonymous
 smtp_tls_security_level = may
 smtp_sasl_tls_security_options = noanonymous
 sender_canonical_maps = regexp:/etc/postfix/sender_canonical
-");
-    run_bash(&format!("echo '{}' | sudo tee -a /etc/postfix/main.cf >/dev/null", append.replace('\'', "'\\''")))?;
+"
+    );
+    run_bash(&format!(
+        "echo '{}' | sudo tee -a /etc/postfix/main.cf >/dev/null",
+        append.replace('\'', "'\\''")
+    ))?;
 
     // SASL 패스워드가 /tmp에 순간이라도 평문 노출되지 않게 먼저 권한 0600으로 생성
     let sasl = format!("[{maddy_ip}]:{port} {smtp_user}:{smtp_pass}\n");
     let sasl_tmp = common::run_capture("mktemp", &["-t", "pxi.XXXXXXXX"])?;
     let sasl_tmp = sasl_tmp.trim().to_string();
     struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
     let _g1 = Cleanup(std::path::PathBuf::from(&sasl_tmp));
 
     common::run("chmod", &["600", &sasl_tmp])?;
@@ -354,9 +437,30 @@ fn status() {
 
 fn doctor() {
     println!("=== pxi-mail doctor ===");
-    println!("  pct:       {}", if common::command_exists("pct") { "✓" } else { "✗" });
-    println!("  postfix:   {}", if common::command_exists("postfix") { "✓" } else { "✗" });
-    println!("  systemctl: {}", if common::command_exists("systemctl") { "✓" } else { "✗" });
+    println!(
+        "  pct:       {}",
+        if common::command_exists("pct") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    println!(
+        "  postfix:   {}",
+        if common::command_exists("postfix") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    println!(
+        "  systemctl: {}",
+        if common::command_exists("systemctl") {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
 }
 
 // ---------- mail-setup (Maddy) ----------
@@ -371,8 +475,16 @@ fn lxc_sh(vmid: &str, cmd: &str) -> String {
     }
 }
 
-fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -> anyhow::Result<()> {
-    if !common::command_exists("pct") { anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작"); }
+fn mail_setup(
+    vmid: &str,
+    ip: &str,
+    domain: &str,
+    email: &str,
+    password: &str,
+) -> anyhow::Result<()> {
+    if !common::command_exists("pct") {
+        anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
+    }
 
     let hostname = format!("mail.{domain}");
     println!("=== 메일 서버 전체 세팅 (Maddy) ===\n");
@@ -385,7 +497,9 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
         println!("  LXC {vmid} 이미 실행 중");
     } else if !status_out.is_empty() {
         println!("  LXC {vmid} 존재 — 시작");
-        let _ = std::process::Command::new("pct").args(["start", vmid]).status();
+        let _ = std::process::Command::new("pct")
+            .args(["start", vmid])
+            .status();
         std::thread::sleep(std::time::Duration::from_secs(3));
     } else {
         anyhow::bail!("LXC {vmid} 없음 — 먼저 생성하세요 (pxi-lxc create)");
@@ -398,7 +512,10 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
         let ver = lxc_sh(vmid, "/usr/local/bin/maddy version 2>&1 | head -1");
         println!("  Maddy 이미 설치됨 ({ver})");
     } else {
-        lxc_sh(vmid, "systemctl stop postfix 2>/dev/null; apt-get purge -y postfix 2>/dev/null");
+        lxc_sh(
+            vmid,
+            "systemctl stop postfix 2>/dev/null; apt-get purge -y postfix 2>/dev/null",
+        );
         lxc_sh(vmid, "DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get install -y -qq zstd curl ca-certificates");
 
         let maddy_url = "https://github.com/foxcpp/maddy/releases/latest/download/maddy-x86_64-linux-musl.tar.zst";
@@ -412,7 +529,8 @@ fn mail_setup(vmid: &str, ip: &str, domain: &str, email: &str, password: &str) -
 
     // 3. Maddy 설정
     println!("[3/5] Maddy 설정...");
-    let maddy_conf = format!(r#"$(hostname) = {hostname}
+    let maddy_conf = format!(
+        r#"$(hostname) = {hostname}
 $(primary_domain) = {domain}
 $(local_domains) = $(primary_domain)
 tls off
@@ -463,7 +581,8 @@ target.queue remote_queue {{
     target &outbound_delivery
     autogenerated_msg_domain $(primary_domain)
 }}
-"#);
+"#
+    );
 
     write_to_lxc(vmid, "/etc/maddy/maddy.conf", &maddy_conf)?;
     lxc_sh(vmid, "touch /etc/maddy/aliases");
@@ -471,7 +590,10 @@ target.queue remote_queue {{
 
     // 4. 계정 생성
     println!("[4/5] 메일 계정 생성...");
-    lxc_sh(vmid, "systemctl daemon-reload && systemctl enable maddy && systemctl start maddy 2>/dev/null");
+    lxc_sh(
+        vmid,
+        "systemctl daemon-reload && systemctl enable maddy && systemctl start maddy 2>/dev/null",
+    );
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     let existing = lxc_sh(vmid, "/usr/local/bin/maddy creds list 2>/dev/null");
@@ -479,7 +601,10 @@ target.queue remote_queue {{
         println!("  {email} 계정 이미 존재");
     } else {
         lxc_sh(vmid, &format!("echo -e '{password}\\n{password}' | /usr/local/bin/maddy creds create {email} 2>/dev/null"));
-        lxc_sh(vmid, &format!("/usr/local/bin/maddy imap-acct create {email} 2>/dev/null"));
+        lxc_sh(
+            vmid,
+            &format!("/usr/local/bin/maddy imap-acct create {email} 2>/dev/null"),
+        );
         println!("  {email} 계정 생성 완료");
     }
 
@@ -490,16 +615,45 @@ target.queue remote_queue {{
     for (port, label) in [(25, "SMTP"), (587, "Submission"), (143, "IMAP")] {
         let port_s = port.to_string();
         let check = std::process::Command::new("iptables")
-            .args(["-t", "nat", "-C", "PREROUTING", "-p", "tcp", "--dport", &port_s,
-                "-j", "DNAT", "--to-destination", &format!("{ip}:{port}")])
-            .output().map(|o| o.status.success()).unwrap_or(false);
+            .args([
+                "-t",
+                "nat",
+                "-C",
+                "PREROUTING",
+                "-p",
+                "tcp",
+                "--dport",
+                &port_s,
+                "-j",
+                "DNAT",
+                "--to-destination",
+                &format!("{ip}:{port}"),
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
         if check {
             println!("  {label} (:{port}) -> {ip} 이미 존재");
         } else {
             let _ = std::process::Command::new("iptables")
-                .args(["-t", "nat", "-A", "PREROUTING", "-p", "tcp", "--dport", &port_s,
-                    "-j", "DNAT", "--to-destination", &format!("{ip}:{port}"),
-                    "-m", "comment", "--comment", &format!("mail-{label}")])
+                .args([
+                    "-t",
+                    "nat",
+                    "-A",
+                    "PREROUTING",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    &port_s,
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    &format!("{ip}:{port}"),
+                    "-m",
+                    "comment",
+                    "--comment",
+                    &format!("mail-{label}"),
+                ])
                 .output();
             println!("  {label}: :{port} -> {ip}:{port}");
         }
@@ -520,29 +674,54 @@ fn cf_proxy_install(vmid: &str, binary: &str) -> anyhow::Result<()> {
         anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
     }
     if !std::path::Path::new(binary).exists() {
-        anyhow::bail!("바이너리 없음: {binary} — 먼저 빌드하세요 (github.com/dalsoop/cf-mail-proxy)");
+        anyhow::bail!(
+            "바이너리 없음: {binary} — 먼저 빌드하세요 (github.com/dalsoop/cf-mail-proxy)"
+        );
     }
 
     let cf_account = read_host_env("CF_ACCOUNT_ID");
     let cf_email = read_host_env("CLOUDFLARE_EMAIL");
     let cf_key = read_host_env("CLOUDFLARE_API_KEY");
     if cf_account.is_empty() || cf_email.is_empty() || cf_key.is_empty() {
-        anyhow::bail!("/etc/pxi/.env 에 CF_ACCOUNT_ID / CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요");
+        anyhow::bail!(
+            "/etc/pxi/.env 에 CF_ACCOUNT_ID / CLOUDFLARE_EMAIL / CLOUDFLARE_API_KEY 필요"
+        );
     }
     let default_from = {
         let v = read_host_env("DEFAULT_FROM");
-        if v.is_empty() { "devops@prelik.com".to_string() } else { v }
+        if v.is_empty() {
+            "devops@prelik.com".to_string() // LINT_ALLOW: CF mail proxy DEFAULT_FROM 기본값
+        } else {
+            v
+        }
     };
     let allowed = {
         let v = read_host_env("CF_ALLOWED_DOMAINS");
-        if v.is_empty() { "prelik.com,ranode.net,internal.kr".to_string() } else { v }
+        if v.is_empty() {
+            "prelik.com,ranode.net,internal.kr".to_string() // LINT_ALLOW: CF mail proxy ALLOWED_DOMAINS 기본값
+        } else {
+            v
+        }
     };
 
     // 1) 바이너리 push
     println!("=== cf-mail-proxy 설치 (LXC {vmid}) ===");
     println!("[1/4] 바이너리 배포: {binary} → /usr/local/bin/cf-mail-proxy");
-    common::run("pct", &["push", vmid, binary, "/usr/local/bin/cf-mail-proxy"])?;
-    common::run("pct", &["exec", vmid, "--", "chmod", "+x", "/usr/local/bin/cf-mail-proxy"])?;
+    common::run(
+        "pct",
+        &["push", vmid, binary, "/usr/local/bin/cf-mail-proxy"],
+    )?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "chmod",
+            "+x",
+            "/usr/local/bin/cf-mail-proxy",
+        ],
+    )?;
 
     // 2) env 파일 (크리덴셜 + 정책)
     println!("[2/4] /etc/cf-mail-proxy.env 작성");
@@ -550,7 +729,10 @@ fn cf_proxy_install(vmid: &str, binary: &str) -> anyhow::Result<()> {
         "CF_ACCOUNT_ID={cf_account}\nCLOUDFLARE_EMAIL={cf_email}\nCLOUDFLARE_API_KEY={cf_key}\nDEFAULT_FROM={default_from}\nALLOWED_DOMAINS={allowed}\n"
     );
     write_to_lxc(vmid, "/etc/cf-mail-proxy.env", &env_content)?;
-    common::run("pct", &["exec", vmid, "--", "chmod", "600", "/etc/cf-mail-proxy.env"])?;
+    common::run(
+        "pct",
+        &["exec", vmid, "--", "chmod", "600", "/etc/cf-mail-proxy.env"],
+    )?;
 
     // 3) systemd unit
     println!("[3/4] systemd unit 작성");
@@ -580,10 +762,31 @@ WantedBy=multi-user.target
     // 4) 기동
     println!("[4/4] systemd daemon-reload + 기동");
     common::run("pct", &["exec", vmid, "--", "systemctl", "daemon-reload"])?;
-    common::run("pct", &["exec", vmid, "--", "systemctl", "enable", "--now", "cf-mail-proxy"])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "enable",
+            "--now",
+            "cf-mail-proxy",
+        ],
+    )?;
     std::thread::sleep(std::time::Duration::from_secs(2));
-    let state = common::run_capture("pct", &["exec", vmid, "--", "systemctl", "is-active", "cf-mail-proxy"])
-        .unwrap_or_else(|_| "unknown".into());
+    let state = common::run_capture(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "is-active",
+            "cf-mail-proxy",
+        ],
+    )
+    .unwrap_or_else(|_| "unknown".into());
     println!("✓ cf-mail-proxy 설치 완료 (상태: {})", state.trim());
     println!("  다음: pxi run mail cf-proxy-sync  (전 LXC postfix를 2525로 통일)");
     Ok(())
@@ -591,12 +794,21 @@ WantedBy=multi-user.target
 
 // ---------- cf-proxy-sync ----------
 
-fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, target_vmid: Option<&str>) -> anyhow::Result<()> {
+fn cf_proxy_sync(
+    host: &str,
+    port: &str,
+    dry_run: bool,
+    status_only: bool,
+    target_vmid: Option<&str>,
+) -> anyhow::Result<()> {
     if !common::command_exists("pct") {
         anyhow::bail!("pct 없음 — Proxmox 호스트에서만 동작");
     }
     // IP/port 검증 (postfix main.cf 주입 방지)
-    if !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-') {
+    if !host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-')
+    {
         anyhow::bail!("host 형식 오류: {host:?}");
     }
     if !port.chars().all(|c| c.is_ascii_digit()) || port.is_empty() {
@@ -605,15 +817,22 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
 
     let relay = format!("[{host}]:{port}");
     let vmids: Vec<String> = match target_vmid {
-        Some(v) => v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Some(v) => v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
         None => {
             let out = common::run_capture("pct", &["list"])?;
-            out.lines().skip(1)
+            out.lines()
+                .skip(1)
                 .filter_map(|l| {
                     let cols: Vec<&str> = l.split_whitespace().collect();
                     if cols.len() >= 2 && cols[1] == "running" {
                         Some(cols[0].to_string())
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .collect()
         }
@@ -624,21 +843,34 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
         println!("  {:<8}  {:<22}  RELAYHOST", "VMID", "HOST");
         for vmid in &vmids {
             let hostname = pct_hostname(vmid);
-            let current = common::run_capture("pct", &["exec", vmid, "--", "postconf", "-h", "relayhost"])
-                .map(|s| s.trim().to_string())
-                .unwrap_or_else(|_| "(no postfix)".into());
-            println!("  {:<8}  {:<22}  {}", vmid, hostname, if current.is_empty() { "(empty)" } else { &current });
+            let current =
+                common::run_capture("pct", &["exec", vmid, "--", "postconf", "-h", "relayhost"])
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| "(no postfix)".into());
+            println!(
+                "  {:<8}  {:<22}  {}",
+                vmid,
+                hostname,
+                if current.is_empty() {
+                    "(empty)"
+                } else {
+                    &current
+                }
+            );
         }
         return Ok(());
     }
 
-    println!("=== cf-proxy-sync → {relay} {}===", if dry_run { "(dry-run) " } else { "" });
+    println!(
+        "=== cf-proxy-sync → {relay} {}===",
+        if dry_run { "(dry-run) " } else { "" }
+    );
     let proxy_ip = host.to_string();
     for vmid in &vmids {
         let hostname = pct_hostname(vmid);
         // 프록시가 돌고 있는 LXC는 건너뜀
-        let my_ip = common::run_capture("pct", &["exec", vmid, "--", "hostname", "-I"])
-            .unwrap_or_default();
+        let my_ip =
+            common::run_capture("pct", &["exec", vmid, "--", "hostname", "-I"]).unwrap_or_default();
         if my_ip.split_whitespace().next().unwrap_or("") == proxy_ip {
             println!("  ◎ LXC {vmid} ({hostname}) — 프록시 자체, 건너뜀");
             continue;
@@ -648,15 +880,18 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
             println!("  — LXC {vmid} ({hostname}) — postfix 없음");
             continue;
         }
-        let current = common::run_capture("pct", &["exec", vmid, "--", "postconf", "-h", "relayhost"])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
+        let current =
+            common::run_capture("pct", &["exec", vmid, "--", "postconf", "-h", "relayhost"])
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
         if current == relay {
             println!("  ✓ LXC {vmid} ({hostname}) — 이미 동기화됨");
             continue;
         }
         println!("  → LXC {vmid} ({hostname}) — {:?} → {}", current, relay);
-        if dry_run { continue; }
+        if dry_run {
+            continue;
+        }
         let script = format!(
             "postconf -e 'relayhost = {relay}' && postconf -e 'smtp_sasl_auth_enable = no' && \
              {{ [ -f /etc/postfix/sasl_passwd ] && mv /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.bak-$(date +%Y%m%d) 2>/dev/null || true ; }} && \
@@ -673,11 +908,11 @@ fn cf_proxy_sync(host: &str, port: &str, dry_run: bool, status_only: bool, targe
 fn cf_proxy_quota() -> anyhow::Result<()> {
     // CF Email Sending public beta는 아직 metrics/stats API를 공개하지 않음 (2026-04 기준).
     // 대안: cf-mail-proxy systemd 저널에서 `delivered=` 라인을 카운트. LXC 50122에서 실행.
-    let vmid = std::env::var("CF_MAIL_PROXY_VMID").unwrap_or_else(|_| "50122".into());
+    let vmid = std::env::var("CF_MAIL_PROXY_VMID").unwrap_or_else(|_| "50122".into()); // LINT_ALLOW: mail proxy 기본 VMID
 
     // 이번달 시작시각 (UTC)
-    let since = common::run_capture("date", &["-u", "-d", "-30 days", "+%Y-%m-%d"])
-        .unwrap_or_default();
+    let since =
+        common::run_capture("date", &["-u", "-d", "-30 days", "+%Y-%m-%d"]).unwrap_or_default();
     let since = since.trim();
 
     println!("=== CF Email Sending 이번달 발송 카운트 (LXC {vmid}, since {since}) ===");
@@ -754,7 +989,11 @@ fn write_to_lxc(vmid: &str, path: &str, content: &str) -> anyhow::Result<()> {
     let tmp = out.trim().to_string();
     let tmp_path = std::path::PathBuf::from(&tmp);
     struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
     let _g = Cleanup(tmp_path.clone());
     fs::write(&tmp_path, content)?;
     common::run("chmod", &["600", &tmp])?;
@@ -782,7 +1021,7 @@ class Handler:
         try:
             msg = email.parser.BytesParser().parsebytes(envelope.content)
             sender = envelope.mail_from or DEFAULT_FROM
-            if "@ranode.net" not in sender and "@prelik.com" not in sender:
+            if "@ranode.net" not in sender and "@prelik.com" not in sender:  # LINT_ALLOW: Python 코드 내 도메인 검사 로직
                 sender = DEFAULT_FROM
             subj = msg.get("Subject", "(no subject)")
             body_text, body_html = "", None
@@ -852,61 +1091,147 @@ fn mailgun_shim_install(
                 .map_err(|e| anyhow::anyhow!("control-plane/.env 읽기 실패: {e}"))?;
             // `MAILGUN_API_KEY=...` 또는 주석 처리된 `# MAILGUN_API_KEY=...` 둘 다 허용
             // (현재 control-plane/.env 에서 deprecate 되어 주석으로만 남은 상태 때문).
-            content.lines()
+            content
+                .lines()
                 .map(|l| l.trim_start_matches('#').trim())
-                .find_map(|l| l.strip_prefix("MAILGUN_API_KEY=").map(|v| v.trim().to_string()))
+                .find_map(|l| {
+                    l.strip_prefix("MAILGUN_API_KEY=")
+                        .map(|v| v.trim().to_string())
+                })
                 .filter(|v| !v.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("MAILGUN_API_KEY 가 control-plane/.env 에 없습니다. --api-key 로 넘기세요."))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "MAILGUN_API_KEY 가 control-plane/.env 에 없습니다. --api-key 로 넘기세요."
+                    )
+                })?
         }
     };
 
     println!("=== Mailgun SMTP shim 설치 (LXC {vmid} :{port}) ===");
 
     // 1. deps
-    common::run("pct", &["exec", vmid, "--", "bash", "-c",
-        "apt-get install -y python3-aiosmtpd python3-requests >/dev/null 2>&1 || \
-         pip3 install --break-system-packages aiosmtpd requests >/dev/null 2>&1"
-    ])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "bash",
+            "-c",
+            "apt-get install -y python3-aiosmtpd python3-requests >/dev/null 2>&1 || \
+         pip3 install --break-system-packages aiosmtpd requests >/dev/null 2>&1",
+        ],
+    )?;
 
     // 2. script
     write_to_lxc(vmid, "/usr/local/bin/mailgun-smtp-proxy", MAILGUN_SHIM_PY)?;
-    common::run("pct", &["exec", vmid, "--", "chmod", "+x", "/usr/local/bin/mailgun-smtp-proxy"])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "chmod",
+            "+x",
+            "/usr/local/bin/mailgun-smtp-proxy",
+        ],
+    )?;
 
     // 3. env file (600)
     let env_content = format!(
         "MAILGUN_API_KEY={key}\nMAILGUN_DOMAIN={domain}\nDEFAULT_FROM={default_from}\nPORT={port}\n"
     );
     write_to_lxc(vmid, "/etc/mailgun-smtp-proxy.env", &env_content)?;
-    common::run("pct", &["exec", vmid, "--", "chmod", "600", "/etc/mailgun-smtp-proxy.env"])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "chmod",
+            "600",
+            "/etc/mailgun-smtp-proxy.env",
+        ],
+    )?;
 
     // 4. systemd unit
-    write_to_lxc(vmid, "/etc/systemd/system/mailgun-smtp-proxy.service", MAILGUN_SHIM_UNIT)?;
+    write_to_lxc(
+        vmid,
+        "/etc/systemd/system/mailgun-smtp-proxy.service",
+        MAILGUN_SHIM_UNIT,
+    )?;
 
     // 5. enable + start
     common::run("pct", &["exec", vmid, "--", "systemctl", "daemon-reload"])?;
-    common::run("pct", &["exec", vmid, "--", "systemctl", "enable", "--now", "mailgun-smtp-proxy"])?;
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "enable",
+            "--now",
+            "mailgun-smtp-proxy",
+        ],
+    )?;
 
     // 6. verify
-    let out = common::run_capture("pct", &["exec", vmid, "--", "systemctl", "is-active", "mailgun-smtp-proxy"])
-        .unwrap_or_default();
+    let out = common::run_capture(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "is-active",
+            "mailgun-smtp-proxy",
+        ],
+    )
+    .unwrap_or_default();
     println!("  status: {}", out.trim());
 
     Ok(())
 }
 
 fn mailgun_shim_status(vmid: &str) -> anyhow::Result<()> {
-    if !common::command_exists("pct") { anyhow::bail!("pct 없음"); }
-    common::run("pct", &["exec", vmid, "--", "systemctl", "status", "mailgun-smtp-proxy", "--no-pager"])?;
+    if !common::command_exists("pct") {
+        anyhow::bail!("pct 없음");
+    }
+    common::run(
+        "pct",
+        &[
+            "exec",
+            vmid,
+            "--",
+            "systemctl",
+            "status",
+            "mailgun-smtp-proxy",
+            "--no-pager",
+        ],
+    )?;
     Ok(())
 }
 
 fn mailgun_shim_logs(vmid: &str, follow: bool, tail: u32) -> anyhow::Result<()> {
-    if !common::command_exists("pct") { anyhow::bail!("pct 없음"); }
+    if !common::command_exists("pct") {
+        anyhow::bail!("pct 없음");
+    }
     let tail_s = tail.to_string();
-    let mut args: Vec<&str> = vec!["exec", vmid, "--", "journalctl", "-u", "mailgun-smtp-proxy",
-                                    "-n", &tail_s, "--no-pager"];
-    if follow { args.push("-f"); }
+    let mut args: Vec<&str> = vec![
+        "exec",
+        vmid,
+        "--",
+        "journalctl",
+        "-u",
+        "mailgun-smtp-proxy",
+        "-n",
+        &tail_s,
+        "--no-pager",
+    ];
+    if follow {
+        args.push("-f");
+    }
     common::run("pct", &args)?;
     Ok(())
 }
-

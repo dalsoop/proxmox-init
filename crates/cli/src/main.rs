@@ -32,18 +32,20 @@ enum Cmd {
         preset: Option<String>,
     },
     /// 도메인 제거 (여러 개 가능)
-    Remove {
-        domains: Vec<String>,
-    },
+    Remove { domains: Vec<String> },
     /// 도메인 업데이트 (여러 개 가능)
-    Update {
-        domains: Vec<String>,
-    },
+    Update { domains: Vec<String> },
     /// 설치된 모든 도메인을 latest 릴리스로 일괄 재설치
     Upgrade,
     /// 도메인 실행
     Run {
         domain: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// chrome-browser-dev 도메인 실행 alias
+    #[command(name = "chrome-browser-dev")]
+    ChromeBrowserDev {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -91,6 +93,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Update { domains } => install_many(domains, None),
         Cmd::Upgrade => upgrade_all(),
         Cmd::Run { domain, args } => run_domain(&domain, &args),
+        Cmd::ChromeBrowserDev { args } => run_domain("chrome-browser-dev", &args),
         Cmd::Uninstall { confirm, purge } => uninstall(confirm, purge),
         Cmd::Completions { shell } => {
             let mut cmd = Cli::command();
@@ -164,7 +167,9 @@ fn init() -> anyhow::Result<()> {
             .with_prompt("  CLOUDFLARE_API_KEY (Global API Key)")
             .interact()?;
         (email, key)
-    } else { (String::new(), String::new()) };
+    } else {
+        (String::new(), String::new())
+    };
 
     // ─── 2/4 SMTP (선택) ───
     let use_smtp = Confirm::new()
@@ -176,21 +181,25 @@ fn init() -> anyhow::Result<()> {
         let user: String = Input::new()
             .with_prompt("  SMTP_USER (예: devops@example.com)")
             .interact_text()?;
-        let pass: String = Password::new()
-            .with_prompt("  SMTP_PASSWORD")
-            .interact()?;
+        let pass: String = Password::new().with_prompt("  SMTP_PASSWORD").interact()?;
         (user, pass)
-    } else { (String::new(), String::new()) };
+    } else {
+        (String::new(), String::new())
+    };
 
     // ─── 3/4 네트워크 ───
     let bridge: String = Input::new()
         .with_prompt("network bridge")
-        .default(if detected_proxmox { "vmbr1".into() } else { String::new() })
+        .default(if detected_proxmox {
+            "vmbr1".into()
+        } else {
+            String::new()
+        })
         .allow_empty(true)
         .interact_text()?;
 
     let gateway: String = Input::new()
-        .with_prompt("기본 게이트웨이 (예: 10.0.50.1)")
+        .with_prompt("기본 게이트웨이 (예: 10.0.50.1)") // LINT_ALLOW: interactive prompt example
         .default(String::new())
         .allow_empty(true)
         .interact_text()?;
@@ -203,12 +212,14 @@ fn init() -> anyhow::Result<()> {
     // ─── 4/4 설치할 도메인 선택 ───
     let reg = pxi_core::registry::Registry::load()?;
     let avail: Vec<&pxi_core::registry::Domain> = reg.available();
-    let labels: Vec<String> = avail.iter()
+    let labels: Vec<String> = avail
+        .iter()
         .map(|d| format!("{:<14} {}", d.name, d.description))
         .collect();
 
     // 기본 선택: bootstrap + proxmox면 lxc도
-    let defaults: Vec<bool> = avail.iter()
+    let defaults: Vec<bool> = avail
+        .iter()
         .map(|d| d.name == "bootstrap" || (detected_proxmox && d.name == "lxc"))
         .collect();
 
@@ -218,9 +229,7 @@ fn init() -> anyhow::Result<()> {
         .defaults(&defaults)
         .interact()?;
 
-    let selected_names: Vec<String> = selected.iter()
-        .map(|&i| avail[i].name.clone())
-        .collect();
+    let selected_names: Vec<String> = selected.iter().map(|&i| avail[i].name.clone()).collect();
 
     // ─── 저장 ───
     let mut env_lines = vec![];
@@ -292,14 +301,18 @@ fn list_installed() -> anyhow::Result<()> {
         return Ok(());
     }
     println!("설치된 도메인:");
-    for n in names { println!("  {n}"); }
+    for n in names {
+        println!("  {n}");
+    }
     Ok(())
 }
 
 /// domains_dir 기반 설치된 도메인 이름 목록 (정렬).
 fn installed_domains() -> anyhow::Result<Vec<String>> {
     let dir = paths::domains_dir()?;
-    if !dir.exists() { return Ok(vec![]); }
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
     let mut names: Vec<String> = std::fs::read_dir(&dir)?
         .flatten()
         .filter_map(|e| e.file_name().into_string().ok())
@@ -315,7 +328,11 @@ fn upgrade_all() -> anyhow::Result<()> {
         return Ok(());
     }
     let tag = github::latest_tag(REPO)?;
-    println!("=== pxi upgrade — 설치된 도메인 {}개를 {}로 ===", domains.len(), tag);
+    println!(
+        "=== pxi upgrade — 설치된 도메인 {}개를 {}로 ===",
+        domains.len(),
+        tag
+    );
     println!("  대상: {}\n", domains.join(", "));
     // install_many는 개별 실패도 누적해 리포트. upgrade도 동일 정책.
     install_many(domains, None)?;
@@ -331,7 +348,8 @@ fn resolve_preset(name: &str) -> Option<Vec<String>> {
         "minimal" => Some(vec!["bootstrap"]),
         "dev" => Some(vec!["bootstrap", "ai", "connect"]),
         _ => None,
-    }.map(|v| v.into_iter().map(String::from).collect())
+    }
+    .map(|v| v.into_iter().map(String::from).collect())
 }
 
 fn install_many(mut domains: Vec<String>, preset: Option<&str>) -> anyhow::Result<()> {
@@ -357,15 +375,22 @@ fn install_many(mut domains: Vec<String>, preset: Option<&str>) -> anyhow::Resul
     let lock_path = paths::data_dir()?.join(".install.lock");
     std::fs::create_dir_all(lock_path.parent().unwrap())?;
     let _lock_file = std::fs::OpenOptions::new()
-        .create(true).write(true).truncate(false)
+        .create(true)
+        .write(true)
+        .truncate(false)
         .open(&lock_path)?;
     use std::os::unix::io::AsRawFd;
     let fd = _lock_file.as_raw_fd();
     unsafe {
-        extern "C" { fn flock(fd: i32, op: i32) -> i32; }
+        extern "C" {
+            fn flock(fd: i32, op: i32) -> i32;
+        }
         // LOCK_EX | LOCK_NB = 2 | 4 — 논블로킹 배타
         if flock(fd, 2 | 4) != 0 {
-            anyhow::bail!("다른 install이 진행 중입니다 ({}). 완료 후 재시도하세요.", lock_path.display());
+            anyhow::bail!(
+                "다른 install이 진행 중입니다 ({}). 완료 후 재시도하세요.",
+                lock_path.display()
+            );
         }
     }
 
@@ -528,12 +553,24 @@ fn doctor() {
     }
     println!(
         "  {} dotenvx {}",
-        if pxi_core::dotenvx::is_installed() { "✓" } else { "✗" },
-        if pxi_core::dotenvx::is_installed() { "" } else { "(pxi install bootstrap)" }
+        if pxi_core::dotenvx::is_installed() {
+            "✓"
+        } else {
+            "✗"
+        },
+        if pxi_core::dotenvx::is_installed() {
+            ""
+        } else {
+            "(pxi install bootstrap)"
+        }
     );
     println!(
         "  {} nickel (runtime registry export)",
-        if common::has_cmd("nickel") { "✓" } else { "✗" }
+        if common::has_cmd("nickel") {
+            "✓"
+        } else {
+            "✗"
+        }
     );
 
     // 설치된 도메인 + 각자 doctor 실행
@@ -555,7 +592,11 @@ fn doctor() {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let bin = bin_dir.join(format!("pxi-{name}"));
-            let status = if bin.exists() { "✓" } else { "✗ (바이너리 누락)" };
+            let status = if bin.exists() {
+                "✓"
+            } else {
+                "✗ (바이너리 누락)"
+            };
             println!("  {status} {name}");
             any = true;
         }
@@ -591,9 +632,13 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     for dir in &bin_dirs {
         // pxi 본체 + .pxi.version 마커
         let main_bin = dir.join("pxi");
-        if main_bin.exists() { bin_targets.push(main_bin); }
+        if main_bin.exists() {
+            bin_targets.push(main_bin);
+        }
         let marker = dir.join(".pxi.version");
-        if marker.exists() { bin_targets.push(marker); }
+        if marker.exists() {
+            bin_targets.push(marker);
+        }
         // pxi-* 도메인 바이너리
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
@@ -613,13 +658,19 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
         // 도메인별 sub-binary cache + 사용자/시스템 config + recovery snapshots.
         // root에선 paths::config_dir() == /etc/pxi이라 중복될 수 있어 canonical 후 dedup.
         let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Ok(d) = paths::domains_dir() { candidates.push(d); }
-        if let Ok(d) = paths::config_dir()  { candidates.push(d); }
+        if let Ok(d) = paths::domains_dir() {
+            candidates.push(d);
+        }
+        if let Ok(d) = paths::config_dir() {
+            candidates.push(d);
+        }
         candidates.push(PathBuf::from("/etc/pxi"));
         candidates.push(PathBuf::from("/var/lib/pxi"));
         let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         for p in candidates {
-            if !p.exists() { continue; }
+            if !p.exists() {
+                continue;
+            }
             // canonicalize로 동일 디렉토리 변형 (경로 표기/symlink) 통합. 실패 시 원본 사용.
             let key = p.canonicalize().unwrap_or(p.clone());
             if seen.insert(key) {
@@ -629,10 +680,14 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     }
 
     println!("[삭제 대상] 바이너리 ({}개):", bin_targets.len());
-    for p in &bin_targets { println!("  - {}", p.display()); }
+    for p in &bin_targets {
+        println!("  - {}", p.display());
+    }
     if purge {
         println!("\n[--purge] 디렉토리 ({}개):", purge_dirs.len());
-        for p in &purge_dirs { println!("  - {}", p.display()); }
+        for p in &purge_dirs {
+            println!("  - {}", p.display());
+        }
     } else {
         println!("\n[참고] config/recovery 디렉토리는 보존됩니다 (--purge로 함께 삭제 가능).");
     }
@@ -648,8 +703,10 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     println!("\n수동 정리 절차: docs/uninstall.md 참조.\n");
 
     if !confirm {
-        println!("실제 삭제하려면: pxi uninstall --confirm{}",
-            if purge { " --purge" } else { "" });
+        println!(
+            "실제 삭제하려면: pxi uninstall --confirm{}",
+            if purge { " --purge" } else { "" }
+        );
         return Ok(());
     }
 
@@ -657,14 +714,20 @@ fn uninstall(confirm: bool, purge: bool) -> anyhow::Result<()> {
     for p in &bin_targets {
         match std::fs::remove_file(p) {
             Ok(_) => println!("  ✓ {}", p.display()),
-            Err(e) => { eprintln!("  ✗ {} ({e})", p.display()); failed += 1; }
+            Err(e) => {
+                eprintln!("  ✗ {} ({e})", p.display());
+                failed += 1;
+            }
         }
     }
     if purge {
         for p in &purge_dirs {
             match std::fs::remove_dir_all(p) {
                 Ok(_) => println!("  ✓ {} (purged)", p.display()),
-                Err(e) => { eprintln!("  ✗ {} ({e})", p.display()); failed += 1; }
+                Err(e) => {
+                    eprintln!("  ✗ {} ({e})", p.display());
+                    failed += 1;
+                }
             }
         }
     }
@@ -689,7 +752,10 @@ fn rebrand(new_name: &str, apply: bool) -> anyhow::Result<()> {
     if new_name.is_empty() || new_name.len() > 20 {
         anyhow::bail!("이름은 1~20자: '{new_name}'");
     }
-    if !new_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !new_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         anyhow::bail!("영문/숫자/하이픈/언더스코어만: '{new_name}'");
     }
 
@@ -740,10 +806,14 @@ fn rebrand(new_name: &str, apply: bool) -> anyhow::Result<()> {
         let new_p = bin_dir.join(&new_n);
         if old_p.is_symlink() {
             let target = std::fs::read_link(&old_p)?;
-            let new_target_name = target.file_name()
+            let new_target_name = target
+                .file_name()
                 .map(|f| f.to_string_lossy().replacen(old, new_name, 1))
                 .unwrap_or_default();
-            let new_target = target.parent().unwrap_or(std::path::Path::new(".")).join(&new_target_name);
+            let new_target = target
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(&new_target_name);
             std::fs::remove_file(&old_p)?;
             std::os::unix::fs::symlink(&new_target, &new_p)?;
         } else {
@@ -788,8 +858,11 @@ fn validate() -> anyhow::Result<()> {
     // 1. Registry 로드
     let reg = match Registry::load() {
         Ok(r) => {
-            println!("✓ locale.json 로드 — 도메인 {}개, format_version={}",
-                r.domains.len(), r.format_version);
+            println!(
+                "✓ locale.json 로드 — 도메인 {}개, format_version={}",
+                r.domains.len(),
+                r.format_version
+            );
             r
         }
         Err(e) => {
@@ -816,7 +889,10 @@ fn validate() -> anyhow::Result<()> {
             }
             Ok(out) => {
                 errors += 1;
-                println!("  ✗ pxi-{name} --help exit {}", out.status.code().unwrap_or(-1));
+                println!(
+                    "  ✗ pxi-{name} --help exit {}",
+                    out.status.code().unwrap_or(-1)
+                );
             }
             Err(e) => {
                 errors += 1;
@@ -825,7 +901,11 @@ fn validate() -> anyhow::Result<()> {
         }
     }
     if !missing_bins.is_empty() {
-        println!("\n  ⚠ 미설치 도메인 ({}): {}", missing_bins.len(), missing_bins.join(", "));
+        println!(
+            "\n  ⚠ 미설치 도메인 ({}): {}",
+            missing_bins.len(),
+            missing_bins.join(", ")
+        );
         println!("    (설치: pxi install <name>)");
     }
 

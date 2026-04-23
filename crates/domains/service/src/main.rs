@@ -197,7 +197,9 @@ cert_resolver = "cloudflare"
                 println!("✗ {} 서비스를 찾을 수 없음", name);
             }
         }
-        Cmd::Doctor => { doctor(); }
+        Cmd::Doctor => {
+            doctor();
+        }
         Cmd::Move { name, to } => {
             if let Some(old_path) = find_service(&name) {
                 let new_dir = format!("{}/{}", SERVICES_DIR, to);
@@ -223,7 +225,11 @@ fn doctor() {
 
     // /opt/services/ directory exists
     let dir_ok = Path::new(SERVICES_DIR).is_dir();
-    println!("  {} {} 디렉토리", if dir_ok { "✓" } else { "✗" }, SERVICES_DIR);
+    println!(
+        "  {} {} 디렉토리",
+        if dir_ok { "✓" } else { "✗" },
+        SERVICES_DIR
+    );
 
     // Count service.toml files
     if dir_ok {
@@ -246,7 +252,10 @@ fn doctor() {
 
     // service-sync binary exists in PATH
     let sync_ok = common::command_exists("service-sync");
-    println!("  {} service-sync 바이너리", if sync_ok { "✓" } else { "✗" });
+    println!(
+        "  {} service-sync 바이너리",
+        if sync_ok { "✓" } else { "✗" }
+    );
 
     // Traefik LXC reachable (50100 is the standard Traefik LXC)
     let traefik_ok = Command::new("pct")
@@ -254,5 +263,8 @@ fn doctor() {
         .output()
         .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("running"))
         .unwrap_or(false);
-    println!("  {} Traefik LXC (50100)", if traefik_ok { "✓" } else { "✗" });
+    println!(
+        "  {} Traefik LXC (50100)",
+        if traefik_ok { "✓" } else { "✗" }
+    );
 }
