@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Windows SDK 다운로드 + Chromium 패키지 형태로 정리 (builder 계정으로 실행)
+# msvc-wine/vsdownload.py 사용 — Windows PC 불필요
+set -euo pipefail
+
+source ~/.win-cross-env
+
+WIN_SDK_DIR=/home/builder/win-sdk
+MSVC_WINE=/home/builder/msvc-wine
+PKG_DIR="${WIN_SDK_DIR}/chromium-pkg"
+TOOLCHAIN_DIR="${PKG_DIR}/${TOOLCHAIN_HASH}"
+
+echo "=== [1/4] Windows SDK 다운로드 (vsdownload.py) ==="
+echo "  대상: ${WIN_SDK_DIR}"
+echo "  예상 시간: 30-60분, 약 4-8GB"
+mkdir -p "${WIN_SDK_DIR}/raw"
+
+python3 "${MSVC_WINE}/vsdownload.py" \
+  --dest "${WIN_SDK_DIR}/raw" \
+  --accept-license \
+  2>&1
+
+echo "=== [2/4] SDK install.sh 실행 (symlink 트리 구성) ==="
+bash "${MSVC_WINE}/install.sh" "${WIN_SDK_DIR}/raw" "${WIN_SDK_DIR}/msvc"
+
+echo "=== [3/4] Chromium toolchain 패키지 디렉터리 구성 ==="
+# Chromium win_cross.md 가 기대하는 구조:
+# chromium-pkg/<hash>/VC/  — MSVC
+# chromium-pkg/<hash>/win_sdk/ — Windows SDK
+mkdir -p "${TOOLCHAIN_DIR}/VC/Tools/MSVC"
+mkdir -p "${TOOLCHAIN_DIR}/win_sdk/Include"
+mkdir -p "${TOOLCHAIN_DIR}/win_sdk/Lib"
+mkdir -p "${TOOLCHAIN_DIR}/win_sdk/bin"
+
+# msvc-wine install.sh 결과물을 Chromium 기대 구조로 복사
+MSVC_VER=$(ls "${WIN_SDK_DIR}/msvc/VC/Tools/MSVC/" 2>/dev/null | head -1 || true)
+if [ -n "${MSVC_VER}" ]; then
+  cp -r "${WIN_SDK_DIR}/msvc/VC/Tools/MSVC/${MSVC_VER}" \
+        "${TOOLCHAIN_DIR}/VC/Tools/MSVC/"
+fi
+
+# Windows SDK headers/libs
+for d in Include Lib; do
+  if [ -d "${WIN_SDK_DIR}/msvc/win_sdk/${d}" ]; then
+    cp -r "${WIN_SDK_DIR}/msvc/win_sdk/${d}/." \
+          "${TOOLCHAIN_DIR}/win_sdk/${d}/"
+  fi
+done
+if [ -d "${WIN_SDK_DIR}/msvc/win_sdk/bin" ]; then
+  cp -r "${WIN_SDK_DIR}/msvc/win_sdk/bin/." \
+        "${TOOLCHAIN_DIR}/win_sdk/bin/"
+fi
+
+# case-insensitive 심링크 (winsock2.h / WinSock2.h 등)
+if [ -x "${MSVC_WINE}/case-fold.sh" ]; then
+  echo "  case-fold.sh 실행 중..."
+  bash "${MSVC_WINE}/case-fold.sh" "${TOOLCHAIN_DIR}" 2>/dev/null || true
+fi
+
+echo "=== [4/4] 검증 ==="
+echo "  TOOLCHAIN_HASH : ${TOOLCHAIN_HASH}"
+echo "  SDK_VERSION    : ${SDK_VERSION}"
+ls "${TOOLCHAIN_DIR}/" 2>/dev/null || echo "  (디렉터리 내용 없음)"
+
+echo ""
+echo "✓ Windows SDK 준비 완료: ${TOOLCHAIN_DIR}"
+echo ""
+echo "다음 단계:"
+echo "  pxi run chrome-browser-dev win-cross-build --vmid <vmid>"

@@ -8,6 +8,8 @@ use std::process::Command;
 
 const PROVISION_SCRIPT: &str = include_str!("../scripts/provision.sh");
 const WRAPPER_SCRIPT: &str = include_str!("../scripts/chromium-browser-dev");
+const WIN_CROSS_PROVISION_SCRIPT: &str = include_str!("../scripts/win-cross-provision.sh");
+const WIN_CROSS_SDK_SCRIPT: &str = include_str!("../scripts/win-cross-sdk");
 
 #[derive(Parser)]
 #[command(
@@ -282,6 +284,40 @@ enum Cmd {
         #[arg(long, default_value = "https://gitlab.internal.kr")] // LINT_ALLOW: helium-linux 내부 GitLab 기본값, --gitlab-url로 override
         gitlab_url: String,
     },
+    /// Windows 크로스컴파일 의존성 설치 (clang, lld, depot_tools, msvc-wine)
+    WinCrossProvision {
+        #[arg(long)]
+        vmid: String,
+    },
+    /// Windows SDK 다운로드 (msvc-wine vsdownload.py, tmux, ~30-60분)
+    WinCrossSdk {
+        #[arg(long)]
+        vmid: String,
+    },
+    /// Windows 크로스컴파일 빌드 시작 (tmux)
+    WinCrossBuild {
+        #[arg(long)]
+        vmid: String,
+        /// GN output 디렉터리 이름
+        #[arg(long, default_value = "Windows")]
+        out_dir: String,
+    },
+    /// Windows 크로스빌드 진행 상태 조회
+    WinCrossStatus {
+        #[arg(long)]
+        vmid: String,
+    },
+    /// Windows 빌드 결과물(.exe)을 GitLab 릴리즈로 업로드
+    WinCrossRelease {
+        #[arg(long)]
+        vmid: String,
+        #[arg(long, default_value_t = 239)]
+        project_id: u32,
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long, default_value = "https://gitlab.internal.kr")] // LINT_ALLOW: helium-linux 내부 GitLab 기본값, --gitlab-url로 override
+        gitlab_url: String,
+    },
     /// GitLab 릴리즈에서 Helium을 내려받아 로컬에 설치
     Install {
         /// 설치 디렉터리
@@ -430,6 +466,16 @@ fn main() -> Result<()> {
         ),
         Cmd::X11Setup { vmid } => x11_setup(&vmid),
         Cmd::X11Simulate { vmid, timeout_sec } => x11_simulate(&vmid, timeout_sec),
+        Cmd::WinCrossProvision { vmid } => win_cross_provision(&vmid),
+        Cmd::WinCrossSdk { vmid } => win_cross_sdk(&vmid),
+        Cmd::WinCrossBuild { vmid, out_dir } => win_cross_build(&vmid, &out_dir),
+        Cmd::WinCrossStatus { vmid } => win_cross_status(&vmid),
+        Cmd::WinCrossRelease {
+            vmid,
+            project_id,
+            token,
+            gitlab_url,
+        } => win_cross_release(&vmid, project_id, token.as_deref(), &gitlab_url),
         Cmd::Release {
             vmid,
             project_id,
@@ -1425,6 +1471,237 @@ fn validate_run_url(url: &str) -> Result<()> {
         return Ok(());
     }
     anyhow::bail!("지원하지 않는 URL 형식: {url} (about:/http://https://file://만 허용)")
+}
+
+fn win_cross_provision(vmid: &str) -> Result<()> {
+    require_proxmox()?;
+    ensure_started(vmid)?;
+    push_text(
+        vmid,
+        "/tmp/win-cross-provision.sh",
+        WIN_CROSS_PROVISION_SCRIPT,
+        "0755",
+    )?;
+    common::run_passthrough(
+        "pct",
+        &["exec", vmid, "--", "bash", "/tmp/win-cross-provision.sh"],
+    )
+}
+
+fn win_cross_sdk(vmid: &str) -> Result<()> {
+    require_proxmox()?;
+    ensure_started(vmid)?;
+    push_text(
+        vmid,
+        "/home/builder/win-cross-sdk.sh",
+        WIN_CROSS_SDK_SCRIPT,
+        "0755",
+    )?;
+    // SDK 다운로드는 30-60분 걸리므로 tmux에서 실행
+    let script = r#"set -euo pipefail
+tmux has-session -t win-cross-sdk 2>/dev/null && {
+  echo 'tmux session already running: win-cross-sdk'
+  exit 0
+}
+rm -f ~/win-cross-sdk.log
+tmux new-session -d -s win-cross-sdk \
+  "bash -lc 'set -o pipefail; ~/win-cross-sdk.sh 2>&1 | tee ~/win-cross-sdk.log'"
+tmux list-sessions
+echo ""
+echo "SDK 다운로드 진행 중 — 로그 확인:"
+echo "  pxi run chrome-browser-dev win-cross-status --vmid <vmid>"
+"#;
+    run_builder(vmid, script)
+}
+
+fn win_cross_build(vmid: &str, out_dir: &str) -> Result<()> {
+    require_proxmox()?;
+    ensure_started(vmid)?;
+
+    let script = format!(
+        r#"set -euo pipefail
+source ~/.win-cross-env
+
+SRC=/home/builder/workspace/helium-linux/build/src
+OUT="$SRC/out/{out_dir}"
+
+# SDK 준비 확인
+if [ ! -d "$WIN_SDK_DIR/chromium-pkg/$TOOLCHAIN_HASH/win_sdk" ]; then
+  echo "ERROR: Windows SDK 없음 — 먼저 win-cross-sdk 실행" >&2
+  echo "  pxi run chrome-browser-dev win-cross-sdk --vmid <vmid>" >&2
+  exit 1
+fi
+
+# GN args 생성
+mkdir -p "$OUT"
+cat > "$OUT/args.gn" <<GN_ARGS
+target_os = "win"
+target_cpu = "x64"
+is_clang = true
+is_debug = false
+is_component_build = false
+symbol_level = 0
+enable_nacl = false
+enable_linux_installer = false
+GN_ARGS
+
+echo "=== GN 설정 ==="
+cd "$SRC"
+HASH=$(grep '^TOOLCHAIN_HASH' build/vs_toolchain.py | cut -d"'" -f2)
+PATH="$HOME/depot_tools:$PATH" \
+DEPOT_TOOLS_WIN_TOOLCHAIN=0 \
+DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL="$DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL" \
+  env GYP_MSVS_HASH_$HASH="$HASH" \
+  gn gen "out/{out_dir}" 2>&1
+
+echo "=== 빌드 시작 (tmux: win-cross-build) ==="
+tmux has-session -t win-cross-build 2>/dev/null && {{
+  echo 'tmux session already running: win-cross-build'
+  exit 0
+}}
+rm -f ~/workspace/win-cross-build.log
+HASH=$(grep '^TOOLCHAIN_HASH' "$SRC/build/vs_toolchain.py" | cut -d"'" -f2)
+tmux new-session -d -s win-cross-build \
+  "bash -lc 'set -euo pipefail
+source ~/.win-cross-env
+cd /home/builder/workspace/helium-linux/build/src
+HASH=\$(grep \"^TOOLCHAIN_HASH\" build/vs_toolchain.py | cut -d\"\\x27\" -f2)
+PATH=\"\$HOME/depot_tools:\$PATH\" \
+DEPOT_TOOLS_WIN_TOOLCHAIN=0 \
+DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL=\"\$DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL\" \
+  env GYP_MSVS_HASH_\$HASH=\"\$HASH\" \
+  autoninja -C out/{out_dir} mini_installer 2>&1 | tee ~/workspace/win-cross-build.log'"
+tmux list-sessions
+echo ""
+echo "빌드 진행 확인: pxi run chrome-browser-dev win-cross-status --vmid <vmid>"
+"#,
+        out_dir = out_dir,
+    );
+    run_builder(vmid, &script)
+}
+
+fn win_cross_status(vmid: &str) -> Result<()> {
+    require_proxmox()?;
+    ensure_started(vmid)?;
+    let script = r#"echo "=== tmux sessions ==="
+tmux list-sessions 2>/dev/null || echo "(없음)"
+
+echo ""
+echo "=== SDK 다운로드 로그 (마지막 5줄) ==="
+tail -5 ~/win-cross-sdk.log 2>/dev/null || echo "(없음)"
+
+echo ""
+echo "=== 빌드 진행률 ==="
+grep -aoE '\[[0-9]+ active/[0-9]+ finished/[0-9]+ total\]' \
+  ~/workspace/win-cross-build.log 2>/dev/null | tail -1 || echo "(빌드 로그 없음)"
+tail -3 ~/workspace/win-cross-build.log 2>/dev/null || true
+
+echo ""
+echo "=== Windows 빌드 결과물 ==="
+ls -lh ~/workspace/helium-linux/build/src/out/Windows/mini_installer.exe \
+        ~/workspace/helium-linux/build/src/out/Windows/helium.exe \
+  2>/dev/null || echo "(아직 없음)"
+
+echo ""
+echo "=== 디스크 ==="
+df -h / | tail -1
+"#;
+    common::run_passthrough(
+        "pct",
+        &["exec", vmid, "--", "runuser", "-l", "builder", "-c", script],
+    )
+}
+
+fn win_cross_release(
+    vmid: &str,
+    project_id: u32,
+    token: Option<&str>,
+    gitlab_url: &str,
+) -> Result<()> {
+    let api_token = token
+        .map(str::to_owned)
+        .or_else(|| std::env::var("GITLAB_API_TOKEN").ok())
+        .context("GitLab API token 없음 — --token 또는 GITLAB_API_TOKEN 환경변수 필요")?;
+
+    // 버전 조회
+    let ver_script = r#"python3 /home/builder/workspace/helium-linux/helium-chromium/utils/helium_version.py \
+  --tree /home/builder/workspace/helium-linux/helium-chromium \
+  --platform-tree /home/builder/workspace/helium-linux \
+  --print"#;
+    let version = common::run_capture(
+        "pct",
+        &[
+            "exec", vmid, "--", "runuser", "-l", "builder", "-c", ver_script,
+        ],
+    )?
+    .trim()
+    .to_owned();
+    if version.is_empty() {
+        anyhow::bail!("버전을 가져오지 못함");
+    }
+
+    // mini_installer.exe 확인
+    let exe_path = "/home/builder/workspace/helium-linux/build/src/out/Windows/mini_installer.exe";
+    let check = common::run_capture(
+        "pct",
+        &[
+            "exec", vmid, "--", "bash", "-c",
+            &format!("test -f {exe_path} && echo ok || echo missing"),
+        ],
+    )?;
+    if check.trim() != "ok" {
+        anyhow::bail!(
+            "mini_installer.exe 없음 — 먼저 win-cross-build 완료 후 실행하세요"
+        );
+    }
+
+    let installer_name = format!("helium-{version}-windows-x64-installer.exe");
+    let host_path = format!("/tmp/{installer_name}");
+
+    // 호스트로 복사
+    common::run_passthrough("pct", &["pull", vmid, exe_path, &host_path])?;
+
+    // GitLab 업로드
+    println!("[win-release] 업로드 중: {installer_name}");
+    let upload_out = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--header", &format!("PRIVATE-TOKEN: {api_token}"),
+            "--form", &format!("file=@{host_path}"),
+            &format!("{gitlab_url}/api/v4/projects/{project_id}/uploads"),
+        ])
+        .output()
+        .context("curl 실행 실패")?;
+    let upload_json = String::from_utf8_lossy(&upload_out.stdout);
+    let asset_url = parse_json_field(&upload_json, "full_path")
+        .map(|p| format!("{gitlab_url}{p}"))
+        .context("업로드 응답에서 full_path 추출 실패")?;
+    println!("[win-release] 업로드 완료: {asset_url}");
+
+    // 기존 릴리즈에 Windows 에셋 추가
+    let tag = format!("v{version}");
+    let link_body = format!(
+        r#"{{"name":"{installer_name}","url":"{asset_url}","link_type":"package"}}"#
+    );
+    let link_out = std::process::Command::new("curl")
+        .args([
+            "-s", "-X", "POST",
+            "--header", &format!("PRIVATE-TOKEN: {api_token}"),
+            "--header", "Content-Type: application/json",
+            "--data", &link_body,
+            &format!("{gitlab_url}/api/v4/projects/{project_id}/releases/{tag}/assets/links"),
+        ])
+        .output()
+        .context("에셋 링크 추가 curl 실패")?;
+    let link_resp = String::from_utf8_lossy(&link_out.stdout);
+    if let Some(name) = parse_json_field(&link_resp, "name") {
+        println!("[win-release] 완료: {name} → {gitlab_url}/root/helium-linux/-/releases/{tag}");
+    } else {
+        println!("[win-release] 응답: {link_resp}");
+    }
+
+    let _ = std::fs::remove_file(&host_path);
+    Ok(())
 }
 
 fn release(vmid: &str, project_id: u32, token: Option<&str>, gitlab_url: &str) -> Result<()> {
