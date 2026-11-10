@@ -10,3 +10,5 @@ pre-commit:
     nickel-ssot:
       glob: "{ncl/**/*.ncl,crates/domains/**/domain.ncl}"
       run: nickel eval ncl/domains.ncl >/dev/null
+    gitleaks:
+      run: gitleaks git --pre-commit --staged --redact --ignore-gitleaks-allow --no-banner --verbose
